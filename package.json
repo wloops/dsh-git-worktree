@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-worktree",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Domi-grade git worktree isolation and delivery for DeepSeek Harness: permanent worktrees, ready-for-review / apply / discard / finish lifecycle, conflict handling, and safe cleanup.",
   "type": "module",
   "main": "lib/index.js",
@@ -14,12 +14,19 @@
       "types": "./lib/manager.d.ts",
       "default": "./lib/manager.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
-    "lib"
+    "lib",
+    "cordis.patch.yml"
   ],
   "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/wloops/dsh-git-worktree.git"
