@@ -11,6 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 const FIXTURE_MARKER = '.dsh-git-worktree-fixture.json'
@@ -293,6 +294,29 @@ function copyPackageEntry(source, destination) {
   copyFileSync(source, destination)
 }
 
+function profileArchiveReference(options) {
+  const dshHome = options.environment?.DSH_HOME ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  const manifestPath = options.profileManifestPath ?? join(dshHome, 'profiles', options.profile, 'package.json')
+  if (!existsSync(manifestPath)) throw new Error(`DSH profile manifest is missing: ${manifestPath}`)
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  const specifier = manifest.dependencies?.['dsh-git-worktree']
+  if (typeof specifier !== 'string' || !specifier.startsWith('file:')) {
+    throw new Error(`DSH profile ${options.profile} did not record dsh-git-worktree as a local file dependency.`)
+  }
+  let filePath
+  try {
+    filePath = decodeURIComponent(specifier.slice('file:'.length))
+  } catch {
+    throw new Error(`DSH profile ${options.profile} recorded an invalid local file dependency: ${specifier}`)
+  }
+  return resolve(dirname(manifestPath), filePath)
+}
+
+function comparablePath(path) {
+  const normalized = resolve(path).replaceAll('\\', '/')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
 function cleanSupersededArchives(cacheRoot, keepPath) {
   for (const entry of readdirSync(cacheRoot)) {
     if (!/^dsh-git-worktree-\d+\.tgz$/.test(entry)) continue
@@ -340,6 +364,10 @@ export function installLocalSnapshot(options) {
   if (!existsSync(archivePath)) throw new Error(`pnpm pack did not create ${archivePath}.`)
 
   run(dsh, ['plugin', '--profile', options.profile, 'add', archivePath], { cwd: options.projectRoot })
+  const referencedArchive = profileArchiveReference(options)
+  if (comparablePath(referencedArchive) !== comparablePath(archivePath)) {
+    throw new Error(`DSH profile ${options.profile} still references ${referencedArchive}; preserving old and new archives for recovery.`)
+  }
   const dump = run(dsh, ['--profile', options.profile, '--dump-config'], {
     cwd: options.projectRoot,
     capture: true,

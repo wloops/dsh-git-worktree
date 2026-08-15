@@ -83,25 +83,33 @@ const clientRel = exportsMap['./client']?.default
 if (typeof clientRel !== 'string') fail('exports["./client"].default is required for dsh.client')
 const clientSource = readFileSync(resolve(root, clientRel), 'utf8')
 const sandbox = {}
+sandbox.window = sandbox
 sandbox.globalThis = sandbox
-let factory
-try {
-  factory = vm.runInNewContext(clientSource, sandbox, { filename: clientRel })
-} catch (error) {
-  fail(`client bundle is not an executable closure expression: ${error instanceof Error ? error.message : String(error)}`)
+let handoff
+sandbox.__ModuleLoader__ = {
+  load(value) {
+    if (handoff !== undefined) fail('client bundle registered more than one ModuleLoader handoff')
+    handoff = value
+  },
 }
-if (typeof factory !== 'function') fail('client bundle did not evaluate to a ModuleLoader factory')
-const clientExports = {}
 try {
-  await factory({ __require__: require, __exports__: clientExports })
+  vm.runInNewContext(clientSource, sandbox, { filename: clientRel })
+} catch (error) {
+  fail(`client bundle script failed before ModuleLoader registration: ${error instanceof Error ? error.message : String(error)}`)
+}
+if (!handoff || handoff.id !== manifest.name || typeof handoff.factory !== 'function') {
+  fail(`client bundle must call window.__ModuleLoader__.load with id ${JSON.stringify(manifest.name)} and a factory`)
+}
+let clientExports
+try {
+  clientExports = handoff.factory(require)
 } catch (error) {
   fail(`client bundle factory failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
 }
-const loaded = sandbox.__dsh_current_exports__
-if (!loaded || typeof loaded.apply !== 'function' || !Array.isArray(loaded.inject)) {
-  fail('client bundle did not publish apply + inject through __dsh_current_exports__')
+if (!clientExports || typeof clientExports.apply !== 'function' || !Array.isArray(clientExports.inject)) {
+  fail('client bundle factory did not return apply + inject')
 }
-ok(`${clientRel} loads as a browser plugin closure`)
+ok(`${clientRel} registers ${manifest.name} through the browser ModuleLoader contract`)
 
 // 5. Release CI and npm's prepublish lifecycle require committed source identity;
 // local review builds intentionally run against a dirty managed Worktree.

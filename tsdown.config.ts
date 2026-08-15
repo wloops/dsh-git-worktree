@@ -1,12 +1,6 @@
 import { defineConfig } from 'tsdown'
 
-const banner = `(async ({ __require__, __exports__ }) => {
-const module = { exports: __exports__ };
-const exports = module.exports;
-const require = __require__;`
-const footer = `
-globalThis.__dsh_current_exports__ = module.exports;
-})`
+const CLIENT_PLUGIN_ID = 'dsh-git-worktree'
 
 export default defineConfig({
   name: 'dsh-git-worktree-client',
@@ -20,6 +14,9 @@ export default defineConfig({
   dts: false,
   outExtensions: () => ({ js: '.js' }),
   external: ['react', 'react/jsx-runtime'],
-  banner,
-  footer,
+  outputOptions: {
+    banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(CLIENT_PLUGIN_ID)}, factory: (require) => {`,
+    intro: 'var module = { exports: {} }; var exports = module.exports;',
+    footer: 'return module.exports; } });',
+  },
 })

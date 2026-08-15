@@ -139,6 +139,9 @@ describe('local DSH development workflow', () => {
     writeFileSync(join(root, 'lib', 'index.js'), 'export {}')
     writeFileSync(join(root, 'cordis.patch.yml'), '[]\n')
     const cacheRoot = join(root, 'cache')
+    const profileManifestPath = join(root, 'profile', 'package.json')
+    mkdirSync(join(root, 'profile'))
+    writeFileSync(profileManifestPath, JSON.stringify({ dependencies: {} }))
     const calls: Array<{ command: string; args: string[] }> = []
     let stagedManifest: { version?: string; scripts?: Record<string, string> } | undefined
     const runner = vi.fn((command: string, args: string[], options?: { cwd?: string }) => {
@@ -147,6 +150,11 @@ describe('local DSH development workflow', () => {
         stagedManifest = JSON.parse(readFileSync(join(options!.cwd!, 'package.json'), 'utf8'))
         const outIndex = args.indexOf('--out')
         writeFileSync(args[outIndex + 1]!, 'tarball')
+      }
+      if (command.includes('dsh') && args[0] === 'plugin' && args.includes('add')) {
+        writeFileSync(profileManifestPath, JSON.stringify({
+          dependencies: { 'dsh-git-worktree': `file:${args.at(-1)}` },
+        }))
       }
       if (command.includes('dsh') && args.includes('--dump-config')) {
         return { stdout: '# == dsh-git-worktree\n- id: dsh-git-worktree\n' }
@@ -159,6 +167,7 @@ describe('local DSH development workflow', () => {
       profile: 'web',
       cacheRoot,
       now: () => 1234,
+      profileManifestPath,
       run: runner,
     })
 
@@ -174,5 +183,44 @@ describe('local DSH development workflow', () => {
       [expect.stringContaining('dsh'), '--profile', 'web', '--dump-config'],
     ])
     expect(calls.flatMap(({ args }) => args)).not.toContain('publish')
+  })
+
+  test('Given profile installation keeps referencing the previous archive When a new add returns Then old and new snapshots are preserved and the workflow fails', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-dev-stale-profile-'))
+    mkdirSync(join(root, 'node_modules'))
+    mkdirSync(join(root, 'lib'))
+    writeFileSync(join(root, 'lib', 'index.js'), 'export {}')
+    writeFileSync(join(root, 'cordis.patch.yml'), '[]\n')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'dsh-git-worktree', version: '0.1.2', scripts: {}, files: ['lib', 'cordis.patch.yml'],
+    }))
+    const cacheRoot = join(root, 'cache')
+    mkdirSync(cacheRoot)
+    const oldArchive = join(cacheRoot, 'dsh-git-worktree-1000.tgz')
+    writeFileSync(oldArchive, 'old')
+    const profileManifestPath = join(root, 'profile-package.json')
+    writeFileSync(profileManifestPath, JSON.stringify({
+      dependencies: { 'dsh-git-worktree': `file:${oldArchive}` },
+    }))
+    const runner = (command: string, args: string[]) => {
+      if (command.includes('pnpm') && args[0] === 'pack') {
+        writeFileSync(args[args.indexOf('--out') + 1]!, 'new')
+      }
+      if (command.includes('dsh') && args.includes('--dump-config')) {
+        return { stdout: '# == dsh-git-worktree\n' }
+      }
+      return { stdout: '' }
+    }
+
+    expect(() => installLocalSnapshot({
+      projectRoot: root,
+      profile: 'web',
+      cacheRoot,
+      now: () => 2000,
+      profileManifestPath,
+      run: runner,
+    })).toThrow('still references')
+    expect(existsSync(oldArchive)).toBe(true)
+    expect(existsSync(join(cacheRoot, 'dsh-git-worktree-2000.tgz'))).toBe(true)
   })
 })

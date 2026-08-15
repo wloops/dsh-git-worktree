@@ -18,7 +18,7 @@ pnpm pack --dry-run
 - `package.json.exports` 的每个 default/types/path target 都真实存在且受 `files` 覆盖；
 - Host `lib/index.js` 命名导出 `apply` 与 `inject`；
 - `dsh.client` 声明 Web 平台和 client injection；
-- `lib/client.js` 是可执行的 ModuleLoader closure，并发布 Client `apply` 与 `inject`；
+- `lib/client.js` 执行时调用 `window.__ModuleLoader__.load({ id, factory })`，注册 ID 精确等于包名，且 factory 返回 Client `apply` 与 `inject`；
 - 失效 export（例如历史 `./manager`）会直接阻断发布。
 
 正式发布或 tag CI 使用：
@@ -86,6 +86,6 @@ dsh --profile <scratch>
 | 包安装但 Host 不挂载 | `dsh.bundle.patch` + patch row 检查 |
 | Host 入口缺少 `inject` | Host export 检查 |
 | `./manager` 指向不存在文件 | 全量 exports 遍历 |
-| Client 文件存在但不是 Loader closure | Client VM smoke |
+| Client 脚本加载成功但没有注册 ModuleLoader factory | 在 VM 中按真实浏览器协议执行脚本，断言 `__ModuleLoader__.load` 的 ID/factory/apply/inject |
 | Git 安装从旧 commit 构建 | release CI 的 clean-tree 检查 + tag 后真实安装 |
 | 表面绑定 isolated、实际 Session cwd 仍是 Local | scratch profile 的真实 Session header/文件工具 smoke |
