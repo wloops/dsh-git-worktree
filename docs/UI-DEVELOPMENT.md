@@ -1,6 +1,9 @@
 # dsh-git-worktree 可视化 UI 开发指导
 
-给 dsh-git-worktree 加可视化 worktree 管理面板（列表 + 操作按钮）的完整路线：先在运行的 harness 里用动态插件快速迭代 UI，验证通过后再把 Client 代码并入 npm 包发布。本文所有 Slot/服务/机制均为对 DSH `0.1.0-rc.5` 线实测结果。
+> [!WARNING]
+> 本文的 `harness.handle()/host.call()` 通信示例属于早期动态插件原型记录，**不是当前 Worktree Console 的实施契约**。当前 Harness 的正式跨端缝是 Typert Remote：Host `TypertRemoteService + @Remote`、构建生成 `./remote` contribution、Client `ctx.remote.$mount()`。新的状态、DTO、安全边界、Slot 选择与并行文件所有权以 [`WORKTREE-CONSOLE-ARCHITECTURE.md`](./WORKTREE-CONSOLE-ARCHITECTURE.md) 为准。本文仅保留历史调研和 Client bundle/Slot 调试参考。
+
+给 dsh-git-worktree 加可视化 worktree 管理面板（列表 + 操作按钮）的历史路线：先在运行的 harness 里用动态插件快速迭代 UI，验证通过后再把 Client 代码并入 npm 包发布。本文原始 Slot/服务/机制记录来自 DSH `0.1.0-rc.5` 线；使用前必须按当前 Harness 源码复核。
 
 ## 0. 架构总览
 

@@ -125,6 +125,8 @@ import { registerTools } from './tools.js'
 import { registerWorktreeCommand } from './commands.js'
 import { registerSessionTargetContext } from './session-target-context.js'
 
+export * from './console-contract.js'
+
 const name = 'git-worktree'
 // Named export: the loader reads inject/apply named exports as plugin
 // metadata. A bare function export mounts with no injection list, and the

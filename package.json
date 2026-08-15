@@ -14,6 +14,10 @@
       "types": "./lib/client/index.d.ts",
       "default": "./lib/client.js"
     },
+    "./console-contract": {
+      "types": "./lib/console-contract.d.ts",
+      "default": "./lib/console-contract.js"
+    },
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
