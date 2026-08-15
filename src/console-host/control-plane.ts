@@ -1,0 +1,291 @@
+import { randomUUID } from 'node:crypto'
+import type {
+  WorktreeConsoleCreateResponse,
+  WorktreeConsoleCurrentResponse,
+  WorktreeConsoleDiscardRequest,
+  WorktreeConsoleFinalizeRequest,
+  WorktreeConsoleInspectResponse,
+  WorktreeConsoleListRequest,
+  WorktreeConsoleListResponse,
+  WorktreeConsoleMutationResponse,
+  WorktreeConsoleOutcome,
+  WorktreeConsoleRetryCleanupRequest,
+  WorktreeConsoleReviewDiffRequest,
+  WorktreeConsoleReviewDiffResponse,
+  WorktreeConsoleSetRetentionRequest,
+} from '../console-contract.js'
+import type {
+  GitCheckoutSnapshot,
+  ManagedCheckoutRecord,
+  SessionCheckoutFilesPort,
+  SessionCheckoutGitPort,
+  SessionCheckoutLookupPort,
+  SessionCheckoutRegistryPort,
+} from '../ports.js'
+import type { SessionCheckoutModule } from '../index.js'
+import { consoleFailure, domainError, failure, outcome } from './errors.js'
+import { projectDetails, projectLocal, projectRecord } from './projection.js'
+import { ReviewDiffStaleError, type WorktreeReviewDiffReader } from './review-diff.js'
+
+export interface WorktreeConsoleControlPlaneOptions {
+  module: SessionCheckoutModule
+  lookup: SessionCheckoutLookupPort
+  files: SessionCheckoutFilesPort
+  registry: SessionCheckoutRegistryPort
+  git: SessionCheckoutGitPort
+  reviewDiff: WorktreeReviewDiffReader
+  createTargetSessionId?: () => string
+}
+
+export interface WorktreeConsoleControlPlane {
+  current(sessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>
+  list(request: WorktreeConsoleListRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>
+  create(sourceSessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
+  inspect(sessionId: string, checkoutId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>>
+  reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
+  discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  setRetention(request: WorktreeConsoleSetRetentionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  retryCleanup(request: WorktreeConsoleRetryCleanupRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+}
+
+function recordOf(registry: SessionCheckoutRegistryPort, checkoutId: string): ManagedCheckoutRecord {
+  const record = registry.read().managedCheckouts[checkoutId]
+  if (record === undefined) throw domainError('checkout_missing', 'Worktree 记录不存在')
+  return record
+}
+
+function readyReview(record: ManagedCheckoutRecord) {
+  if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
+    throw domainError('operation_not_allowed', '当前 Worktree 尚未处于可验收状态')
+  }
+  return record.delivery.review
+}
+
+function preflightFailure(view: Awaited<ReturnType<NonNullable<SessionCheckoutModule['preflight']>>> | undefined) {
+  if (view === undefined) return failure<never>('git_error', '当前 SessionCheckoutModule 不支持验收预检')
+  if (view.status !== 'blocked') return undefined
+  const code = view.reason === 'stale_isolated' ? 'stale_isolated'
+    : view.reason === 'stale_target' ? 'stale_target'
+      : view.reason === 'project_acceptance_busy' ? 'project_acceptance_busy'
+        : view.reason === 'not_owner' ? 'not_owner'
+          : view.reason === 'not_ready_for_review' ? 'operation_not_allowed'
+            : view.reason === 'checkout_unavailable' ? 'checkout_mismatch'
+              : 'git_error'
+  return failure<never>(code, view.message)
+}
+
+export function createWorktreeConsoleControlPlane(options: WorktreeConsoleControlPlaneOptions): WorktreeConsoleControlPlane {
+  const createTargetSessionId = options.createTargetSessionId ?? randomUUID
+
+  async function authorize(sessionId: string, checkoutId: string): Promise<ManagedCheckoutRecord> {
+    const caller = await options.module.inspect(sessionId)
+    const record = recordOf(options.registry, checkoutId)
+    if (record.ownerSessionId !== sessionId && record.sourceSessionId !== sessionId) {
+      throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+    }
+    if (record.projectId !== caller.project.id) {
+      throw domainError('project_mismatch', 'Worktree 与当前 Session 项目不一致')
+    }
+    const session = options.lookup.getSession(sessionId)
+    const project = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
+    if (project === undefined || !options.files.exists(project.root)) {
+      throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
+    }
+    const workspaceRoot = await options.files.canonicalize(project.root)
+    const expectedRoot = record.ownerSessionId === sessionId ? record.managedRoot : record.localRoot
+    const normalizedWorkspace = process.platform === 'win32' ? workspaceRoot.toLowerCase() : workspaceRoot
+    const normalizedExpected = process.platform === 'win32' ? expectedRoot.toLowerCase() : expectedRoot
+    if (normalizedWorkspace !== normalizedExpected) {
+      throw domainError('project_mismatch', '当前 Session cwd 与 Worktree 授权边界不一致')
+    }
+    if (record.phase !== 'discarded') {
+      const visible = await options.module.listManagedWorktreesForSession(sessionId, { checkoutId })
+      if (!visible.some(item => item.checkoutId === checkoutId)) {
+        throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+      }
+    }
+    return record
+  }
+
+  async function observe(record: ManagedCheckoutRecord): Promise<{
+    managedRoot: string | null
+    snapshot?: GitCheckoutSnapshot
+    dirty?: boolean
+  }> {
+    if (record.phase === 'discarded') return { managedRoot: null }
+    const managedRoot = await options.module.resolveManagedRoot(record.checkoutId)
+    const snapshot = await options.git.inspect(managedRoot)
+    if (snapshot === null) throw domainError('checkout_mismatch', 'Worktree Git 身份无法验证')
+    const status = await options.git.status(managedRoot)
+    return { managedRoot, snapshot, dirty: status.dirty }
+  }
+
+  async function details(sessionId: string, checkoutId: string) {
+    const record = await authorize(sessionId, checkoutId)
+    const observed = await observe(record)
+    return projectDetails(record, sessionId, observed.managedRoot, observed.snapshot, observed.dirty)
+  }
+
+  async function mutationResponse(sessionId: string, checkoutId: string): Promise<WorktreeConsoleMutationResponse> {
+    const record = recordOf(options.registry, checkoutId)
+    if (record.phase === 'discarded') return { target: projectRecord(record, sessionId) }
+    const observed = await observe(record)
+    return { target: projectRecord(record, sessionId, observed) }
+  }
+
+  return {
+    current: sessionId => outcome(async () => {
+      const target = await options.module.inspect(sessionId)
+      if (target.checkout.kind === 'local') return { target: projectLocal(target, sessionId) }
+      return { target: await details(sessionId, target.checkout.id) }
+    }),
+
+    list: request => outcome(async () => {
+      const caller = await options.module.inspect(request.sessionId)
+      const active = await options.module.listManagedWorktreesForSession(request.sessionId, {
+        needsAttention: request.needsAttention,
+      })
+      const activeById = new Map(active.map(summary => [summary.checkoutId, summary]))
+      const records = Object.values(options.registry.read().managedCheckouts)
+        .filter(record => record.projectId === caller.project.id)
+        .filter(record => record.ownerSessionId === request.sessionId || record.sourceSessionId === request.sessionId)
+        .filter(record => request.includeDelivered === true || record.phase !== 'discarded')
+        .filter(record => record.phase === 'discarded' || activeById.has(record.checkoutId))
+      const worktrees = []
+      for (const record of records) {
+        const observed = record.phase === 'discarded' ? undefined : await observe(record)
+        const projected = projectRecord(record, request.sessionId, {
+          ...observed,
+          summary: activeById.get(record.checkoutId),
+        })
+        if (request.needsAttention !== true || projected.state === 'cleanup_pending' || projected.state === 'recovery_required') {
+          worktrees.push(projected)
+        }
+      }
+      return { project: { ...caller.project }, worktrees }
+    }),
+
+    create: sourceSessionId => outcome(async () => {
+      const targetSessionId = createTargetSessionId()
+      const launch = await options.module.createIsolatedTarget(sourceSessionId, targetSessionId)
+      const record = recordOf(options.registry, launch.target.checkout.id)
+      const observed = await observe(record)
+      if (
+        record.sourceSessionId !== sourceSessionId
+        || record.ownerSessionId !== targetSessionId
+        || observed.managedRoot !== launch.managedRoot
+      ) throw domainError('checkout_mismatch', '新建 Worktree 的 Host 身份校验失败')
+      return {
+        target: projectDetails(record, sourceSessionId, observed.managedRoot, observed.snapshot, observed.dirty),
+        targetSessionId,
+        managedRoot: launch.managedRoot,
+      }
+    }),
+
+    inspect: (sessionId, checkoutId) => outcome(async () => ({ target: await details(sessionId, checkoutId) })),
+
+    reviewDiff: async request => {
+      try {
+        const record = await authorize(request.sessionId, request.checkoutId)
+        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', '只有 owner Isolated Session 可以读取验收 Diff')
+        if (record.revision !== request.expectedRevision) return failure('stale_target', 'Session Target 已变化，请刷新')
+        const review = readyReview(record)
+        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', 'Review 身份已变化，请刷新')
+        const before = await options.module.preflight?.(request.sessionId, request.expectedRevision)
+        if (before === undefined || before.status === 'blocked') return preflightFailure(before)!
+        if (before.reviewId !== review.reviewId || before.isolatedHeadOid !== review.isolatedHeadOid) {
+          return failure('stale_isolated', 'Ready 后 Isolated HEAD 已变化')
+        }
+        const observed = await observe(record)
+        const diff = await options.reviewDiff.read({
+          managedRoot: observed.managedRoot!,
+          baseOid: record.applyBaseOid ?? record.baseOid,
+          reviewId: review.reviewId,
+          revision: record.revision,
+          changedFiles: review.changedFiles,
+        })
+        const after = await options.module.preflight?.(request.sessionId, request.expectedRevision)
+        if (after === undefined || after.status === 'blocked') {
+          return failure('stale_isolated', 'Ready 后 Isolated 内容已变化，Diff bytes 已丢弃')
+        }
+        const current = recordOf(options.registry, request.checkoutId)
+        if (
+          after.reviewId !== review.reviewId
+          || after.isolatedHeadOid !== review.isolatedHeadOid
+          || current.revision !== request.expectedRevision
+          || current.delivery.state !== 'ready_for_review'
+          || current.delivery.review.reviewId !== review.reviewId
+          || current.delivery.review.isolatedFingerprint !== review.isolatedFingerprint
+        ) return failure('stale_isolated', 'Ready 后 Isolated 内容已变化，Diff bytes 已丢弃')
+        return { ok: true, value: diff }
+      } catch (error) {
+        if (error instanceof ReviewDiffStaleError) return failure('stale_isolated', error.message)
+        return consoleFailure(error)
+      }
+    },
+
+    discard: request => outcome(async () => {
+      await authorize(request.sessionId, request.checkoutId)
+      await options.module.manageManagedWorktreeForSession(request.sessionId, {
+        checkoutId: request.checkoutId,
+        expectedRevision: request.expectedRevision,
+        action: 'discard',
+        confirmDirty: request.confirmDirty,
+      })
+      return mutationResponse(request.sessionId, request.checkoutId)
+    }),
+
+    finalize: async request => {
+      try {
+        const record = await authorize(request.sessionId, request.checkoutId)
+        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', '只有 owner Isolated Session 可以提交验收')
+        if (record.revision !== request.expectedRevision) return failure('stale_target', 'Session Target 已变化，请刷新')
+        const review = readyReview(record)
+        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', 'Review 身份已变化，请刷新')
+        const result = await options.module.operate({
+          sessionId: request.sessionId,
+          expectedRevision: request.expectedRevision,
+          action: 'finish',
+          expectedReviewId: request.expectedReviewId,
+          commitMessage: review.suggestedCommitMessage,
+          retention: request.retention,
+        })
+        if (result.status === 'error') return failure(result.code, result.message)
+        if (result.status === 'conflict') return failure('apply_conflict', 'Local 应用发生冲突')
+        if (result.status !== 'finished') return failure('operation_not_allowed', 'Finalize 返回了非预期状态')
+        return {
+          ok: true,
+          value: {
+            ...(await mutationResponse(request.sessionId, request.checkoutId)),
+            changedFiles: [...result.changedFiles],
+            commitOid: result.commitOid,
+          },
+        }
+      } catch (error) {
+        return consoleFailure(error)
+      }
+    },
+
+    setRetention: request => outcome(async () => {
+      await authorize(request.sessionId, request.checkoutId)
+      await options.module.manageManagedWorktreeForSession(request.sessionId, {
+        checkoutId: request.checkoutId,
+        expectedRevision: request.expectedRevision,
+        action: 'set_retention',
+        retention: request.retention,
+      })
+      return mutationResponse(request.sessionId, request.checkoutId)
+    }),
+
+    retryCleanup: request => outcome(async () => {
+      await authorize(request.sessionId, request.checkoutId)
+      await options.module.manageManagedWorktreeForSession(request.sessionId, {
+        checkoutId: request.checkoutId,
+        expectedRevision: request.expectedRevision,
+        action: 'retry_cleanup',
+      })
+      return mutationResponse(request.sessionId, request.checkoutId)
+    }),
+  }
+}

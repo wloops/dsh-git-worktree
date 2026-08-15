@@ -4,7 +4,7 @@ const CLIENT_PLUGIN_ID = 'dsh-git-worktree'
 
 export default defineConfig({
   name: 'dsh-git-worktree-client',
-  entry: { client: 'src/client/index.tsx' },
+  entry: { client: 'src/client/console-remote/index.ts' },
   outDir: 'lib',
   format: 'cjs',
   platform: 'neutral',

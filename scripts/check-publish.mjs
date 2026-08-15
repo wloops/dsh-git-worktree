@@ -8,7 +8,7 @@ import { execSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, relative, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import vm from 'node:vm'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -66,7 +66,40 @@ for (const [subpath, value] of Object.entries(exportsMap)) {
 }
 ok(`${exportCount} export targets exist and are publishable`)
 
-// 3. Host entry metadata required by the Cordis loader.
+// 3. Manual strict Typert artifacts: one descriptor identity feeds Host Loader and Client mount.
+if (manifest.dependencies?.['@deepseek-ai/dsh-typert-generator'] || manifest.devDependencies?.['@deepseek-ai/dsh-typert-generator']) {
+  fail('manual contribution package must not depend on @deepseek-ai/dsh-typert-generator')
+}
+const typertExport = exportsMap['./typert']?.default
+const remoteExport = exportsMap['./remote']?.default
+if (typeof typertExport !== 'string' || typeof remoteExport !== 'string') {
+  fail('package must export both ./typert and ./remote artifacts')
+}
+let hostContribution
+let remoteContribution
+try {
+  hostContribution = (await import(pathToFileURL(resolve(root, typertExport)).href)).TYPERT
+  remoteContribution = (await import(pathToFileURL(resolve(root, remoteExport)).href)).default
+} catch (error) {
+  fail(`Typert artifacts failed to import: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+}
+if (hostContribution?.package !== manifest.name || hostContribution.face !== 'host') fail('./typert has invalid package/face identity')
+if (remoteContribution?.package !== manifest.name) fail('./remote has invalid package identity')
+if (hostContribution.invocations !== remoteContribution.descriptors) fail('./typert and ./remote must share one descriptor array instance')
+const expectedRemoteMethods = ['current', 'list', 'create', 'inspect', 'reviewDiff', 'discard', 'finalize', 'setRetention', 'retryCleanup']
+if (JSON.stringify(hostContribution.invocations.map(value => value.method)) !== JSON.stringify(expectedRemoteMethods)) {
+  fail(`manual Remote methods differ from the required surface: ${hostContribution.invocations.map(value => value.method).join(', ')}`)
+}
+for (const descriptor of hostContribution.invocations) {
+  if (descriptor.namespace !== 'gitWorktree' || descriptor.service !== 'gitWorktree') fail(`invalid Remote identity for ${descriptor.method}`)
+  if (descriptor.result?.mode !== 'strict' || !descriptor.result.schema?._zod) fail(`Remote ${descriptor.method} result lacks a Zod v4 strict codec`)
+  for (const parameter of descriptor.parameters ?? []) {
+    if (parameter.codec?.mode !== 'strict' || !parameter.codec.schema?._zod) fail(`Remote ${descriptor.method}/${parameter.wire} lacks a Zod v4 strict codec`)
+  }
+}
+ok(`manual strict ./typert + ./remote contribution (${expectedRemoteMethods.length} methods)`)
+
+// 4. Host entry metadata required by the Cordis loader.
 const entryRel = exportsMap['.']?.default ?? manifest.main
 if (typeof entryRel !== 'string') fail('exports["."].default is not a path')
 const entry = readFileSync(resolve(root, entryRel), 'utf8')
@@ -74,7 +107,7 @@ if (!/export\s+function\s+apply\b/.test(entry)) fail(`${entryRel} does not expor
 if (!/export\s+const\s+inject\b/.test(entry)) fail(`${entryRel} does not export const inject`)
 ok(`${entryRel} exports Host apply + inject`)
 
-// 4. Browser ToolView declaration and executable ModuleLoader closure.
+// 5. Browser ToolView declaration and executable ModuleLoader closure.
 const client = manifest.dsh?.client
 if (!client || client.platform !== 'web' || !Array.isArray(client.inject) || client.inject.length === 0) {
   fail('package.json must declare dsh.client { platform: "web", inject: [...] }')
@@ -109,9 +142,10 @@ try {
 if (!clientExports || typeof clientExports.apply !== 'function' || !Array.isArray(clientExports.inject)) {
   fail('client bundle factory did not return apply + inject')
 }
+if (!clientExports.inject.includes('remote')) fail('client bundle must inject the official Remote service before $mount')
 ok(`${clientRel} registers ${manifest.name} through the browser ModuleLoader contract`)
 
-// 5. Release CI and npm's prepublish lifecycle require committed source identity;
+// 6. Release CI and npm's prepublish lifecycle require committed source identity;
 // local review builds intentionally run against a dirty managed Worktree.
 const requireClean = process.env.CHECK_PUBLISH_REQUIRE_CLEAN === '1'
   || process.argv.includes('--require-clean')

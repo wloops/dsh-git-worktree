@@ -1,0 +1,295 @@
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import type { SessionCheckoutModule } from '../src/index.js'
+import type {
+  ManagedCheckoutRecord,
+  ManagedCheckoutsRegistry,
+  SessionCheckoutFilesPort,
+  SessionCheckoutGitPort,
+  SessionCheckoutLookupPort,
+  SessionCheckoutRegistryPort,
+} from '../src/ports.js'
+import type { SessionTargetView } from '../src/types.js'
+import { createWorktreeConsoleControlPlane } from '../src/console-host/control-plane.js'
+import {
+  createGitWorktreeReviewDiffReader,
+  REVIEW_DIFF_MAX_PATCH_BYTES,
+  REVIEW_DIFF_MAX_PAYLOAD_BYTES,
+} from '../src/console-host/review-diff.js'
+
+const A = 'a'.repeat(40)
+const B = 'b'.repeat(40)
+
+function runGit(cwd: string, args: string[]): string {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stderr)
+  return result.stdout.trim()
+}
+
+function local(sessionId = 'source-session'): SessionTargetView {
+  return {
+    project: { id: 'project-1', name: 'Project' },
+    checkout: { id: 'local', kind: 'local', label: 'Local', phase: 'ready' },
+    source: { ref: 'refs/heads/main', oid: A },
+    current: { branch: 'main', oid: A },
+    ownership: 'owner', dirty: false, revision: 1,
+  }
+}
+
+function readyRecord(): ManagedCheckoutRecord {
+  return {
+    checkoutId: 'checkout-1', projectId: 'project-1', projectName: 'Project',
+    ownerSessionId: 'target-session', sourceSessionId: 'source-session',
+    localRoot: '/local', managedRoot: '/managed', managedGitRoot: '/managed',
+    gitCommonDir: '/git/common', gitDir: '/git/worktrees/one', baseOid: A,
+    sourceRef: 'refs/heads/main', phase: 'ready', journal: null, revision: 7,
+    delivery: {
+      state: 'ready_for_review',
+      review: {
+        reviewId: 'review-1', iteration: 1, preparedAt: 1, summary: 'Ready',
+        validationStatus: 'passed', tests: [], changedFiles: ['src/index.ts'],
+        suggestedCommitMessage: 'fix: persisted review', isolatedFingerprint: 'fingerprint-1', isolatedHeadOid: B,
+      },
+    },
+  }
+}
+
+function registry(record = readyRecord()): SessionCheckoutRegistryPort {
+  const value: ManagedCheckoutsRegistry = {
+    version: 2, revision: 1, sessionBindings: {}, managedCheckouts: { [record.checkoutId]: record },
+  }
+  return { read: () => structuredClone(value), write: vi.fn() }
+}
+
+function moduleDouble(record = readyRecord()): SessionCheckoutModule {
+  const isolated: SessionTargetView = {
+    project: { id: record.projectId, name: record.projectName },
+    checkout: { id: record.checkoutId, kind: 'isolated', label: 'Task', phase: record.phase },
+    source: { ref: record.sourceRef, oid: record.baseOid },
+    current: { branch: null, oid: B }, ownership: 'owner', dirty: true, revision: record.revision,
+    delivery: {
+      state: 'ready_for_review',
+      review: {
+        reviewId: 'review-1', iteration: 1, preparedAt: 1, summary: 'Ready', validationStatus: 'passed',
+        tests: [], changedFiles: ['src/index.ts'], suggestedCommitMessage: 'fix: persisted review',
+      },
+    },
+  }
+  return {
+    inspect: vi.fn(async sessionId => sessionId === 'target-session' ? isolated : local(sessionId)),
+    runtimeContext: vi.fn(),
+    preflight: vi.fn(async () => ({
+      status: 'ready', localModified: false, checkoutId: record.checkoutId, reviewId: 'review-1', revision: 7,
+      configuredBaseOid: A, effectiveBaseOid: A, baseStrategy: 'recorded_base', localBranch: 'main',
+      localHeadOid: A, isolatedHeadOid: B, changedFiles: ['src/index.ts'],
+    })),
+    runExclusiveSessionMutation: vi.fn(), bind: vi.fn(), beginNextIteration: vi.fn(), markReadyForReview: vi.fn(),
+    createIsolatedTarget: vi.fn(async (sourceSessionId, targetSessionId) => ({ targetSessionId, managedRoot: '/managed', target: isolated })),
+    operate: vi.fn(), listManagedWorktrees: vi.fn(), inspectManagedWorktreeCleanup: vi.fn(), bulkCleanupManagedWorktrees: vi.fn(),
+    listManagedWorktreesForSession: vi.fn(async sessionId => sessionId === 'intruder-session' ? [] : [{
+      checkoutId: record.checkoutId, revision: record.revision, ownerSessionId: record.ownerSessionId, ownerSessionTitle: 'Task',
+      project: { id: record.projectId, name: record.projectName }, iteration: 1, state: 'ready_for_review', phase: record.phase,
+      dirty: true, commitOid: null, approximateBytes: null, updatedAt: 1, canCleanup: false,
+    }]),
+    manageManagedWorktreeForSession: vi.fn(), manageManagedWorktree: vi.fn(),
+    resolveManagedRoot: vi.fn(async () => '/managed'), cleanupExpiredRetained: vi.fn(), reconcile: vi.fn(),
+  } as unknown as SessionCheckoutModule
+}
+
+function lookupDouble(): SessionCheckoutLookupPort {
+  return {
+    getSession: sessionId => ({ id: sessionId, projectId: sessionId === 'target-session' ? 'workspace-target' : 'project-1' }),
+    getProject: projectId => ({ id: projectId, name: 'Project', root: projectId === 'workspace-target' ? '/managed' : '/local' }),
+  }
+}
+
+function filesDouble(): SessionCheckoutFilesPort {
+  return {
+    exists: () => true,
+    canonicalize: vi.fn(async path => path),
+    inspectDirectoryIdentity: vi.fn(), ensureDirectory: vi.fn(), removeEmptyDirectoryTree: vi.fn(),
+    quarantineDirectoryTree: vi.fn(), removeDirectoryTree: vi.fn(), measureDirectoryBytes: vi.fn(),
+  }
+}
+
+function gitDouble(): SessionCheckoutGitPort {
+  return {
+    inspect: vi.fn(async () => ({ root: '/managed', commonDir: '/git/common', gitDir: '/git/worktrees/one', branch: null, headOid: B, headRef: 'HEAD' })),
+    findContainingWorktreeRoot: vi.fn(), status: vi.fn(async () => ({ dirty: true })), createDetachedWorktree: vi.fn(),
+    removeWorktree: vi.fn(), retainApplyBase: vi.fn(), releaseApplyBase: vi.fn(), retainInternalArtifact: vi.fn(),
+    releaseInternalArtifacts: vi.fn(), isAncestor: vi.fn(),
+  }
+}
+
+function plane(record = readyRecord(), overrides: { lookup?: SessionCheckoutLookupPort; files?: SessionCheckoutFilesPort } = {}) {
+  const module = moduleDouble(record)
+  return {
+    module,
+    control: createWorktreeConsoleControlPlane({
+      module,
+      lookup: overrides.lookup ?? lookupDouble(),
+      files: overrides.files ?? filesDouble(),
+      registry: registry(record), git: gitDouble(), createTargetSessionId: () => 'host-target',
+      reviewDiff: { read: vi.fn(async input => ({ reviewId: input.reviewId, revision: input.revision, files: [], truncated: false })) },
+    }),
+  }
+}
+
+describe('Worktree Console Host control plane', () => {
+  it('allocates target identity on Host and never changes the source Session target', async () => {
+    const record = readyRecord()
+    record.ownerSessionId = 'host-target'
+    const { module, control } = plane(record)
+    const result = await control.create('source-session')
+    expect(result).toMatchObject({ ok: true, value: { targetSessionId: 'host-target', managedRoot: '/managed' } })
+    expect(module.createIsolatedTarget).toHaveBeenCalledWith('source-session', 'host-target')
+    expect(module.inspect).not.toHaveBeenCalledWith('host-target')
+  })
+
+  it('rejects a live same-project Session that is neither source nor owner before revealing managedRoot', async () => {
+    const { module, control } = plane()
+    const result = await control.inspect('intruder-session', 'checkout-1')
+    expect(result).toEqual({ ok: false, error: { code: 'not_owner', message: '当前 Session 无权访问该 Worktree' } })
+    expect(module.resolveManagedRoot).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the live owner Workspace cwd no longer matches managedRoot', async () => {
+    const lookup = lookupDouble()
+    lookup.getProject = vi.fn(projectId => ({ id: projectId, name: 'Project', root: '/elsewhere' }))
+    const { module, control } = plane(readyRecord(), { lookup })
+    const result = await control.inspect('target-session', 'checkout-1')
+    expect(result).toMatchObject({ ok: false, error: { code: 'project_mismatch' } })
+    expect(module.resolveManagedRoot).not.toHaveBeenCalled()
+  })
+
+  it('keeps list rows path-free while authorized detail contains the validated managedRoot', async () => {
+    const { control } = plane()
+    const listed = await control.list({ sessionId: 'source-session' })
+    expect(listed.ok).toBe(true)
+    if (!listed.ok) throw new Error('expected list success')
+    expect(listed.value.worktrees).toHaveLength(1)
+    expect(listed.value.worktrees[0]).not.toHaveProperty('managedRoot')
+    const inspected = await control.inspect('source-session', 'checkout-1')
+    expect(inspected).toMatchObject({ ok: true, value: { target: { managedRoot: '/managed' } } })
+  })
+
+  it('finalizes only the persisted review identity and persisted commit message', async () => {
+    const { module, control } = plane()
+    vi.mocked(module.operate).mockResolvedValue({
+      status: 'finished', target: local(), changedFiles: ['src/index.ts'], commitOid: B, cleanup: 'discarded',
+    })
+    const result = await control.finalize({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7,
+      expectedReviewId: 'review-1', retention: 'cleanup',
+    })
+    expect(result.ok).toBe(true)
+    expect(module.operate).toHaveBeenCalledWith({
+      sessionId: 'target-session', expectedRevision: 7, action: 'finish', expectedReviewId: 'review-1',
+      commitMessage: 'fix: persisted review', retention: 'cleanup',
+    })
+  })
+
+  it('forwards discard, retention, and cleanup mutations through caller-scoped module CAS APIs', async () => {
+    const { module, control } = plane()
+    await control.discard({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 7, confirmDirty: true })
+    await control.setRetention({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 8, retention: 'retain_manual' })
+    await control.retryCleanup({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 9 })
+    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(1, 'source-session', {
+      checkoutId: 'checkout-1', expectedRevision: 7, action: 'discard', confirmDirty: true,
+    })
+    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(2, 'source-session', {
+      checkoutId: 'checkout-1', expectedRevision: 8, action: 'set_retention', retention: 'retain_manual',
+    })
+    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(3, 'source-session', {
+      checkoutId: 'checkout-1', expectedRevision: 9, action: 'retry_cleanup',
+    })
+  })
+
+  it('drops all diff bytes when the reviewed snapshot becomes stale during the read', async () => {
+    const { module, control } = plane()
+    vi.mocked(module.preflight!).mockResolvedValueOnce({
+      status: 'ready', localModified: false, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
+      configuredBaseOid: A, effectiveBaseOid: A, baseStrategy: 'recorded_base', localBranch: 'main',
+      localHeadOid: A, isolatedHeadOid: B, changedFiles: ['src/index.ts'],
+    }).mockResolvedValueOnce({
+      status: 'blocked', localModified: false, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
+      reason: 'stale_isolated', message: 'changed after review',
+    })
+    const result = await control.reviewDiff({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    })
+    expect(result).toEqual({ ok: false, error: { code: 'stale_isolated', message: 'Ready 后 Isolated 内容已变化，Diff bytes 已丢弃' } })
+    expect(JSON.stringify(result)).not.toContain('@@')
+  })
+
+  it('enforces the complete 1 MiB response budget across individually bounded patches', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-console-total-budget-'))
+    try {
+      runGit(root, ['init'])
+      runGit(root, ['config', 'user.email', 'fixture@example.com'])
+      runGit(root, ['config', 'user.name', 'Fixture'])
+      writeFileSync(join(root, 'base.txt'), 'base\n')
+      runGit(root, ['add', '.'])
+      runGit(root, ['commit', '-m', 'base'])
+      const baseOid = runGit(root, ['rev-parse', 'HEAD'])
+      const changedFiles: string[] = []
+      for (let index = 0; index < 12; index += 1) {
+        const path = `large-${String(index).padStart(2, '0')}.txt`
+        changedFiles.push(path)
+        writeFileSync(join(root, path), `${String(index)}${'x'.repeat(REVIEW_DIFF_MAX_PATCH_BYTES + 4096)}`)
+      }
+      const result = await createGitWorktreeReviewDiffReader().read({
+        managedRoot: root, baseOid, reviewId: 'review-total', revision: 8, changedFiles,
+      })
+      expect(result.truncated).toBe(true)
+      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(REVIEW_DIFF_MAX_PAYLOAD_BYTES)
+      expect(result.files.length).toBeLessThan(changedFiles.length)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('renders binary and rename entries within the file, patch, and file-count budgets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-console-diff-test-'))
+    try {
+      runGit(root, ['init'])
+      runGit(root, ['config', 'user.email', 'fixture@example.com'])
+      runGit(root, ['config', 'user.name', 'Fixture'])
+      writeFileSync(join(root, '000-binary.bin'), Buffer.from([0, 1, 2]))
+      writeFileSync(join(root, '001-old.txt'), 'old\n')
+      writeFileSync(join(root, 'base.txt'), 'base\n')
+      runGit(root, ['add', '.'])
+      runGit(root, ['commit', '-m', 'base'])
+      const baseOid = runGit(root, ['rev-parse', 'HEAD'])
+
+      writeFileSync(join(root, '000-binary.bin'), Buffer.from([0, 9, 8, 7]))
+      runGit(root, ['mv', '001-old.txt', '001-new.txt'])
+      writeFileSync(join(root, '002-large.txt'), 'x'.repeat(REVIEW_DIFF_MAX_PATCH_BYTES + 4096))
+      const extra: string[] = []
+      for (let index = 0; index < 201; index += 1) {
+        const path = `100-file-${String(index).padStart(3, '0')}.txt`
+        extra.push(path)
+        writeFileSync(join(root, path), `${index}\n`)
+      }
+      const changedFiles = ['000-binary.bin', '001-old.txt', '001-new.txt', '002-large.txt', ...extra].sort()
+      const result = await createGitWorktreeReviewDiffReader().read({
+        managedRoot: root, baseOid, reviewId: 'review-1', revision: 7, changedFiles,
+      })
+
+      expect(result.files).toHaveLength(200)
+      expect(result.truncated).toBe(true)
+      expect(result.files.find(file => file.path === '000-binary.bin')).toMatchObject({ status: 'binary', patch: null })
+      expect(result.files.find(file => file.path === '001-new.txt')).toMatchObject({ status: 'renamed', previousPath: '001-old.txt' })
+      const large = result.files.find(file => file.path === '002-large.txt')
+      expect(large?.truncated).toBe(true)
+      expect(Buffer.byteLength(large?.patch ?? '', 'utf8')).toBeLessThanOrEqual(REVIEW_DIFF_MAX_PATCH_BYTES)
+      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(REVIEW_DIFF_MAX_PAYLOAD_BYTES)
+      expect(result.files.every(file => !file.path.startsWith('/') && !file.path.includes('..'))).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 30_000)
+})

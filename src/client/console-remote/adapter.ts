@@ -1,0 +1,66 @@
+import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type {
+  WorktreeConsoleAdapter,
+  WorktreeConsoleCreateResponse,
+  WorktreeConsoleCurrentResponse,
+  WorktreeConsoleInspectResponse,
+  WorktreeConsoleListResponse,
+  WorktreeConsoleMutationResponse,
+  WorktreeConsoleOutcome,
+  WorktreeConsoleReviewDiffResponse,
+} from '../../console-contract.js'
+import type { GitWorktreeRemote } from '../../console-remote/remote.js'
+import { WORKTREE_CONSOLE_DESCRIPTORS } from '../../console-remote/descriptors.js'
+
+function transport<T>(message: string): WorktreeConsoleOutcome<T> {
+  return { ok: false, error: { code: 'transport_unavailable', message } }
+}
+
+function malformed<T>(method: string): WorktreeConsoleOutcome<T> {
+  return { ok: false, error: { code: 'malformed_response', message: `Remote ${method} 返回了不符合 strict contract 的 payload` } }
+}
+
+function messageOf(value: unknown): string {
+  if (value instanceof Error) return value.message
+  if (typeof value === 'object' && value !== null && 'message' in value) return String(value.message)
+  return String(value)
+}
+
+function isCodecRejection(value: unknown): boolean {
+  const message = messageOf(value)
+  return message.includes('rejected "') || message.includes('返回了不符合 strict contract')
+}
+
+export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): WorktreeConsoleAdapter {
+  const descriptors = new Map(WORKTREE_CONSOLE_DESCRIPTORS.map(descriptor => [descriptor.method, descriptor]))
+
+  async function invoke<T>(method: string, call: () => Promise<RemoteResult<WorktreeConsoleOutcome<T>>>): Promise<WorktreeConsoleOutcome<T>> {
+    let carrier: RemoteResult<WorktreeConsoleOutcome<T>>
+    try {
+      carrier = await call()
+    } catch (error) {
+      return isCodecRejection(error) ? malformed(method) : transport(messageOf(error))
+    }
+    if (typeof carrier !== 'object' || carrier === null || typeof carrier.ok !== 'boolean') return malformed(method)
+    if (!carrier.ok) return isCodecRejection(carrier.error) ? malformed(method) : transport(carrier.error.message)
+    const descriptor = descriptors.get(method)
+    if (descriptor?.result.mode !== 'strict') return malformed(method)
+    try {
+      return descriptor.result.schema.parse(carrier.value) as WorktreeConsoleOutcome<T>
+    } catch {
+      return malformed(method)
+    }
+  }
+
+  return {
+    current: request => invoke<WorktreeConsoleCurrentResponse>('current', () => remote.current(request.sessionId)),
+    list: request => invoke<WorktreeConsoleListResponse>('list', () => remote.list(request.sessionId, request.needsAttention, request.includeDelivered)),
+    create: request => invoke<WorktreeConsoleCreateResponse>('create', () => remote.create(request.sourceSessionId)),
+    inspect: request => invoke<WorktreeConsoleInspectResponse>('inspect', () => remote.inspect(request.sessionId, request.checkoutId)),
+    reviewDiff: request => invoke<WorktreeConsoleReviewDiffResponse>('reviewDiff', () => remote.reviewDiff(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
+    discard: request => invoke<WorktreeConsoleMutationResponse>('discard', () => remote.discard(request.sessionId, request.checkoutId, request.expectedRevision, request.confirmDirty)),
+    finalize: request => invoke<WorktreeConsoleMutationResponse>('finalize', () => remote.finalize(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.retention)),
+    setRetention: request => invoke<WorktreeConsoleMutationResponse>('setRetention', () => remote.setRetention(request.sessionId, request.checkoutId, request.expectedRevision, request.retention)),
+    retryCleanup: request => invoke<WorktreeConsoleMutationResponse>('retryCleanup', () => remote.retryCleanup(request.sessionId, request.checkoutId, request.expectedRevision)),
+  }
+}

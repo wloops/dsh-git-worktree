@@ -124,6 +124,9 @@ import { createSessionCheckoutModule } from './session-checkout-module.js'
 import { registerTools } from './tools.js'
 import { registerWorktreeCommand } from './commands.js'
 import { registerSessionTargetContext } from './session-target-context.js'
+import { createWorktreeConsoleControlPlane } from './console-host/control-plane.js'
+import { createGitWorktreeReviewDiffReader } from './console-host/review-diff.js'
+import { WorktreeConsoleService } from './console-host/service.js'
 
 export * from './console-contract.js'
 
@@ -162,15 +165,28 @@ export function apply(ctx: Context, config: { stateDir?: string } = {}): void {
   const hooksPath = join(stateDir, 'disabled-git-hooks')
   mkdirSync(hooksPath, { recursive: true })
 
+  const lookup = createDshLookupPort(ctx)
+  const git = createDshGitPort(ctx, { hooksPath })
+  const files = createNodeFilesPort()
+  const registry = new AtomicJsonCheckoutRegistry(join(stateDir, 'managed-checkouts.json'))
   const module = createSessionCheckoutModule({
-    lookup: createDshLookupPort(ctx),
-    git: createDshGitPort(ctx, { hooksPath }),
-    files: createNodeFilesPort(),
-    registry: new AtomicJsonCheckoutRegistry(join(stateDir, 'managed-checkouts.json')),
+    lookup,
+    git,
+    files,
+    registry,
     applyEngine: createSessionCheckoutApplyEngine(),
     managedCheckoutsRoot: stateDir,
     createCheckoutId: randomUUID,
   })
+
+  new WorktreeConsoleService(ctx, createWorktreeConsoleControlPlane({
+    module,
+    lookup,
+    files,
+    registry,
+    git,
+    reviewDiff: createGitWorktreeReviewDiffReader(),
+  }))
 
   registerTools(ctx, module)
   registerWorktreeCommand(ctx, module)
