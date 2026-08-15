@@ -19,6 +19,7 @@
   },
   "files": [
     "lib",
+    "scripts",
     "cordis.patch.yml"
   ],
   "license": "MIT",
@@ -52,6 +53,10 @@
     "prepare": "pnpm run build",
     "check:publish": "node scripts/check-publish.mjs",
     "check:publish:release": "node scripts/check-publish.mjs --require-clean",
+    "dev:dsh": "node scripts/dev-dsh.mjs run",
+    "dev:dsh:install": "node scripts/dev-dsh.mjs install",
+    "dev:dsh:smoke": "node scripts/dev-dsh.mjs smoke",
+    "dev:dsh:remove": "node scripts/dev-dsh.mjs remove",
     "prepublishOnly": "pnpm run build && pnpm run check:publish:release && pnpm run test"
   },
   "dependencies": {

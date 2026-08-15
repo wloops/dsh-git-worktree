@@ -62,6 +62,34 @@ On pnpm >= 10, Git installs may require `dsh-git-worktree: true` under `allowBui
 
 Requires the DeepSeek Harness `0.1.0-rc.6` package line and the Web client for interactive ToolViews.
 
+## One-command local development
+
+For repeated iterations, run this from any current checkout, including a Domi managed Worktree:
+
+```bash
+pnpm run dev:dsh
+```
+
+The command runs typecheck/build, packs the **current checkout snapshot** into a local tarball under the OS temporary directory, installs it into the `web` profile, checks the composed config, creates or reuses a marker-protected disposable Git fixture, and finally starts `dsh web` from that fixture cwd (default `http://127.0.0.1:3081`). If a `DeepSeek/deepseek-harness` source checkout is found in the same development tree, it is preferred for launching DSH while the Session workspace remains the fixture; `DSH_HARNESS_ROOT` or `--harness <path>` can override it. The installed `dsh` on PATH is used only when no source checkout is available. The workflow never runs `npm publish`, pushes Git refs, or creates tags, and it does not leave a symlink pointing at a cleaned managed Worktree. The tarball currently referenced by the profile is retained; older local snapshots are cleaned after a successful install.
+
+Useful entry points:
+
+```bash
+# Install and verify the current snapshot without starting Web
+pnpm run dev:dsh:install
+
+# Check the already-installed profile only
+pnpm run dev:dsh:smoke
+
+# Use an existing Git repository or another port/profile
+pnpm run dev:dsh -- --repo G:/path/to/repo --port 4090 --profile web
+
+# Explicitly uninstall from the profile and clear local development tarballs
+pnpm run dev:dsh:remove
+```
+
+The default fixture is `dsh-git-worktree-dev/fixture` under the OS temporary directory. The workflow initializes only an absent or empty directory. Reuse requires its plugin marker, the exact Git-root identity, a clean status, and no leftover linked Worktrees. Unknown files, dirty state, symlinks, or retained Worktrees fail closed; the script never resets or deletes repository content. An explicit `--repo` must already be a Git root and is validated without initialization or rewriting.
+
 ## Current limitations
 
 - No reversible Local Preview / Finalize / Rollback layer. The old direct `worktree_apply` surface is disabled.

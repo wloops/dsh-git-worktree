@@ -62,6 +62,34 @@ pnpm >= 10 可能会拦截 Git 依赖的构建脚本；在 profile 的 `pnpm-wor
 
 要求 DeepSeek Harness `0.1.0-rc.6` 包线；交互 ToolView 需要 Web Client。
 
+## 一键本地开发测试
+
+持续迭代时，在任意当前 checkout（包括 Domi managed Worktree）中运行：
+
+```bash
+pnpm run dev:dsh
+```
+
+该命令会自动执行 typecheck/build，把**当前 checkout 快照**打成 OS 临时目录中的本地 tarball，安装到 `web` profile，检查组合配置，创建或复用 marker 保护的临时 Git fixture，最后从 fixture cwd 启动 `dsh web`（默认 `http://127.0.0.1:3081`）。如果检测到同一开发目录下的 `DeepSeek/deepseek-harness` 源码 checkout，会优先用它启动 DSH，同时仍把 Session workspace 保持为 fixture；也可用 `DSH_HARNESS_ROOT` 或 `--harness <path>` 指定。找不到源码 checkout 时才使用 PATH 中已安装的 `dsh`。它不会运行 `npm publish`、Git push 或创建 tag，也不会留下指向已清理 managed Worktree 的软链接。profile 当前引用的 tarball 会保留，成功安装新快照后会清理旧 tarball。
+
+常用入口：
+
+```bash
+# 只安装当前快照并验证配置，不启动 Web
+pnpm run dev:dsh:install
+
+# 只检查已安装 profile
+pnpm run dev:dsh:smoke
+
+# 使用现有 Git 仓库或其他端口/profile
+pnpm run dev:dsh -- --repo G:/path/to/repo --port 4090 --profile web
+
+# 显式从 profile 卸载，并清理本地开发 tarball
+pnpm run dev:dsh:remove
+```
+
+默认 fixture 位于系统临时目录 `dsh-git-worktree-dev/fixture`。它只会初始化不存在或为空的目录；复用时必须具有插件 marker、Git 根身份正确、状态干净且没有遗留 linked Worktree。遇到未知文件、脏状态、符号链接或残留 Worktree 会 fail closed，脚本绝不会自动 reset 或删除内容。显式 `--repo` 必须指向已经存在的 Git 根，脚本只验证、不初始化或改写它。
+
 ## 当前限制
 
 - 尚无可逆 Local Preview / Finalize / Rollback 层；旧 `worktree_apply` 入口已禁用。
