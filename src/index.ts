@@ -110,7 +110,10 @@ import { registerTools } from './tools.js'
 import { registerWorktreeCommand } from './commands.js'
 
 const name = 'git-worktree'
-const inject = ['tools', 'commands', 'subprocess']
+// Named export: the loader reads inject/apply named exports as plugin
+// metadata. A bare function export mounts with no injection list, and the
+// first ctx.tools access then fails with "cannot get property without inject".
+export const inject = ['tools', 'commands', 'subprocess']
 
 const Config = z.object({
   /**

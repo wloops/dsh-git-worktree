@@ -5,6 +5,7 @@
  * tarball) and 0.1.1 (inject not exported as plugin metadata). Every check
  * here maps to a real failure mode of `dsh plugin --profile <p> add <pkg>`.
  */
+import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,5 +50,18 @@ const entry = readFileSync(resolve(root, entryRel), 'utf8')
 if (!/export\s+function\s+apply\b/.test(entry)) fail(`${entryRel} does not export "function apply"`)
 if (!/export\s+const\s+inject\b/.test(entry)) fail(`${entryRel} does not export "const inject" — the loader mounts with no injection list and crashes on the first ctx.<service> access`)
 ok(`${entryRel} exports apply + inject`)
+
+// 5. The git source must match the working tree. npm tarballs pack the
+//    working tree, but git installs (github:...#<tag>) rebuild from COMMITTED
+//    source — an uncommitted fix that passes every tarball check above still
+//    ships a broken git install under the same version number.
+let dirty = ''
+try {
+  dirty = execSync('git status --porcelain --untracked-files=no', { cwd: root, encoding: 'utf8' })
+} catch {
+  // Not a git checkout — nothing to compare against.
+}
+if (dirty.trim() !== '') fail(`working tree differs from HEAD — git installs build from committed source, so commit first:\n${dirty}`)
+ok('working tree matches HEAD')
 
 console.log('check-publish: all checks passed')
