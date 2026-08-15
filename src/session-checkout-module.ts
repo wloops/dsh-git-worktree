@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type {
@@ -20,7 +19,6 @@ import type {
   WorktreeRetentionMode,
 } from './types.js'
 import { SessionCheckoutError } from './index.js'
-import { createManagedWorktreePathCandidates } from './managed-worktree-path.js'
 import type {
   ListManagedWorktreesInput,
   ManageManagedWorktreeInput,
@@ -534,7 +532,7 @@ export function createSessionCheckoutModule(
     const quarantinePath = journal?.cleanupQuarantinePath
     const expectedIdentity = journal?.managedDirectoryIdentity
     if (!quarantinePath || !expectedIdentity || !dependencies.files.exists(quarantinePath)) return undefined
-    const expectedName = `.domi-cleanup--${record.checkoutId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}--${journal.operationId}`
+    const expectedName = `.dsh-wt-cleanup--${record.checkoutId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}--${journal.operationId}`
     if (!resolvedPathsEqual(dirname(quarantinePath), dirname(record.managedGitRoot)) || basename(quarantinePath) !== expectedName) return undefined
     try {
       if (!await validateCleanupLocalIdentity(record)) return undefined
@@ -1289,7 +1287,7 @@ export function createSessionCheckoutModule(
       if (!journal?.managedDirectoryIdentity) throw new SessionCheckoutError('checkout_mismatch', 'Worktree cleanup receipt 不完整')
       const quarantinePath = journal.cleanupQuarantinePath ?? join(
         dirname(currentRecord.managedGitRoot),
-        `.domi-cleanup--${currentRecord.checkoutId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}--${journal.operationId}`,
+        `.dsh-wt-cleanup--${currentRecord.checkoutId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}--${journal.operationId}`,
       )
       const quarantining = journal.cleanupQuarantinePath
         ? currentRecord
@@ -2030,6 +2028,14 @@ export function createSessionCheckoutModule(
     return summarizeManagedWorktree(updated)
   }
 
+  async function resolveManagedRoot(checkoutId: string): Promise<string> {
+    const record = dependencies.registry.read().managedCheckouts[checkoutId]
+    if (!record || record.phase === 'discarded') throw new SessionCheckoutError('checkout_missing', 'Worktree 目录已不存在')
+    const validated = await validateManagedCheckout(bindingForManagedRecord(record), record, false)
+    if (!validated) throw new SessionCheckoutError('checkout_mismatch', 'Worktree 目录身份无法验证')
+    return validated.canonicalManagedRoot
+  }
+
   async function cleanupExpiredRetained(now = Date.now()): Promise<string[]> {
     const expired = Object.values(dependencies.registry.read().managedCheckouts).filter((record) => (
       record.phase === 'retained'
@@ -2121,44 +2127,10 @@ export function createSessionCheckoutModule(
       }
       // managed Worktree 不再使用全局数量硬上限；生命周期通过交付后清理收口。
       const checkoutId = dependencies.createCheckoutId()
-      const repositoryKey = createHash('sha256').update(snapshot.commonDir).digest('hex').slice(0, 10)
       const localRoot = await dependencies.files.canonicalize(project.root)
       const localGitRoot = await dependencies.files.canonicalize(snapshot.root)
-      const pathCandidates = createManagedWorktreePathCandidates({
-        localGitRoot,
-        managedCheckoutsRoot: dependencies.managedCheckoutsRoot,
-        repositoryKey,
-        sessionId: session.id,
-        sessionTitle: session.title,
-        checkoutId,
-        iteration: nextIteration,
-      })
-      let managedGitRoot = pathCandidates.fallbackRoot
-      const siblingParent = dirname(localGitRoot)
-      if (!pathsEqual(siblingParent, localGitRoot)) {
-        const outerWorktreeRoot = await dependencies.git.findContainingWorktreeRoot(siblingParent)
-        if (!outerWorktreeRoot) {
-          try {
-            dependencies.files.ensureDirectory(pathCandidates.siblingContainer)
-            const containerWorktreeRoot = await dependencies.git.findContainingWorktreeRoot(
-              pathCandidates.siblingContainer,
-            )
-            if (!containerWorktreeRoot) {
-              managedGitRoot = pathCandidates.siblingRoot
-            } else {
-              console.warn(
-                `[session-checkout] Worktree 同级容器位于 Git checkout 内，回退到 dsh-git-worktree 数据目录: ${containerWorktreeRoot}`,
-              )
-            }
-          } catch (error) {
-            console.warn('[session-checkout] 无法创建 Worktree 同级容器，回退到 dsh-git-worktree 数据目录:', error)
-          }
-        } else {
-          console.warn(
-            `[session-checkout] Git 根目录父级属于外层 checkout，回退到 dsh-git-worktree 数据目录: ${outerWorktreeRoot}`,
-          )
-        }
-      }
+      // DSH workspace-write 沙箱只允许项目根目录内写入，worktree 必须放在仓库内部。
+      const managedGitRoot = join(localGitRoot, '.dsh-worktrees')
       dependencies.files.ensureDirectory(dirname(managedGitRoot))
       const projectRelativePath = relative(localGitRoot, localRoot)
       if (projectRelativePath.startsWith('..') || isAbsolute(projectRelativePath)) {
@@ -2300,6 +2272,7 @@ export function createSessionCheckoutModule(
     inspectManagedWorktreeCleanup,
     bulkCleanupManagedWorktrees: (candidates) => withBindingLock(() => bulkCleanupManagedWorktrees(candidates)),
     manageManagedWorktree: (input) => withBindingLock(() => manageManagedWorktree(input)),
+    resolveManagedRoot: (checkoutId) => withBindingLock(() => resolveManagedRoot(checkoutId)),
     cleanupExpiredRetained: (now) => withBindingLock(
       () => cleanupExpiredRetained(now),
       { allowConcurrentInspect: true },

@@ -6,10 +6,11 @@
  * @module dsh-git-worktree/adapters/registry
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { ManagedCheckoutsRegistry, SessionCheckoutRegistryPort } from '../ports.js'
 import { SessionCheckoutError } from '../index.js'
+import { readJsonFileSafe, writeJsonFileAtomic } from './safe-file.js'
 
 function emptyRegistry(): ManagedCheckoutsRegistry {
   return {
@@ -227,22 +228,7 @@ function migrateLegacyRegistry(value: unknown): ManagedCheckoutsRegistry | null 
   }
 }
 
-function readJsonFileSafe<T>(path: string): T | undefined {
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as T
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  }
-}
-
-function writeJsonFileAtomic(path: string, value: unknown): void {
-  const tmp = `${path}.tmp-${process.pid}`
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  renameSync(tmp, path)
-}
-
-/** Atomic JSON registry file. */
+/** Atomic JSON registry file with `.tmp`/`.bak` crash recovery (see safe-file). */
 export class AtomicJsonCheckoutRegistry implements SessionCheckoutRegistryPort {
   constructor(private readonly path: string) {}
 
