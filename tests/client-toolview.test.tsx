@@ -76,7 +76,7 @@ describe('Worktree ToolViews', () => {
     })
   })
 
-  test('Review card sends finalize only as an explicit user command', async () => {
+  test('Review card replays logged evidence and disables mutation without the live Console adapter', () => {
     const client = services()
     const args = {
       summary: '真实 Session Target',
@@ -106,7 +106,8 @@ describe('Worktree ToolViews', () => {
 
     expect(screen.getByText('真实 Session Target')).toBeTruthy()
     expect(screen.getByText('src/index.ts')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '提交并清理' }))
-    await waitFor(() => expect(client.commands).toEqual(['/worktree finalize review-1 4 cleanup']))
+    expect(screen.getByText(/连接后刷新/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Finalize cleanup' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(client.commands).toEqual([])
   })
 })

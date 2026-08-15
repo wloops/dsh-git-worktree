@@ -1,3 +1,5 @@
+import { REVIEW_CONSOLE_STYLES } from './review-console/review-console.styles.js'
+
 export const WORKTREE_STYLES = String.raw`
 .dsh-wt-card {
   --wt-ink: color-mix(in srgb, currentColor 92%, transparent);
@@ -59,4 +61,5 @@ export const WORKTREE_STYLES = String.raw`
 .dsh-wt-retain-actions { display:flex; gap:6px; flex-wrap:wrap; }
 .dsh-wt-visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 @media (max-width: 560px) { .dsh-wt-grid { grid-template-columns:1fr; gap:3px; } .dsh-wt-label { margin-top:4px; } }
+${REVIEW_CONSOLE_STYLES}
 `

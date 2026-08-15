@@ -108,14 +108,47 @@ export function parseCreateTool(block: ToolCallBlockLike): ParsedTool<WorktreeCr
   return { lifecycle: state, payload: parsed as unknown as WorktreeCreatePayload, args: null, error: null }
 }
 
+function reviewArgs(value: unknown): ReviewArgs | null {
+  if (!isRecord(value)) return null
+  const summary = stringField(value, 'summary')
+  const validationStatus = value.validationStatus
+  const suggestedCommitMessage = stringField(value, 'suggestedCommitMessage')
+  if (!summary
+    || (validationStatus !== 'passed' && validationStatus !== 'failed' && validationStatus !== 'partial' && validationStatus !== 'not_run')
+    || !suggestedCommitMessage
+    || !Array.isArray(value.tests)) return null
+  const tests: ReviewArgs['tests'] = []
+  for (const item of value.tests) {
+    if (!isRecord(item)
+      || !stringField(item, 'command')
+      || (item.status !== 'passed' && item.status !== 'failed' && item.status !== 'not_run')
+      || (item.summary !== undefined && typeof item.summary !== 'string')) return null
+    tests.push({
+      command: item.command as string,
+      status: item.status,
+      ...(typeof item.summary === 'string' && item.summary !== '' ? { summary: item.summary } : {}),
+    })
+  }
+  if ((value.details !== undefined && typeof value.details !== 'string')
+    || (value.validationSummary !== undefined && typeof value.validationSummary !== 'string')) return null
+  return {
+    summary,
+    validationStatus,
+    tests,
+    suggestedCommitMessage,
+    ...(typeof value.details === 'string' && value.details !== '' ? { details: value.details } : {}),
+    ...(typeof value.validationSummary === 'string' && value.validationSummary !== '' ? { validationSummary: value.validationSummary } : {}),
+  }
+}
+
 export function parseReviewTool(block: ToolCallBlockLike): ParsedTool<WorktreeReviewPayload, ReviewArgs> {
   const state = lifecycle(block)
   const raw = textContent(block)
   const parsed = parseJson(raw ?? undefined)
   const argsRaw = block.kind ? block.call?.argsRaw : block.argsRaw
-  const parsedArgs = parseJson(argsRaw)
-  if (state === 'running') return { lifecycle: state, payload: null, args: isRecord(parsedArgs) ? parsedArgs as unknown as ReviewArgs : null, error: null }
-  if (state !== 'ok') return { lifecycle: state, payload: null, args: isRecord(parsedArgs) ? parsedArgs as unknown as ReviewArgs : null, error: raw ?? 'Ready for Review failed.' }
+  const parsedArgs = reviewArgs(parseJson(argsRaw))
+  if (state === 'running') return { lifecycle: state, payload: null, args: parsedArgs, error: null }
+  if (state !== 'ok') return { lifecycle: state, payload: null, args: parsedArgs, error: raw ?? 'Ready for Review failed.' }
   if (!isRecord(parsed)
     || parsed.kind !== 'worktree_ready_for_review'
     || parsed.state !== 'ready_for_review'
@@ -125,17 +158,13 @@ export function parseReviewTool(block: ToolCallBlockLike): ParsedTool<WorktreeRe
     || parsed.changedFiles.some((item) => typeof item !== 'string')) {
     return { lifecycle: 'error', payload: null, args: null, error: 'Malformed Ready for Review result.' }
   }
-  if (!isRecord(parsedArgs)
-    || !stringField(parsedArgs, 'summary')
-    || !stringField(parsedArgs, 'validationStatus')
-    || !Array.isArray(parsedArgs.tests)
-    || !stringField(parsedArgs, 'suggestedCommitMessage')) {
+  if (!parsedArgs) {
     return { lifecycle: 'error', payload: null, args: null, error: 'Malformed Ready for Review arguments.' }
   }
   return {
     lifecycle: state,
     payload: parsed as unknown as WorktreeReviewPayload,
-    args: parsedArgs as unknown as ReviewArgs,
+    args: parsedArgs,
     error: null,
   }
 }
