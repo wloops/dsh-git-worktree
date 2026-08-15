@@ -2204,7 +2204,11 @@ export function createSessionCheckoutModule(
       } catch (error) {
         let partialCheckout: GitCheckoutSnapshot | null = null
         try {
-          partialCheckout = await dependencies.git.inspect(managedRoot)
+          // 仓库内布局下，残余目录会被 git 识别为上层主仓库 checkout；
+          // 有效 worktree 必须带 .git 文件（git worktree add 创建），否则视为残余。
+          if (dependencies.files.exists(join(managedGitRoot, '.git'))) {
+            partialCheckout = await dependencies.git.inspect(managedRoot)
+          }
         } catch {
           partialCheckout = null
         }

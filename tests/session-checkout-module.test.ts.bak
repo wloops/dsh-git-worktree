@@ -1,0 +1,3260 @@
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import type { SessionCheckoutModule } from './index.ts'
+import type { SessionCheckoutApplyEngine } from './session-checkout-apply.ts'
+import type { SessionCheckoutTimingEvent } from './ports.ts'
+import { createSessionCheckoutModule } from './session-checkout-module.ts'
+import { createNodeSessionCheckoutDependencies } from './production-adapters.ts'
+
+interface TestSession {
+  id: string
+  projectId?: string
+  title?: string
+  sourceDelegationId?: string
+  delegationStatus?: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  delegationCheckoutReleasedAt?: number
+}
+
+interface TestProject {
+  id: string
+  name: string
+  root: string
+}
+
+interface ManagedInspectPause {
+  started: Promise<void>
+  resume(): void
+}
+
+interface DirectoryMeasurePause {
+  started: Promise<void>
+  resume(): void
+}
+
+interface TestContext {
+  root: string
+  configDir: string
+  projectRoot: string
+  repositoryRoot: string
+  module: SessionCheckoutModule
+  restart(): SessionCheckoutModule
+  pauseNextGitInspect(expectedPath?: string): ManagedInspectPause
+  failNextGitInspect(expectedPath?: string): void
+  pauseNextDirectoryMeasure(): DirectoryMeasurePause
+  getRemoveWorktreeCallCount(): number
+  getCreateWorktreeCallCount(): number
+  getMeasureDirectoryCallCount(): number
+  timingEvents: SessionCheckoutTimingEvent[]
+  setSessionProject(sessionId: string, projectId: string): void
+  setProjectRoot(projectId: string, root: string): void
+  addSession(sessionId: string, projectId: string, title?: string): void
+  setSessionDelegation(sessionId: string, status: TestSession['delegationStatus'] | 'paused', delegationId?: string): void
+  markSessionDelegationCheckoutReleased(sessionId: string): void
+  removeSession(sessionId: string): void
+  removeProject(projectId: string): void
+}
+
+const temporaryRoots: string[] = []
+
+// Real Git/worktree integration is slower and can briefly contend with Windows file scanning on shared runners.
+setDefaultTimeout(60_000)
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+function git(cwd: string, ...args: string[]): string {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf-8',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  })
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} 失败: ${result.stderr}`)
+  }
+  return result.stdout.trim()
+}
+
+function createContext(options: {
+  projectSubdirectory?: string
+  applyEngine?: SessionCheckoutApplyEngine
+  crashAfterWorktreeCreate?: boolean
+  createWorktreeFailures?: number
+  createWorktreeFailureLeavesFile?: boolean
+  removeWorktreeFailures?: number
+  transientRemoveWorktreeFailures?: number
+  removeWorktreeFailureLeavesResidue?: boolean
+  removeDirectoryTreeFailures?: number
+  outerRepository?: boolean
+  timingFailure?: boolean
+} = {}): TestContext {
+  const root = mkdtempSync(join(tmpdir(), 'domi-checkout-测试 空格-'))
+  temporaryRoots.push(root)
+  const repositoryRoot = join(root, '本地 project')
+  const projectRoot = options.projectSubdirectory
+    ? join(repositoryRoot, options.projectSubdirectory)
+    : repositoryRoot
+  const configDir = options.outerRepository
+    ? mkdtempSync(join(tmpdir(), 'domi-checkout-config-'))
+    : join(root, 'config')
+  if (options.outerRepository) temporaryRoots.push(configDir)
+  const sessions = new Map<string, TestSession>([
+    ['session-1', { id: 'session-1', projectId: 'project-1', title: '测试思路' }],
+    ['child-session', { id: 'child-session', projectId: 'project-1', title: '测试思路 (worktree)' }],
+  ])
+  const projects = new Map<string, TestProject>([
+    ['project-1', { id: 'project-1', name: '示例 Project', root: projectRoot }],
+  ])
+
+  if (options.outerRepository) {
+    git(root, 'init', '-b', 'outer')
+    git(root, 'config', 'user.name', 'Domi Outer Test')
+    git(root, 'config', 'user.email', 'domi-outer@example.test')
+    writeFileSync(join(root, 'outer.txt'), 'outer\n')
+    git(root, 'add', 'outer.txt')
+    git(root, 'commit', '-m', 'outer base')
+  }
+
+  git(root, 'init', '-b', 'main', repositoryRoot)
+  mkdirSync(projectRoot, { recursive: true })
+  git(projectRoot, 'config', 'user.name', 'Domi Test')
+  git(projectRoot, 'config', 'user.email', 'domi@example.test')
+  writeFileSync(join(projectRoot, 'tracked.txt'), 'base\n')
+  git(projectRoot, 'add', 'tracked.txt')
+  git(projectRoot, 'commit', '-m', 'base')
+
+  const timingEvents: SessionCheckoutTimingEvent[] = []
+  const recordTiming = (event: SessionCheckoutTimingEvent): void => {
+    if (options.timingFailure) throw new Error('模拟 timing writer 失败')
+    timingEvents.push(event)
+  }
+  const dependencies = createNodeSessionCheckoutDependencies({
+    configDir,
+    onTimingEvent: recordTiming,
+    lookup: {
+      getSession: (sessionId) => sessions.get(sessionId),
+      getProject: (projectId) => projects.get(projectId),
+      markDelegationCheckoutReleased: (sessionId, releasedAt) => {
+        const session = sessions.get(sessionId)
+        if (!session) throw new Error(`测试会话不存在: ${sessionId}`)
+        session.delegationCheckoutReleasedAt = releasedAt
+      },
+      getUnboundTargetPolicy: () => 'unselected',
+    },
+  })
+  const inspectGit = dependencies.git.inspect
+  let nextInspectPause: {
+    expectedPath?: string
+    signalStarted(): void
+    waitForResume: Promise<void>
+  } | undefined
+  let nextInspectFailurePath: string | undefined
+  dependencies.git.inspect = async (path) => {
+    const canonicalPath = realpathSync.native(path)
+    if (nextInspectFailurePath && canonicalPath === nextInspectFailurePath) {
+      nextInspectFailurePath = undefined
+      throw Object.assign(new Error('模拟 Git inspect 瞬时超时'), { code: 'ETIMEDOUT' })
+    }
+    const pause = nextInspectPause
+    if (pause && (!pause.expectedPath || canonicalPath === pause.expectedPath)) {
+      nextInspectPause = undefined
+      pause.signalStarted()
+      await pause.waitForResume
+    }
+    return inspectGit(path)
+  }
+  const removeWorktree = dependencies.git.removeWorktree
+  let removeWorktreeCallCount = 0
+  let removeWorktreeFailures = options.removeWorktreeFailures ?? 0
+  let transientRemoveWorktreeFailures = options.transientRemoveWorktreeFailures ?? 0
+  dependencies.git.removeWorktree = async (...args) => {
+    removeWorktreeCallCount += 1
+    if (transientRemoveWorktreeFailures > 0) {
+      transientRemoveWorktreeFailures -= 1
+      throw Object.assign(new Error('EPERM: Windows 正在使用 Worktree 目录'), { code: 'EPERM' })
+    }
+    if (removeWorktreeFailures > 0) {
+      removeWorktreeFailures -= 1
+      if (options.removeWorktreeFailureLeavesResidue) {
+        rmSync(join(args[1], '.git'), { force: true })
+        git(args[0], 'worktree', 'prune', '--expire', 'now')
+        mkdirSync(join(args[1], 'service', 'node_modules', 'locked-package'), { recursive: true })
+        mkdirSync(join(args[1], 'web', 'dist', 'assets'), { recursive: true })
+        mkdirSync(join(args[1], 'tmp', 'design-prototypes'), { recursive: true })
+        writeFileSync(join(args[1], 'service', 'node_modules', 'locked-package', 'index.js'), 'module.exports = true\n')
+        writeFileSync(join(args[1], 'web', 'dist', 'assets', 'bundle.js'), 'console.log("residue")\n')
+        writeFileSync(join(args[1], 'tmp', 'design-prototypes', 'notes.md'), '# cleanup residue\n')
+      }
+      throw new Error('模拟 Worktree 文件占用')
+    }
+    return removeWorktree(...args)
+  }
+  const removeDirectoryTree = dependencies.files.removeDirectoryTree
+  let removeDirectoryTreeFailures = options.removeDirectoryTreeFailures ?? 0
+  dependencies.files.removeDirectoryTree = async (...args) => {
+    if (removeDirectoryTreeFailures > 0) {
+      removeDirectoryTreeFailures -= 1
+      throw new Error('模拟 quarantine 目录仍被占用')
+    }
+    await removeDirectoryTree(...args)
+  }
+  if (options.applyEngine) dependencies.applyEngine = options.applyEngine
+  const measureDirectoryBytes = dependencies.files.measureDirectoryBytes
+  let measureDirectoryCallCount = 0
+  let nextDirectoryMeasurePause: {
+    signalStarted(): void
+    waitForResume: Promise<void>
+  } | undefined
+  dependencies.files.measureDirectoryBytes = async (...args) => {
+    measureDirectoryCallCount += 1
+    const pause = nextDirectoryMeasurePause
+    if (pause) {
+      nextDirectoryMeasurePause = undefined
+      pause.signalStarted()
+      await pause.waitForResume
+    }
+    return measureDirectoryBytes(...args)
+  }
+  const createDetachedWorktree = dependencies.git.createDetachedWorktree
+  let createWorktreeCallCount = 0
+  let createWorktreeFailures = options.createWorktreeFailures ?? 0
+  dependencies.git.createDetachedWorktree = async (localRoot, managedRoot, baseOid) => {
+    createWorktreeCallCount += 1
+    if (createWorktreeFailures > 0) {
+      createWorktreeFailures -= 1
+      mkdirSync(join(managedRoot, 'web'), { recursive: true })
+      if (options.createWorktreeFailureLeavesFile) {
+        writeFileSync(join(managedRoot, 'web', 'unknown.txt'), '保留\n')
+      }
+      throw new Error('模拟 worktree add 留下半成品目录')
+    }
+    await createDetachedWorktree(localRoot, managedRoot, baseOid)
+    if (options.crashAfterWorktreeCreate) {
+      throw new Error('模拟 create 落盘后的进程崩溃')
+    }
+  }
+
+  return {
+    root,
+    configDir,
+    projectRoot,
+    repositoryRoot,
+    module: createSessionCheckoutModule(dependencies),
+    restart: () => createSessionCheckoutModule(createNodeSessionCheckoutDependencies({
+      configDir,
+      lookup: dependencies.lookup,
+      onTimingEvent: recordTiming,
+    })),
+    pauseNextGitInspect: (expectedPath) => {
+      let signalStarted = (): void => undefined
+      let resume = (): void => undefined
+      const started = new Promise<void>((resolve) => { signalStarted = resolve })
+      const waitForResume = new Promise<void>((resolve) => { resume = resolve })
+      nextInspectPause = {
+        ...(expectedPath ? { expectedPath: realpathSync.native(expectedPath) } : {}),
+        signalStarted,
+        waitForResume,
+      }
+      return { started, resume }
+    },
+    failNextGitInspect: (expectedPath) => {
+      nextInspectFailurePath = realpathSync.native(expectedPath ?? projectRoot)
+    },
+    pauseNextDirectoryMeasure: () => {
+      let signalStarted = (): void => undefined
+      let resume = (): void => undefined
+      const started = new Promise<void>((resolve) => { signalStarted = resolve })
+      const waitForResume = new Promise<void>((resolve) => { resume = resolve })
+      nextDirectoryMeasurePause = { signalStarted, waitForResume }
+      return { started, resume }
+    },
+    getRemoveWorktreeCallCount: () => removeWorktreeCallCount,
+    getCreateWorktreeCallCount: () => createWorktreeCallCount,
+    getMeasureDirectoryCallCount: () => measureDirectoryCallCount,
+    timingEvents,
+    setSessionProject: (sessionId, projectId) => {
+      const session = sessions.get(sessionId)
+      if (session) session.projectId = projectId
+    },
+    setProjectRoot: (projectId, projectRoot) => {
+      const project = projects.get(projectId)
+      if (project) project.root = projectRoot
+    },
+    addSession: (sessionId, projectId, title) => {
+      sessions.set(sessionId, { id: sessionId, projectId, title })
+    },
+    setSessionDelegation: (sessionId, status, delegationId = `delegation-${sessionId}`) => {
+      const session = sessions.get(sessionId)
+      if (!session) throw new Error(`测试会话不存在: ${sessionId}`)
+      session.sourceDelegationId = delegationId
+      session.delegationStatus = status as TestSession['delegationStatus']
+    },
+    markSessionDelegationCheckoutReleased: (sessionId) => {
+      const session = sessions.get(sessionId)
+      if (!session) throw new Error(`测试会话不存在: ${sessionId}`)
+      session.delegationCheckoutReleasedAt = Date.now()
+    },
+    removeSession: (sessionId) => {
+      sessions.delete(sessionId)
+    },
+    removeProject: (projectId) => {
+      projects.delete(projectId)
+    },
+  }
+}
+
+describe('SessionCheckoutModule', () => {
+  test('Given a host rewind owns the exclusive session mutation lock When bind starts Then checkout mutation waits until rewind releases', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+    let signalStarted = (): void => undefined
+    let release = (): void => undefined
+    const started = new Promise<void>((resolve) => { signalStarted = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const exclusive = context.module.runExclusiveSessionMutation('session-1', async (target) => {
+      signalStarted()
+      await gate
+      return target.checkout.kind
+    })
+    await started
+
+    let bindCompleted = false
+    const bind = context.module.bind('session-1', { kind: 'local' }).then((view) => {
+      bindCompleted = true
+      return view
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(bindCompleted).toBe(false)
+
+    release()
+    expect(await exclusive).toBe('local')
+    expect((await bind).checkout.kind).toBe('local')
+  })
+
+  test('Given 一个 Git 项目 When 会话绑定 Local Then inspect 展示项目与实时 branch/HEAD', async () => {
+    const context = createContext()
+    const expectedOid = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    await context.module.bind('session-1', { kind: 'local' })
+    const target = await context.module.inspect('session-1')
+
+    expect(target).toEqual({
+      project: { id: 'project-1', name: '示例 Project' },
+      checkout: {
+        id: 'local:project-1',
+        kind: 'local',
+        label: 'Local Checkout',
+        phase: 'ready',
+      },
+      source: { ref: 'refs/heads/main', oid: expectedOid },
+      current: { branch: 'main', oid: expectedOid },
+      ownership: 'owner',
+      dirty: false,
+      revision: 1,
+    })
+  })
+
+  test('Given Local Checkout 在绑定后出现修改 When inspect Then dirty 实时变为 true', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'local dirty\n')
+
+    const target = await context.module.inspect('session-1')
+
+    expect(target).toMatchObject({ ownership: 'owner', dirty: true })
+  })
+
+  test('Given Local 父会话 When 子会话独立绑定 Isolated Then 父目标不变且子会话拥有 managed checkout', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+
+    const child = await context.module.bind('child-session', { kind: 'isolated' })
+    const parent = await context.module.inspect('session-1')
+    const childLease = await context.module.lease('child-session')
+
+    expect(parent).toMatchObject({
+      checkout: { kind: 'local' },
+      ownership: 'owner',
+    })
+    expect(child).toMatchObject({
+      checkout: { kind: 'isolated' },
+      ownership: 'owner',
+    })
+    expect(childLease.ownerSessionId).toBe('child-session')
+    expect(childLease.cwd).not.toBe(childLease.localRoot)
+  })
+
+  test('Given 中文 owner 标题 When 创建 Isolated Then Worktree 位于 Git 根目录同级的可读目录', async () => {
+    const context = createContext()
+    const sessionId = 'c912a341-1234-5678-9012-abcdefabcdef'
+    context.addSession(sessionId, 'project-1', '优化 Worktree 路径/命名')
+
+    const target = await context.module.bind(sessionId, { kind: 'isolated' })
+    const lease = await context.module.lease(sessionId)
+    const expectedContainer = join(
+      dirname(realpathSync.native(context.repositoryRoot)),
+      '本地-project-worktrees',
+    )
+
+    expect(lease.allowedRoot).toBe(realpathSync.native(join(
+      expectedContainer,
+      `优化-Worktree-路径-命名--c912a341--i1--${target.checkout.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}`,
+    )))
+    expect(lease.revision).toBe(target.revision)
+  })
+
+  test('Given a new Isolated Checkout When creation completes Then safe checkout timing excludes filesystem paths', async () => {
+    const context = createContext()
+
+    await context.module.bind('session-1', { kind: 'isolated' })
+
+    expect(context.timingEvents.map((event) => event.phase)).toEqual(['worktree_create', 'checkout_bind'])
+    expect(context.timingEvents).toMatchObject([
+      { phase: 'worktree_create', sessionId: 'session-1', iteration: 1, attempt: 1, outcome: 'success' },
+      { phase: 'checkout_bind', sessionId: 'session-1', iteration: 1, attempt: 1, outcome: 'success' },
+    ])
+    for (const event of context.timingEvents) {
+      expect(event.durationMs).toBeGreaterThanOrEqual(0)
+      expect(Date.parse(event.timestamp)).not.toBeNaN()
+    }
+    const serialized = JSON.stringify(context.timingEvents)
+    expect(serialized).not.toContain(context.projectRoot)
+    expect(serialized).not.toContain('managedRoot')
+    expect(serialized).not.toContain('localRoot')
+  })
+
+  test('Given checkout timing writer fails When Isolated is created Then lifecycle still reaches ready', async () => {
+    const context = createContext({ timingFailure: true })
+
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+
+    expect(target.checkout.phase).toBe('ready')
+    expect(context.timingEvents).toEqual([])
+  })
+
+  test('Given worktree add 留下空目录残余 When 创建 Isolated Then 自动清理并用新的唯一路径重试', async () => {
+    const context = createContext({ createWorktreeFailures: 1 })
+
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+
+    expect(target.checkout.phase).toBe('ready')
+    expect(target.delivery).toEqual({ state: 'working', iteration: 1 })
+    expect(context.getCreateWorktreeCallCount()).toBe(2)
+    expect(context.timingEvents.map(({ phase, outcome, attempt }) => [phase, outcome, attempt])).toEqual([
+      ['worktree_create', 'error', 1],
+      ['checkout_bind', 'error', 1],
+      ['worktree_create', 'success', 2],
+      ['checkout_bind', 'success', 2],
+    ])
+    expect(basename(lease.cwd)).toContain('--i1--')
+    expect(git(lease.cwd, 'rev-parse', '--is-inside-work-tree')).toBe('true')
+  })
+
+  test('Given worktree add 残余包含未知文件 When 创建 Isolated Then fail closed 并保留恢复现场', async () => {
+    const context = createContext({ createWorktreeFailures: 1, createWorktreeFailureLeavesFile: true })
+
+    await expect(context.module.bind('session-1', { kind: 'isolated' })).rejects.toMatchObject({ code: 'recovery_required' })
+    const target = await context.module.inspect('session-1')
+
+    expect(target.checkout.phase).toBe('recovery_required')
+    expect(target.dirty).toBe(true)
+    expect(context.getCreateWorktreeCallCount()).toBe(1)
+  })
+
+  test('Given Git 根目录父级属于外层仓库 When 创建 Isolated Then 回退到 Domi 数据目录', async () => {
+    const context = createContext({ outerRepository: true })
+    const sessionId = '1fde02d4-1234-5678-9012-abcdefabcdef'
+    context.addSession(sessionId, 'project-1', '修复分叉菜单 (worktree)')
+
+    await context.module.bind(sessionId, { kind: 'isolated' })
+    const lease = await context.module.lease(sessionId)
+    const fallbackRoot = realpathSync.native(join(context.configDir, 'worktrees'))
+
+    expect(lease.allowedRoot.startsWith(fallbackRoot)).toBe(true)
+    expect(basename(lease.allowedRoot)).toMatch(/^修复分叉菜单--1fde02d4--i1--[a-zA-Z0-9]{8}$/)
+    expect(existsSync(join(context.root, '本地-project-worktrees'))).toBe(false)
+  })
+
+  test('Given Git 根目录同级容器无法创建 When 创建 Isolated Then 回退到 Domi 数据目录', async () => {
+    const context = createContext()
+    const siblingContainer = join(context.root, '本地-project-worktrees')
+    writeFileSync(siblingContainer, 'blocked by file')
+    const sessionId = '5a1f972f-1234-5678-9012-abcdefabcdef'
+    context.addSession(sessionId, 'project-1', '优化侧边栏')
+
+    await context.module.bind(sessionId, { kind: 'isolated' })
+    const lease = await context.module.lease(sessionId)
+    const fallbackRoot = realpathSync.native(join(context.configDir, 'worktrees'))
+
+    expect(lease.allowedRoot.startsWith(fallbackRoot)).toBe(true)
+    expect(basename(lease.allowedRoot)).toMatch(/^优化侧边栏--5a1f972f--i1--[a-zA-Z0-9]{8}$/)
+  })
+
+  test('Given 尚未发布的 Isolated owner When Fork 事务中止 Then 可精确 Discard 并释放 binding', async () => {
+    const context = createContext()
+    const child = await context.module.bind('child-session', { kind: 'isolated' })
+
+    const discarded = await context.module.operate({
+      action: 'discard',
+      sessionId: 'child-session',
+      expectedRevision: child.revision,
+      confirmDirty: true,
+    })
+    expect(discarded.status).toBe('discarded')
+    await context.module.releaseSession('child-session', 'delete')
+
+    await expect(context.module.inspect('child-session')).rejects.toThrow('尚未选择 Session Target')
+    expect(context.getRemoveWorktreeCallCount()).toBe(1)
+    expect(git(context.repositoryRoot, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((line) => line.startsWith('worktree '))).toHaveLength(1)
+  })
+
+  test('Given a working Worktree is only reachable from management When user confirms abandon Then manager discards by checkout identity without changing Local', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'uncommitted.txt'), 'discard me\n')
+    const localHeadBefore = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const localStatusBefore = git(context.projectRoot, 'status', '--porcelain=v1')
+
+    const result = await context.module.manageManagedWorktree({
+      checkoutId: target.checkout.id,
+      expectedRevision: target.revision,
+      action: 'discard',
+      confirmDirty: true,
+    })
+
+    expect(result.phase).toBe('discarded')
+    expect(existsSync(lease.cwd)).toBeFalse()
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHeadBefore)
+    expect(git(context.projectRoot, 'status', '--porcelain=v1')).toBe(localStatusBefore)
+  })
+
+  test('Given management sees a recovery-shaped active Preview When user confirms discard Then it automatically rolls back Local before cleanup', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'managed preview\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '管理页撤回 Preview',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'fix: managed preview',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[preview.target.checkout.id]
+    record.phase = 'recovery_required'
+    record.journal = {
+      operation: 'rollback_preview',
+      operationId: 'manager-recovery',
+      step: 'planning',
+      startedAt: Date.now(),
+      previewId: record.delivery.preview.previewId,
+      reviewId: record.delivery.review.reviewId,
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+    const restarted = context.restart()
+    const recoveryTarget = await restarted.inspect('session-1')
+
+    const result = await restarted.manageManagedWorktree({
+      checkoutId: preview.target.checkout.id,
+      expectedRevision: recoveryTarget.revision,
+      action: 'discard',
+      confirmDirty: true,
+    })
+
+    expect(result.phase).toBe('discarded')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+    expect(existsSync(lease.cwd)).toBe(false)
+  }, 45_000)
+
+  test('Given Local 含未提交修改 When 绑定 Isolated Then 从 Local HEAD 创建 detached checkout 且不复制脏状态', async () => {
+    const context = createContext()
+    const expectedOid = git(context.projectRoot, 'rev-parse', 'HEAD')
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'local dirty\n')
+    writeFileSync(join(context.projectRoot, 'staged.txt'), 'staged\n')
+    git(context.projectRoot, 'add', 'staged.txt')
+    writeFileSync(join(context.projectRoot, 'untracked.txt'), 'untracked\n')
+
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+
+    expect(lease.localRoot).toBe(realpathSync.native(context.projectRoot))
+    expect(lease.allowedRoot).not.toBe(lease.localRoot)
+    expect({
+      project: target.project,
+      checkout: target.checkout,
+      source: target.source,
+      current: target.current,
+      tracked: readFileSync(join(lease.cwd, 'tracked.txt'), 'utf-8').trim(),
+      stagedCopied: existsSync(join(lease.cwd, 'staged.txt')),
+      untrackedCopied: existsSync(join(lease.cwd, 'untracked.txt')),
+    }).toEqual({
+      project: { id: 'project-1', name: '示例 Project' },
+      checkout: {
+        id: target.checkout.id,
+        kind: 'isolated',
+        label: 'Isolated Checkout',
+        phase: 'ready',
+      },
+      source: { ref: 'refs/heads/main', oid: expectedOid },
+      current: { branch: null, oid: expectedOid },
+      tracked: 'base',
+      stagedCopied: false,
+      untrackedCopied: false,
+    })
+  })
+
+  test('Given handoff proof 为 clean When 最终 binding lock 发现 dirty Then 拒绝且不创建 checkout', async () => {
+    const context = createContext()
+    const expectedOid = git(context.projectRoot, 'rev-parse', 'HEAD')
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'became dirty\n')
+
+    await expect(context.module.bindVerifiedIsolated('session-1', {
+      expectedCurrentOid: expectedOid,
+      dirtyConfirmed: false,
+    })).rejects.toMatchObject({ code: 'dirty_confirmation_required' })
+    await expect(context.module.inspect('session-1')).rejects.toMatchObject({ code: 'target_unselected' })
+    expect(git(context.repositoryRoot, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((line) => line.startsWith('worktree '))).toHaveLength(1)
+  })
+
+  test('Given handoff proof 的 HEAD 已过期 When 最终 binding lock 创建 Then stale_target fail closed', async () => {
+    const context = createContext()
+    const oldOid = git(context.projectRoot, 'rev-parse', 'HEAD')
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'new commit\n')
+    git(context.projectRoot, 'add', 'tracked.txt')
+    git(context.projectRoot, 'commit', '-m', 'advance')
+
+    await expect(context.module.bindVerifiedIsolated('session-1', {
+      expectedCurrentOid: oldOid,
+      dirtyConfirmed: true,
+    })).rejects.toMatchObject({ code: 'stale_target' })
+    expect(git(context.repositoryRoot, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((line) => line.startsWith('worktree '))).toHaveLength(1)
+  })
+
+  test('Given 项目根位于 Git checkout 子目录 When 绑定 Isolated Then lease 保持同一项目子目录', async () => {
+    const context = createContext({ projectSubdirectory: join('packages', '示例 app') })
+
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+
+    expect({
+      relativeProjectPath: lease.cwd.slice(lease.allowedRoot.length),
+      tracked: readFileSync(join(lease.cwd, 'tracked.txt'), 'utf-8').trim(),
+      repositoryRootLeakedAsCwd: lease.cwd.endsWith('本地 project'),
+    }).toEqual({
+      relativeProjectPath: '',
+      tracked: 'base',
+      repositoryRootLeakedAsCwd: false,
+    })
+  })
+
+  test('Given the repository has a post-checkout hook When Isolated is created Then the user hook is not executed', async () => {
+    const context = createContext()
+    const marker = join(context.root, 'post-checkout-marker.txt')
+    const hook = join(context.repositoryRoot, '.git', 'hooks', 'post-checkout')
+    const shellMarker = marker.replace(/\\/g, '/').replace(/'/g, "'\\''")
+    writeFileSync(hook, `#!/bin/sh\nprintf hook > '${shellMarker}'\n`)
+    chmodSync(hook, 0o755)
+
+    await context.module.bind('session-1', { kind: 'isolated' })
+
+    expect(existsSync(marker)).toBeFalse()
+  })
+
+  test('Given Local target When 获取运行租约 Then localRoot 与当前 cwd 使用同一 canonical checkout', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+
+    const lease = await context.module.lease('session-1')
+
+    expect(lease.localRoot).toBe(lease.cwd)
+    expect(lease.allowedRoot).toBe(lease.cwd)
+  })
+
+  test('Given 会话已经选择 Isolated When 重复同一选择 Then 返回同一个 checkout', async () => {
+    const context = createContext()
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+
+    const second = await context.module.bind('session-1', { kind: 'isolated' })
+
+    expect(second.checkout.id).toBe(first.checkout.id)
+  })
+
+  test('Given 同一会话并发提交相同选择 When 绑定 Isolated Then 只产生一个 checkout 身份', async () => {
+    const context = createContext()
+
+    const [first, second] = await Promise.all([
+      context.module.bind('session-1', { kind: 'isolated' }),
+      context.module.bind('session-1', { kind: 'isolated' }),
+    ])
+
+    expect(second.checkout.id).toBe(first.checkout.id)
+  })
+
+  test('Given 会话已经选择 Local When 尝试改绑 Isolated Then 拒绝切换', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+
+    const rebind = context.module.bind('session-1', { kind: 'isolated' })
+
+    expect(rebind).rejects.toMatchObject({ code: 'target_already_bound' })
+  })
+
+  test('Given Isolated 已创建且 session metadata 被移动到另一项目 When resolve binding Then project_mismatch fail closed', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    context.setSessionProject('session-1', 'other-project')
+
+    await expect(context.module.inspect('session-1')).rejects.toMatchObject({ code: 'project_mismatch' })
+    await expect(context.module.lease('session-1')).rejects.toMatchObject({ code: 'project_mismatch' })
+    expect(existsSync(lease.cwd)).toBe(true)
+  })
+
+  test('Given Isolated 已创建 When 用户手工建分支并提交 Then inspect 保留 source 并单独更新 current', async () => {
+    const context = createContext()
+    const initial = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    git(lease.cwd, 'switch', '-c', '手工-branch')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'branch change\n')
+    git(lease.cwd, 'add', 'tracked.txt')
+    git(lease.cwd, 'commit', '-m', 'branch change')
+    const branchOid = git(lease.cwd, 'rev-parse', 'HEAD')
+
+    const current = await context.module.inspect('session-1')
+
+    expect(current).toEqual({
+      ...initial,
+      current: { branch: '手工-branch', oid: branchOid },
+    })
+  })
+
+  test('Given SessionTargetView 可发送到 renderer When inspect Isolated Then 不包含 Local 或 managed 绝对路径', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+
+    const serialized = JSON.stringify(target)
+
+    expect(serialized.includes(context.projectRoot)).toBe(false)
+    expect(serialized.includes(lease.cwd)).toBe(false)
+  })
+
+  test('Given Isolated registry 已落盘 When 模块重启且项目索引缺失 Then 仍从 snapshot 恢复展示与 lease', async () => {
+    const context = createContext()
+    const initial = await context.module.bind('session-1', { kind: 'isolated' })
+    const initialLease = await context.module.lease('session-1')
+    context.removeProject('project-1')
+
+    const restarted = context.restart()
+    const restored = await restarted.inspect('session-1')
+    const restoredLease = await restarted.lease('session-1')
+
+    expect({ restored, restoredLease }).toEqual({
+      restored: initial,
+      restoredLease: initialLease,
+    })
+  }, 90_000)
+
+  test('Given 项目不是 Git 仓库 When 选择 Isolated Then fail closed', async () => {
+    const context = createContext()
+    rmSync(join(context.repositoryRoot, '.git'), { recursive: true, force: true })
+
+    const binding = context.module.bind('session-1', { kind: 'isolated' })
+
+    expect(binding).rejects.toMatchObject({ code: 'not_git_repository' })
+  })
+
+  test('Given 旧 ready inspect 被可控 deferred 暂停 When owner 并发 Discard Then inspect 与 Discard 串行且 discarded 不会被旧结果覆盖', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const pause = context.pauseNextGitInspect()
+    const staleInspect = context.module.inspect('session-1')
+    await pause.started
+
+    const discard = context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: false,
+    })
+    await Bun.sleep(100)
+
+    try {
+      expect(context.getRemoveWorktreeCallCount()).toBe(0)
+    } finally {
+      pause.resume()
+    }
+    const [, discarded] = await Promise.all([staleInspect, discard])
+    const final = await context.module.inspect('session-1')
+
+    expect(discarded).toMatchObject({ status: 'discarded' })
+    expect(final.checkout.phase).toBe('discarded')
+    if (discarded.status !== 'discarded') throw new Error(`预期 discarded，实际为 ${discarded.status}`)
+    expect(final.revision).toBe(discarded.target.revision)
+  }, 15_000)
+
+  test('Given a valid v1 managed checkout registry When the module restarts Then it migrates to v2 without losing the checkout identity', async () => {
+    const context = createContext()
+    const original = await context.module.bind('session-1', { kind: 'isolated' })
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as {
+      version: number
+      managedCheckouts: Record<string, Record<string, unknown>>
+    }
+    registry.version = 1
+    for (const record of Object.values(registry.managedCheckouts)) delete record.delivery
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const migrated = await context.restart().inspect('session-1')
+    const persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as { version: number }
+
+    expect(migrated.checkout.id).toBe(original.checkout.id)
+    expect(migrated.checkout.phase).toBe('ready')
+    expect(migrated.delivery).toEqual({ state: 'working', iteration: 1 })
+    expect(persisted.version).toBe(2)
+  })
+
+  test('Given managed checkout 目录丢失 When inspect/lease Then 标记 recovery_required 并 fail closed', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    rmSync(lease.cwd, { recursive: true, force: true })
+
+    const target = await context.module.inspect('session-1')
+
+    expect(target.checkout.phase).toBe('recovery_required')
+    expect(context.module.lease('session-1')).rejects.toMatchObject({ code: 'recovery_required' })
+  })
+
+  test('Given ready checkout 的 Git inspect 瞬时失败 When 下一次 inspect 重试 Then 不持久污染 recovery 且自动恢复可租用', async () => {
+    const context = createContext()
+    const ready = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    context.failNextGitInspect(lease.cwd)
+
+    const transient = await context.module.inspect('session-1')
+    const persistedAfterFailure = JSON.parse(readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')) as any
+    const recovered = await context.module.inspect('session-1')
+
+    expect(transient.checkout.phase).toBe('recovery_required')
+    expect(persistedAfterFailure.managedCheckouts[ready.checkout.id].phase).toBe('ready')
+    expect(recovered.checkout.phase).toBe('ready')
+    expect((await context.module.lease('session-1')).cwd).toBe(lease.cwd)
+  })
+
+  test('Given 无 journal 的健康 checkout 已被旧版本标成 recovery_required When inspect Then 自动完整复验并恢复可租用', async () => {
+    const context = createContext()
+    const ready = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    registry.managedCheckouts[ready.checkout.id].phase = 'recovery_required'
+    registry.managedCheckouts[ready.checkout.id].journal = null
+    registry.managedCheckouts[ready.checkout.id].revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    const recovered = await restarted.inspect('session-1')
+
+    expect(recovered.checkout.phase).toBe('ready')
+    expect((await restarted.lease('session-1')).cwd).toBe(lease.cwd)
+  })
+
+  test('Given ready checkout 目录临时缺失后原样恢复且无 create journal When owner Recover Then 完整重验后恢复 ready', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    const parkedRoot = `${lease.cwd}-parked`
+    renameSync(lease.cwd, parkedRoot)
+    const recovery = await context.module.inspect('session-1')
+    renameSync(parkedRoot, lease.cwd)
+
+    const result = await context.module.operate({
+      action: 'recover',
+      sessionId: 'session-1',
+      expectedRevision: recovery.revision,
+    })
+
+    expect(recovery.checkout.phase).toBe('recovery_required')
+    expect(result).toMatchObject({ status: 'recovered', target: { checkout: { phase: 'ready' } } })
+    expect((await context.module.lease('session-1')).cwd).toBe(lease.cwd)
+  }, 15_000)
+
+  test('Given managed 路径被另一个 Git 仓库替换 When inspect Then common-dir mismatch 进入 recovery', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    git(context.projectRoot, 'worktree', 'remove', '--force', lease.cwd)
+    git(context.root, 'init', '-b', 'other', lease.cwd)
+    git(lease.cwd, 'config', 'user.name', 'Domi Test')
+    git(lease.cwd, 'config', 'user.email', 'domi@example.test')
+    writeFileSync(join(lease.cwd, 'other.txt'), 'other\n')
+    git(lease.cwd, 'add', 'other.txt')
+    git(lease.cwd, 'commit', '-m', 'other')
+
+    const target = await context.module.inspect('session-1')
+
+    expect(target.checkout.phase).toBe('recovery_required')
+    expect(context.module.lease('session-1')).rejects.toMatchObject({ code: 'recovery_required' })
+    const discard = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: true,
+    })
+    expect(discard).toMatchObject({ status: 'error', code: 'git_operation_failed' })
+    expect(existsSync(join(lease.cwd, 'other.txt'))).toBe(true)
+    expect((await context.module.inspect('session-1')).checkout.phase).toBe('recovery_required')
+  })
+
+  test('Given 父会话已绑定 Isolated When 子会话 inherit Then 共享 lease 且 owner 保持父会话', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    const parentLease = await context.module.lease('session-1')
+    const childLease = await context.module.lease('child-session')
+
+    expect(childLease).toEqual({
+      ...parentLease,
+      ownerSessionId: 'session-1',
+    })
+    expect(childLease.ownerSessionId).not.toBe('child-session')
+  })
+
+  test('Given inherited child 仍绑定同一 checkout When owner Apply enters Preview Then owner and child both use read-only Local follow-up', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    const ownerLease = await context.module.lease('session-1')
+    writeFileSync(join(ownerLease.cwd, 'tracked.txt'), 'shared apply\n')
+
+    const result = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(result).toMatchObject({
+      status: 'previewed',
+      target: { checkout: { phase: 'ready' }, delivery: { state: 'preview_active' } },
+    })
+    const ownerPreviewLease = await context.module.lease('session-1')
+    const childPreviewLease = await context.module.lease('child-session')
+    expect(ownerPreviewLease).toMatchObject({ cwd: context.projectRoot, followupOnly: true, followupReason: 'preview_active' })
+    expect(childPreviewLease).toMatchObject({ cwd: context.projectRoot, followupOnly: true, followupReason: 'preview_active' })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('shared apply')
+  }, 15_000)
+
+  test('Given owner 的 managed checkout 已缺失 When inspect 后明确 Discard Then 仅收口 registry 为 discarded', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    git(context.projectRoot, 'worktree', 'remove', '--force', lease.cwd)
+    const recovery = await context.module.inspect('session-1')
+
+    const result = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: recovery.revision,
+      confirmDirty: true,
+    })
+
+    expect(recovery.checkout.phase).toBe('recovery_required')
+    expect(result).toMatchObject({ status: 'discarded', target: { checkout: { phase: 'discarded' } } })
+  })
+
+  test('Given applying journal 遗留 When 重启 inspect/recover Then 标记 recovery_required 且绝不猜测 Apply 成功', async () => {
+    const crashEngine: SessionCheckoutApplyEngine = {
+      inspectReview: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      preflight: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      plan: async () => { throw new Error('模拟 Apply planning 进程崩溃') },
+      apply: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      finish: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      preview: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      rollback: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      finalize: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+    }
+    const context = createContext({ applyEngine: crashEngine })
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'apply crash\n')
+
+    await expect(context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })).rejects.toThrow('模拟 Apply planning 进程崩溃')
+    const restarted = context.restart()
+    const recovery = await restarted.inspect('session-1')
+    const result = await restarted.operate({
+      action: 'recover',
+      sessionId: 'session-1',
+      expectedRevision: recovery.revision,
+    })
+    const unconfirmedDiscard = await restarted.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: recovery.revision,
+      confirmDirty: false,
+    })
+    const discarded = await restarted.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: recovery.revision,
+      confirmDirty: true,
+    })
+
+    expect(recovery.checkout.phase).toBe('recovery_required')
+    expect(recovery.dirty).toBeTrue()
+    expect(result).toMatchObject({ status: 'error', code: 'recovery_unsafe' })
+    expect(unconfirmedDiscard).toMatchObject({ status: 'error', code: 'dirty_confirmation_required' })
+    expect(discarded).toMatchObject({ status: 'discarded', target: { checkout: { phase: 'discarded' } } })
+    expect(existsSync(lease.cwd)).toBeFalse()
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+  }, 15_000)
+
+  test('Given preparing journal 且 worktree 已完整创建 When 重启后 Recover Then 恢复 ready 而不覆盖文件', async () => {
+    const context = createContext({ crashAfterWorktreeCreate: true })
+    await expect(context.module.bind('session-1', { kind: 'isolated' }))
+      .rejects.toThrow('模拟 create 落盘后的进程崩溃')
+    const restarted = context.restart()
+    const recovery = await restarted.inspect('session-1')
+
+    const result = await restarted.operate({
+      action: 'recover',
+      sessionId: 'session-1',
+      expectedRevision: recovery.revision,
+    })
+
+    expect(result.status).toBe('recovered')
+    if (result.status !== 'recovered') throw new Error(`预期 recovered，实际为 ${result.status}`)
+    expect(result.target.checkout.phase).toBe('ready')
+    expect(readFileSync(join((await restarted.lease('session-1')).cwd, 'tracked.txt'), 'utf8').trim()).toBe('base')
+  })
+
+  test('Given 已有 10 个未 discarded managed checkout When 创建第 11 个 Then 正常创建且不自动删除任何已有 checkout', async () => {
+    const context = createContext()
+    const leases: string[] = []
+    for (let index = 0; index < 11; index += 1) {
+      const sessionId = `cap-session-${index}`
+      context.addSession(sessionId, 'project-1', `容量测试 ${index}`)
+      const target = await context.module.bind(sessionId, { kind: 'isolated' })
+      expect(target.checkout.phase).toBe('ready')
+      leases.push((await context.module.lease(sessionId)).cwd)
+    }
+
+    expect(leases).toHaveLength(11)
+    expect(leases.every((path) => existsSync(path))).toBe(true)
+    expect(new Set(leases).size).toBe(11)
+  }, 45_000)
+
+  test('Given owner 的 Isolated 修改与 Local staged 文件互不相关 When operate Apply Then staged 状态保留且 Apply 成为可撤回 Preview', async () => {
+    const context = createContext()
+    writeFileSync(join(context.projectRoot, 'local-staged.txt'), 'local staged\n')
+    git(context.projectRoot, 'add', 'local-staged.txt')
+    const stagedBefore = git(context.projectRoot, 'diff', '--cached', '--binary')
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'isolated applied\n')
+
+    const result = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(result.status).toBe('previewed')
+    if (result.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${result.status}`)
+    expect(result.target).toMatchObject({ checkout: { phase: 'ready' }, delivery: { state: 'preview_active' } })
+    expect(result.changedFiles).toEqual(['tracked.txt'])
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('isolated applied')
+    expect(git(context.projectRoot, 'diff', '--cached', '--binary')).toBe(stagedBefore)
+
+    const restarted = context.restart()
+    const withdrawn = await restarted.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: result.target.revision,
+      resumeRevision: true,
+    })
+    expect(withdrawn.status).toBe('preview_rolled_back')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+    expect(git(context.projectRoot, 'diff', '--cached', '--binary')).toBe(stagedBefore)
+    expect((await restarted.lease('session-1')).cwd).toBe(lease.cwd)
+  }, 30_000)
+
+  test('Given ApplyWorktree has no task delta When requested Then it returns a no-op without creating an empty Preview', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+
+    const result = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(result).toMatchObject({
+      status: 'applied',
+      changedFiles: [],
+      target: { delivery: { state: 'working', iteration: 1 } },
+    })
+    expect(git(context.projectRoot, 'status', '--porcelain=v1', '-uall')).toBe('')
+  }, 30_000)
+
+  test('Given ApplyWorktree projects a task into Local When the user withdraws it Then the entire task layer is restored before further edits', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'first applied layer\n')
+
+    const applied = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(applied.status).toBe('previewed')
+    if (applied.status !== 'previewed') throw new Error(`预期 Apply 进入可撤回 Preview，实际为 ${applied.status}`)
+    expect(applied.target.delivery?.state).toBe('preview_active')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('first applied layer\n')
+
+    const withdrawn = await context.module.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: applied.target.revision,
+      resumeRevision: true,
+    })
+
+    expect(withdrawn.status).toBe('preview_rolled_back')
+    if (withdrawn.status !== 'preview_rolled_back') throw new Error(`预期完整撤回，实际为 ${withdrawn.status}`)
+    expect(withdrawn.target.delivery).toEqual({ state: 'working', iteration: 1 })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+    expect((await context.module.lease('session-1')).cwd).toBe(lease.cwd)
+
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'second final layer\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'Apply 撤回后继续完成任务',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'fix: complete after withdrawn apply',
+    })
+    const preview = await context.module.operate({
+      action: 'preview',
+      sessionId: 'session-1',
+      expectedRevision: ready.revision,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期最终 Preview 成功，实际为 ${preview.status}`)
+    const finalized = await context.module.operate({
+      action: 'finalize_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview.target.revision,
+      commitMessage: 'fix: complete after withdrawn apply',
+    })
+    expect(finalized.status).toBe('finished')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('second final layer\n')
+    expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
+  }, 45_000)
+
+  test('Given a ReadyForReview checkout When read-only preflight runs Then it reports real Git facts without changing revision or Local', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'preflight change\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '只读同步预检', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: preflight',
+    })
+    const localBefore = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+
+    const preflight = await context.module.preflight!('session-1', ready.revision)
+    const inspected = await context.module.inspect('session-1')
+
+    expect(preflight).toMatchObject({
+      status: 'ready',
+      localModified: false,
+      checkoutId: ready.checkout.id,
+      reviewId: ready.delivery?.state === 'ready_for_review' ? ready.delivery.review.reviewId : '',
+      revision: ready.revision,
+      configuredBaseOid: ready.source.oid,
+      localHeadOid: ready.source.oid,
+      isolatedHeadOid: ready.current.oid,
+      changedFiles: ['tracked.txt'],
+    })
+    expect(inspected.revision).toBe(ready.revision)
+    expect(inspected.delivery?.state).toBe('ready_for_review')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBefore)
+    expect(git(context.projectRoot, 'status', '--porcelain=v1')).toBe('')
+  }, 30_000)
+
+  test('Given Local advanced cleanly after review When preflight runs Then it explains the advanced Local without modifying either checkout', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'new-task.txt'), 'isolated task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'Local 前进预检', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: advanced',
+    })
+    writeFileSync(join(context.projectRoot, 'local-only.txt'), 'local follow-up\n')
+    git(context.projectRoot, 'add', 'local-only.txt')
+    git(context.projectRoot, 'commit', '-m', 'local advances')
+    const localHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const preflight = await context.module.preflight!('session-1', ready.revision)
+
+    expect(preflight).toMatchObject({
+      status: 'local_advanced',
+      localModified: false,
+      localHeadOid: localHead,
+      changedFiles: ['new-task.txt'],
+    })
+    expect(readFileSync(join(context.projectRoot, 'local-only.txt'), 'utf8')).toBe('local follow-up\n')
+    expect(readFileSync(join(lease.cwd, 'new-task.txt'), 'utf8')).toBe('isolated task\n')
+  }, 30_000)
+
+  test('Given Local and Worktree conflict When preflight runs Then it lists conflict files and leaves Local unchanged', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'isolated conflict\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '冲突预检', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: conflict',
+    })
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'local conflict\n')
+    const localBefore = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+
+    const preflight = await context.module.preflight!('session-1', ready.revision)
+
+    expect(preflight).toMatchObject({
+      status: 'conflict',
+      localModified: false,
+      conflictingFiles: ['tracked.txt'],
+    })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBefore)
+    expect((await context.module.inspect('session-1')).revision).toBe(ready.revision)
+  }, 30_000)
+
+  test('Given Local already contains the Worktree commit When preflight runs Then it reports an already-in-Local safe no-op', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'already committed\n')
+    git(lease.cwd, 'add', 'tracked.txt')
+    git(lease.cwd, 'commit', '-m', 'isolated completed')
+    const isolatedHead = git(lease.cwd, 'rev-parse', 'HEAD')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '已在 Local', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: already local',
+    })
+    git(context.projectRoot, 'merge', '--ff-only', isolatedHead)
+
+    const preflight = await context.module.preflight!('session-1', ready.revision)
+
+    expect(preflight).toMatchObject({
+      status: 'already_in_local',
+      localModified: false,
+      baseStrategy: 'isolated_contains_local_head',
+      localHeadOid: isolatedHead,
+      isolatedHeadOid: isolatedHead,
+      changedFiles: [],
+    })
+  }, 30_000)
+
+  test('Given ReadyForReview became stale When ApplyWorktree is requested Then it refuses the stale review before touching Local', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'reviewed version\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '即将失效的验收',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'fix: stale apply review',
+    })
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'changed after review\n')
+
+    const result = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: ready.revision,
+    })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      code: 'stale_isolated',
+      target: { delivery: { state: 'working', iteration: 1 } },
+    })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+  }, 30_000)
+
+  test('Given Agent marks a Worktree ready When user previews and withdraws Then Local is restored and the same review can be previewed or finalized again', async () => {
+    const context = createContext()
+    context.addSession('session-child', 'project-1', '协作只读会话')
+    await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('session-child', { kind: 'inherit', parentSessionId: 'session-1' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'preview task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      detailsMarkdown: '## 变更说明\n\n更新预览任务。',
+      summary: '更新预览任务',
+      validationStatus: 'passed',
+      tests: [{ command: 'bun test', status: 'passed' }],
+      suggestedCommitMessage: 'fix: preview task',
+    })
+    expect(ready.delivery).toMatchObject({
+      state: 'ready_for_review',
+      review: { detailsMarkdown: '## 变更说明\n\n更新预览任务。', changedFiles: ['tracked.txt'] },
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('预期进入 ready_for_review')
+    const originalReview = ready.delivery.review
+
+    const preview = await context.module.operate({
+      action: 'preview',
+      sessionId: 'session-1',
+      expectedRevision: ready.revision,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('preview task\n')
+    expect(preview.target.delivery?.state).toBe('preview_active')
+    const previewFollowupLease = await context.module.lease('session-1')
+    expect(previewFollowupLease.followupOnly).toBe(true)
+    expect((previewFollowupLease as { followupReason?: string }).followupReason).toBe('preview_active')
+    expect(previewFollowupLease.cwd).toBe(context.projectRoot)
+    const collaboratorPreviewLease = await context.module.lease('session-child')
+    expect(collaboratorPreviewLease.followupOnly).toBe(true)
+    expect(collaboratorPreviewLease.followupReason).toBe('preview_active')
+    expect(collaboratorPreviewLease.cwd).toBe(context.projectRoot)
+
+    const rolledBack = await context.module.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview.target.revision,
+    })
+    expect(rolledBack.status).toBe('preview_rolled_back')
+    if (rolledBack.status !== 'preview_rolled_back') throw new Error(`预期 preview_rolled_back，实际为 ${rolledBack.status}`)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+    expect(rolledBack.target.delivery).toEqual({
+      state: 'ready_for_review',
+      review: originalReview,
+    })
+    expect(rolledBack.target.reviewSlot).toBe('available')
+    expect(existsSync(lease.cwd)).toBe(true)
+
+    const previewAgain = await context.module.operate({
+      action: 'preview',
+      sessionId: 'session-1',
+      expectedRevision: rolledBack.target.revision,
+    })
+    expect(previewAgain.status).toBe('previewed')
+    if (previewAgain.status !== 'previewed') throw new Error('预期再次 Preview 成功')
+    const resumeRevision = await context.module.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: previewAgain.target.revision,
+      resumeRevision: true,
+    })
+    expect(resumeRevision).toMatchObject({
+      status: 'preview_rolled_back',
+      target: { delivery: { state: 'working', iteration: originalReview.iteration } },
+    })
+    if (resumeRevision.status !== 'preview_rolled_back') throw new Error('预期结构化撤回成功')
+    expect(resumeRevision.target.reviewSlot).not.toBe('waiting')
+    const resumedLease = await context.module.lease('session-1')
+    expect(resumedLease.followupOnly).toBeUndefined()
+    expect(resumedLease.cwd).toBe(lease.cwd)
+  }, 60_000)
+
+  test('Given Local changes after Preview When rollback cannot be lossless Then Domi detaches the old Preview without touching Local and preserves the Worktree until explicit discard', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', '等待验收的第二个任务')
+    await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('session-2', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'preview becomes stale\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '制造 stale Preview', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: stale preview',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    git(context.projectRoot, 'add', 'tracked.txt')
+    git(context.projectRoot, 'commit', '-m', 'chore: advance local during preview')
+    const localHeadBeforeDetach = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const localStatusBeforeDetach = git(context.projectRoot, 'status', '--porcelain=v1', '-uall')
+    const localFileBeforeDetach = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+
+    const detached = await context.module.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview.target.revision,
+    })
+
+    expect(detached).toMatchObject({
+      status: 'preview_detached',
+      reason: 'stale_local',
+      attemptedAction: 'rollback_preview',
+      target: {
+        checkout: { phase: 'ready' },
+        delivery: { state: 'preview_detached', reason: 'stale_local', attemptedAction: 'rollback_preview' },
+      },
+    })
+    if (detached.status !== 'preview_detached') throw new Error(`预期 preview_detached，实际为 ${detached.status}`)
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHeadBeforeDetach)
+    expect(git(context.projectRoot, 'status', '--porcelain=v1', '-uall')).toBe(localStatusBeforeDetach)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localFileBeforeDetach)
+    expect(existsSync(lease.cwd)).toBe(true)
+    expect((await context.module.lease('session-1')).cwd).toBe(lease.cwd)
+    const waitingTask = await context.module.inspect('session-2')
+    expect(waitingTask.reviewSlot).not.toBe('waiting')
+    expect(waitingTask.reviewSlotOwnerSessionId).toBeUndefined()
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(typeof registry.managedCheckouts[preview.target.checkout.id].delivery.preview.previewId).toBe('string')
+    const restarted = context.restart()
+    const restartedTarget = await restarted.inspect('session-1')
+    expect(restartedTarget.delivery?.state).toBe('preview_detached')
+
+    const reactivatePersistedPreview = (): number => {
+      const currentRegistry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+      const currentRecord = currentRegistry.managedCheckouts[preview.target.checkout.id]
+      currentRecord.delivery = {
+        state: 'preview_active',
+        review: currentRecord.delivery.review,
+        preview: currentRecord.delivery.preview,
+      }
+      currentRecord.phase = 'ready'
+      currentRecord.journal = null
+      currentRecord.revision += 1
+      currentRegistry.revision += 1
+      writeFileSync(registryPath, JSON.stringify(currentRegistry, null, 2))
+      return currentRecord.revision
+    }
+
+    const finalizeRevision = reactivatePersistedPreview()
+    const finalizeDetached = await context.restart().operate({
+      action: 'finalize_preview',
+      sessionId: 'session-1',
+      expectedRevision: finalizeRevision,
+      commitMessage: 'fix: should detach instead of overwrite Local',
+    })
+    expect(finalizeDetached).toMatchObject({ status: 'preview_detached', attemptedAction: 'finalize_preview', reason: 'stale_local' })
+
+    const discardRevision = reactivatePersistedPreview()
+    const discardDetached = await context.restart().operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: discardRevision,
+      confirmDirty: true,
+      rollbackPreview: true,
+    })
+    expect(discardDetached).toMatchObject({ status: 'preview_detached', attemptedAction: 'discard', reason: 'stale_local' })
+    if (discardDetached.status !== 'preview_detached') throw new Error(`预期 preview_detached，实际为 ${discardDetached.status}`)
+
+    const discarded = await context.restart().operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: discardDetached.target.revision,
+      confirmDirty: true,
+    })
+    expect(discarded.status).toBe('discarded')
+    expect(existsSync(lease.cwd)).toBe(false)
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHeadBeforeDetach)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localFileBeforeDetach)
+  }, 60_000)
+
+  test('Given rollback was interrupted and restart marks recovery_required When retried Then receipt recovery completes and preserves resumeRevision intent', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'recoverable rollback\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '验证 rollback 崩溃恢复',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'fix: recover rollback',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[preview.target.checkout.id]
+    record.phase = 'recovery_required'
+    record.journal = {
+      operation: 'rollback_preview',
+      operationId: 'interrupted-rollback',
+      step: 'planning',
+      startedAt: Date.now(),
+      previewId: record.delivery.preview.previewId,
+      reviewId: record.delivery.review.reviewId,
+      resumeRevision: true,
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    const recovery = await restarted.inspect('session-1')
+    expect(recovery).toMatchObject({ checkout: { phase: 'recovery_required' }, delivery: { state: 'preview_active' } })
+    const rolledBack = await restarted.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: recovery.revision,
+    })
+
+    expect(rolledBack).toMatchObject({
+      status: 'preview_rolled_back',
+      target: { checkout: { phase: 'ready' }, delivery: { state: 'working', iteration: 1 } },
+    })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+  }, 45_000)
+
+  test('Given a stale Preview was detached When Local is restored to a compatible state Then rollback can be retried without discarding the Worktree', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'retryable preview\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '验证 detached Preview 可重试撤回',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'fix: retry detached rollback',
+    })
+    const preview = await context.module.operate({
+      action: 'preview',
+      sessionId: 'session-1',
+      expectedRevision: ready.revision,
+    })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'conflicting review edit\n')
+    const detached = await context.module.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview.target.revision,
+    })
+    expect(detached).toMatchObject({ status: 'preview_detached', reason: 'preview_modified' })
+    if (detached.status !== 'preview_detached') throw new Error(`预期 preview_detached，实际为 ${detached.status}`)
+
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'retryable preview\n')
+    const retried = await context.module.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: detached.target.revision,
+    })
+
+    expect(retried.status).toBe('preview_rolled_back')
+    if (retried.status !== 'preview_rolled_back') throw new Error(`预期重试撤回成功，实际为 ${retried.status}`)
+    expect(retried.target.delivery?.state).toBe('ready_for_review')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+    expect(existsSync(lease.cwd)).toBe(true)
+  }, 45_000)
+
+  test('Given one Worktree already previews the project When another requests Preview Then it waits until the acceptance slot is released', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', '第二个任务')
+    await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('session-2', { kind: 'isolated' })
+    writeFileSync(join((await context.module.lease('session-1')).cwd, 'tracked.txt'), 'first preview\n')
+    writeFileSync(join((await context.module.lease('session-2')).cwd, 'tracked.txt'), 'second preview\n')
+    const ready1 = await context.module.markReadyForReview('session-1', {
+      summary: '第一个任务', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: first',
+    })
+    const ready2 = await context.module.markReadyForReview('session-2', {
+      summary: '第二个任务', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: second',
+    })
+    const preview1 = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready1.revision })
+    expect(preview1.status).toBe('previewed')
+
+    const waiting = await context.module.inspect('session-2')
+    expect(waiting.reviewSlot).toBe('waiting')
+    expect(waiting.reviewSlotOwnerSessionId).toBe('session-1')
+    const blocked = await context.module.operate({ action: 'preview', sessionId: 'session-2', expectedRevision: ready2.revision })
+    expect(blocked).toMatchObject({ status: 'error', code: 'project_acceptance_busy' })
+
+    if (preview1.status !== 'previewed') throw new Error('预期第一个 Preview 成功')
+    await context.module.operate({ action: 'rollback_preview', sessionId: 'session-1', expectedRevision: preview1.target.revision })
+    const refreshed2 = await context.module.inspect('session-2')
+    expect(refreshed2.reviewSlot).toBe('available')
+    expect(refreshed2.reviewSlotOwnerSessionId).toBeUndefined()
+    const preview2 = await context.module.operate({ action: 'preview', sessionId: 'session-2', expectedRevision: refreshed2.revision })
+    expect(preview2.status).toBe('previewed')
+  }, 45_000)
+
+  test('Given one Worktree owns the Local Preview When another Worktree tries direct Finish Then Local stays withdrawable until the slot is released', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', '尝试直接提交的第二个任务')
+    await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('session-2', { kind: 'isolated' })
+    const lease1 = await context.module.lease('session-1')
+    const lease2 = await context.module.lease('session-2')
+    writeFileSync(join(lease1.cwd, 'tracked.txt'), 'first preview\n')
+    writeFileSync(join(lease2.cwd, 'second.txt'), 'second direct finish\n')
+    const ready1 = await context.module.markReadyForReview('session-1', {
+      summary: '第一个任务占用验收', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: first preview',
+    })
+    const preview1 = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready1.revision })
+    expect(preview1.status).toBe('previewed')
+    if (preview1.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview1.status}`)
+    const previewHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const previewStatus = git(context.projectRoot, 'status', '--porcelain=v1', '-uall')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('first preview\n')
+
+    const target2 = await context.module.inspect('session-2')
+    const blocked = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-2',
+      expectedRevision: target2.revision,
+      commitMessage: 'fix: second direct finish',
+    })
+
+    expect(blocked).toMatchObject({ status: 'error', code: 'project_acceptance_busy' })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(previewHead)
+    expect(git(context.projectRoot, 'status', '--porcelain=v1', '-uall')).toBe(previewStatus)
+    expect(existsSync(join(context.projectRoot, 'second.txt'))).toBe(false)
+
+    const withdrawn = await context.module.operate({
+      action: 'rollback_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview1.target.revision,
+      resumeRevision: true,
+    })
+    expect(withdrawn).toMatchObject({ status: 'preview_rolled_back', target: { delivery: { state: 'working', iteration: 1 } } })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+
+    const refreshed2 = await context.module.inspect('session-2')
+    const finished2 = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-2',
+      expectedRevision: refreshed2.revision,
+      commitMessage: 'fix: second direct finish',
+    })
+    expect(finished2.status).toBe('finished')
+    expect(readFileSync(join(context.projectRoot, 'second.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('second direct finish\n')
+  }, 60_000)
+
+  test('Given a Local Preview is accepted When Finalize runs Then it creates one commit and cleans the Worktree', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'accepted task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '完成验收任务',
+      validationStatus: 'passed',
+      tests: [{ command: 'bun test', status: 'passed' }],
+      suggestedCommitMessage: 'fix: accepted task',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    const finished = await context.module.operate({
+      action: 'finalize_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview.target.revision,
+      commitMessage: 'fix: accepted task',
+    })
+
+    expect(finished.status).toBe('finished')
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+    expect(finished.cleanup).toBe('discarded')
+    expect(finished.commitOid).toBe(git(context.projectRoot, 'rev-parse', 'HEAD'))
+    expect(git(context.projectRoot, 'show', '-s', '--format=%s', 'HEAD')).toBe('fix: accepted task')
+    expect(finished.target.delivery).toMatchObject({
+      state: 'delivered',
+      commitOid: finished.commitOid,
+      proof: {
+        localBranch: git(context.projectRoot, 'branch', '--show-current'),
+        localHeadBefore: ready.source.oid,
+        localHeadAfter: finished.commitOid,
+        changedFiles: ['tracked.txt'],
+        commitInLocalHistory: true,
+      },
+    })
+    expect(finished.target.current.oid).toBe(finished.commitOid!)
+    expect(finished.target.checkout.phase).toBe('discarded')
+    expect(existsSync(lease.cwd)).toBe(false)
+
+    writeFileSync(join(context.projectRoot, 'after-delivery.txt'), 'local moves on\n')
+    git(context.projectRoot, 'add', 'after-delivery.txt')
+    git(context.projectRoot, 'commit', '-m', 'local continues after delivery')
+    const advancedLocalHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const followup = await context.module.inspect('session-1')
+    expect(followup.current.oid).toBe(advancedLocalHead)
+    expect(followup.delivery).toMatchObject({
+      state: 'delivered',
+      commitOid: finished.commitOid,
+      proof: { localHeadAfter: finished.commitOid, commitInLocalHistory: true },
+    })
+  }, 30_000)
+
+  test('Given Windows returns transient EPERM during an approved cleanup When retry budget remains Then Domi backs off and finishes without a second confirmation', async () => {
+    const context = createContext({ transientRemoveWorktreeFailures: 2 })
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'transient cleanup\n')
+
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: target.revision, commitMessage: 'fix: transient cleanup',
+    })
+
+    expect(finished).toMatchObject({ status: 'finished', cleanup: 'discarded' })
+    expect(context.getRemoveWorktreeCallCount()).toBe(3)
+    expect(existsSync(lease.cwd)).toBeFalse()
+  }, 90_000)
+
+  test('Given Commit succeeds but Worktree removal is temporarily blocked When cleanup retries Then delivery stays truthful and later closes', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'cleanup retry\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '验证清理重试', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: cleanup retry',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    const pending = await context.module.operate({
+      action: 'finalize_preview', sessionId: 'session-1', expectedRevision: preview.target.revision, commitMessage: 'fix: cleanup retry',
+    })
+    expect(pending.status).toBe('finished')
+    if (pending.status !== 'finished') throw new Error(`预期 finished，实际为 ${pending.status}`)
+    expect(pending.cleanup).toBe('pending')
+    expect(pending.cleanupReason).toBe('directory_busy')
+    expect(pending.target.checkout.phase).toBe('finalized')
+    expect(pending.target.delivery).toMatchObject({ state: 'finalized', commitOid: pending.commitOid, cleanup: 'pending' })
+    expect(existsSync(lease.cwd)).toBe(true)
+
+    const retried = await context.module.operate({ action: 'retry_cleanup', sessionId: 'session-1', expectedRevision: pending.target.revision })
+    expect(retried.status).toBe('finished')
+    if (retried.status !== 'finished') throw new Error(`预期 finished，实际为 ${retried.status}`)
+    expect(retried.cleanup).toBe('discarded')
+    expect(retried.target.checkout.phase).toBe('discarded')
+    expect(existsSync(lease.cwd)).toBe(false)
+  }, 90_000)
+
+  test('Given finalized cleanup is pending When the owner starts a new iteration Then the historical Worktree can still be retried safely from management', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const firstLease = await context.module.lease('session-1')
+    writeFileSync(join(firstLease.cwd, 'tracked.txt'), 'first delivered iteration\n')
+    const pending = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: first.revision,
+      commitMessage: 'fix: deliver before cleanup retry',
+    })
+    if (pending.status !== 'finished') throw new Error(`预期 finished，实际为 ${pending.status}`)
+    expect(pending.cleanup).toBe('pending')
+
+    const second = await context.module.beginNextIteration('session-1')
+    expect(second.delivery).toEqual({ state: 'working', iteration: 2 })
+    expect(second.checkout.id).not.toBe(first.checkout.id)
+    const secondLease = await context.module.lease('session-1')
+    writeFileSync(join(secondLease.cwd, 'second.txt'), 'second iteration preview\n')
+    const secondReady = await context.module.markReadyForReview('session-1', {
+      summary: '第二轮不应被旧 cleanup 占用验收槽位',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'fix: second iteration preview',
+    })
+    const secondPreview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: secondReady.revision })
+    expect(secondPreview.status).toBe('previewed')
+    if (secondPreview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${secondPreview.status}`)
+    await context.module.operate({ action: 'rollback_preview', sessionId: 'session-1', expectedRevision: secondPreview.target.revision })
+
+    const cleaned = await context.module.manageManagedWorktree({
+      checkoutId: first.checkout.id,
+      expectedRevision: pending.target.revision,
+      action: 'retry_cleanup',
+    })
+    expect(cleaned.state).toBe('delivered')
+    expect(existsSync(firstLease.cwd)).toBe(false)
+    expect((await context.module.inspect('session-1')).checkout.id).toBe(second.checkout.id)
+  }, 120_000)
+
+  test('Given Commit succeeds and Git removal leaves only an unregistered directory residue When the session continues Then cleanup damage does not disable the delivered conversation', async () => {
+    const context = createContext({ removeWorktreeFailures: 1, removeWorktreeFailureLeavesResidue: true })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const worktreeLease = await context.module.lease('session-1')
+    writeFileSync(join(worktreeLease.cwd, 'tracked.txt'), 'delivered despite residue\n')
+
+    const finished = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: first.revision,
+      commitMessage: 'fix: keep delivered session usable',
+    })
+
+    expect(finished.status).toBe('finished')
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+    expect(finished.cleanup).toBe('pending')
+    expect(finished.target.checkout.phase).toBe('finalized')
+    expect(finished.target.delivery).toMatchObject({ state: 'finalized', commitOid: finished.commitOid })
+    expect(existsSync(worktreeLease.cwd)).toBe(true)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(registry.managedCheckouts[first.checkout.id].journal).toMatchObject({
+      operation: 'cleanup',
+      step: 'removing_worktree',
+      managedDirectoryIdentity: {
+        device: expect.any(String),
+        inode: expect.any(String),
+        birthtimeNs: expect.any(String),
+      },
+    })
+
+    const restarted = context.restart()
+    const restored = await restarted.inspect('session-1')
+    expect(restored.checkout.phase).toBe('finalized')
+    expect(restored.delivery).toMatchObject({ state: 'finalized', commitOid: finished.commitOid })
+
+    const diagnosed = await restarted.listManagedWorktrees({ checkoutId: first.checkout.id, includeDiagnostics: true })
+    expect(diagnosed).toHaveLength(1)
+    expect(diagnosed[0]).toMatchObject({
+      checkoutId: first.checkout.id,
+      state: 'cleanup_pending',
+      dirty: false,
+      canCleanup: true,
+    })
+
+    const cleaned = await restarted.operate({
+      action: 'retry_cleanup',
+      sessionId: 'session-1',
+      expectedRevision: restored.revision,
+    })
+    expect(cleaned.status).toBe('finished')
+    if (cleaned.status !== 'finished') throw new Error(`预期 finished，实际为 ${cleaned.status}`)
+    expect(cleaned.cleanup).toBe('discarded')
+    expect(existsSync(worktreeLease.cwd)).toBe(false)
+
+    const followupLease = await restarted.lease('session-1')
+    expect(followupLease).toMatchObject({
+      cwd: context.projectRoot,
+      followupOnly: true,
+      followupReason: 'delivered',
+      baseOid: finished.commitOid,
+    })
+
+    const second = await restarted.beginNextIteration('session-1')
+    expect(second.delivery).toEqual({ state: 'working', iteration: 2 })
+    expect(second.checkout.id).not.toBe(first.checkout.id)
+  }, 60_000)
+
+  test('Given residue is quarantined but recursive deletion is still blocked When process restarts Then the owned quarantine remains retryable', async () => {
+    const context = createContext({
+      removeWorktreeFailures: 1,
+      removeWorktreeFailureLeavesResidue: true,
+      removeDirectoryTreeFailures: 1,
+    })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'quarantine retry\n')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: first.revision, commitMessage: 'fix: quarantine retry',
+    })
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+
+    const firstRetry = await context.module.operate({
+      action: 'retry_cleanup', sessionId: 'session-1', expectedRevision: finished.target.revision,
+    })
+    expect(firstRetry.status).toBe('finished')
+    if (firstRetry.status !== 'finished') throw new Error(`预期 finished，实际为 ${firstRetry.status}`)
+    expect(firstRetry.cleanup).toBe('pending')
+    expect(existsSync(lease.cwd)).toBe(false)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const quarantinePath = registry.managedCheckouts[first.checkout.id].journal.cleanupQuarantinePath as string
+    expect(existsSync(quarantinePath)).toBe(true)
+
+    const restarted = context.restart()
+    const diagnosed = await restarted.listManagedWorktrees({ checkoutId: first.checkout.id, includeDiagnostics: true })
+    expect(diagnosed[0]).toMatchObject({ dirty: false, canCleanup: true })
+    const cleaned = await restarted.operate({
+      action: 'retry_cleanup', sessionId: 'session-1', expectedRevision: diagnosed[0]!.revision,
+    })
+    expect(cleaned.status).toBe('finished')
+    if (cleaned.status !== 'finished') throw new Error(`预期 finished，实际为 ${cleaned.status}`)
+    expect(cleaned.cleanup).toBe('discarded')
+    expect(existsSync(quarantinePath)).toBe(false)
+  }, 60_000)
+
+  test('Given a legacy blocked registry only has an unregistered non-empty residue When management retries cleanup Then it safely deletes the historical environment', async () => {
+    const context = createContext({ removeWorktreeFailures: 1, removeWorktreeFailureLeavesResidue: true })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'legacy cleanup residue\n')
+    const finished = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: first.revision,
+      commitMessage: 'fix: legacy cleanup residue',
+    })
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const legacy = registry.managedCheckouts[first.checkout.id]
+    legacy.phase = 'finalized'
+    legacy.journal = null
+    legacy.delivery.cleanup = 'blocked'
+    legacy.delivery.cleanupMessage = 'Worktree 的 Git 身份或路径已变化，未执行清理。'
+    legacy.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    const diagnosed = await restarted.listManagedWorktrees({ checkoutId: first.checkout.id, includeDiagnostics: true })
+    expect(diagnosed).toHaveLength(1)
+    expect(diagnosed[0]).toMatchObject({
+      state: 'needs_attention',
+      phase: 'finalized',
+      dirty: false,
+      canCleanup: true,
+      cleanupMessage: 'Git Worktree 已解除注册，仅剩物理目录残余；可重试清理环境。',
+    })
+
+    const cleaned = await restarted.manageManagedWorktree({
+      checkoutId: first.checkout.id,
+      expectedRevision: diagnosed[0]!.revision,
+      action: 'retry_cleanup',
+    })
+    expect(cleaned.state).toBe('delivered')
+    expect(existsSync(lease.cwd)).toBe(false)
+  }, 60_000)
+
+  test('Given a retained Worktree removal leaves an unregistered residue When management retries after restart Then it deletes the environment', async () => {
+    const context = createContext({ removeWorktreeFailures: 1, removeWorktreeFailureLeavesResidue: true })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'retained cleanup residue\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '保留环境后清理', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: retained cleanup residue',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    const retained = await context.module.operate({
+      action: 'finalize_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview.target.revision,
+      commitMessage: 'fix: retained cleanup residue',
+      retention: 'retain_manual',
+    })
+    if (retained.status !== 'finished') throw new Error(`预期 finished，实际为 ${retained.status}`)
+
+    const firstCleanup = await context.module.manageManagedWorktree({
+      checkoutId: first.checkout.id,
+      expectedRevision: retained.target.revision,
+      action: 'cleanup_retained',
+    })
+    expect(firstCleanup.state).toBe('needs_attention')
+    expect(existsSync(lease.cwd)).toBe(true)
+
+    const restarted = context.restart()
+    const diagnosed = await restarted.listManagedWorktrees({ checkoutId: first.checkout.id, includeDiagnostics: true })
+    expect(diagnosed[0]).toMatchObject({ dirty: false, canCleanup: true })
+    const cleaned = await restarted.manageManagedWorktree({
+      checkoutId: first.checkout.id,
+      expectedRevision: diagnosed[0]!.revision,
+      action: 'cleanup_retained',
+    })
+    expect(cleaned.state).toBe('delivered')
+    expect(existsSync(lease.cwd)).toBe(false)
+  }, 60_000)
+
+  test('Given an unregistered cleanup path is replaced by another Git repository When retry runs Then it fails closed and preserves the replacement', async () => {
+    const context = createContext({ removeWorktreeFailures: 1, removeWorktreeFailureLeavesResidue: true })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'cleanup before replacement\n')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: first.revision, commitMessage: 'fix: replacement guard',
+    })
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+
+    rmSync(lease.cwd, { recursive: true, force: true })
+    git(context.root, 'init', '-b', 'replacement', lease.cwd)
+    git(lease.cwd, 'config', 'user.name', 'Replacement Test')
+    git(lease.cwd, 'config', 'user.email', 'replacement@example.test')
+    writeFileSync(join(lease.cwd, 'replacement.txt'), 'must survive\n')
+    git(lease.cwd, 'add', 'replacement.txt')
+    git(lease.cwd, 'commit', '-m', 'replacement')
+
+    const blocked = await context.module.operate({
+      action: 'retry_cleanup', sessionId: 'session-1', expectedRevision: finished.target.revision,
+    })
+    expect(blocked.status).toBe('finished')
+    if (blocked.status !== 'finished') throw new Error(`预期 finished，实际为 ${blocked.status}`)
+    expect(blocked.cleanup).toBe('pending')
+    expect(blocked.cleanupReason).toBe('identity_changed')
+    expect(blocked.cleanupMessage).toContain('Git 身份或路径已变化')
+    expect(readFileSync(join(lease.cwd, 'replacement.txt'), 'utf8')).toBe('must survive\n')
+  }, 60_000)
+
+  test('Given a cleanup receipt path is replaced by a plain directory When retry or reconcile runs Then file identity prevents unattended deletion', async () => {
+    const context = createContext({ removeWorktreeFailures: 1, removeWorktreeFailureLeavesResidue: true })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'cleanup before plain replacement\n')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: first.revision, commitMessage: 'fix: plain replacement guard',
+    })
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+
+    rmSync(lease.cwd, { recursive: true, force: true })
+    mkdirSync(lease.cwd, { recursive: true })
+    writeFileSync(join(lease.cwd, 'replacement.txt'), 'plain directory must survive\n')
+
+    const blocked = await context.module.operate({
+      action: 'retry_cleanup', sessionId: 'session-1', expectedRevision: finished.target.revision,
+    })
+    expect(blocked.status).toBe('finished')
+    if (blocked.status !== 'finished') throw new Error(`预期 finished，实际为 ${blocked.status}`)
+    expect(blocked.cleanup).toBe('pending')
+    expect(readFileSync(join(lease.cwd, 'replacement.txt'), 'utf8')).toBe('plain directory must survive\n')
+
+    await context.restart().reconcile()
+    expect(readFileSync(join(lease.cwd, 'replacement.txt'), 'utf8')).toBe('plain directory must survive\n')
+  }, 60_000)
+
+  test('Given a legacy blocked path was replaced by a plain directory When reconcile runs Then compatibility never deletes it unattended', async () => {
+    const context = createContext({ removeWorktreeFailures: 1, removeWorktreeFailureLeavesResidue: true })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'legacy before replacement\n')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: first.revision, commitMessage: 'fix: legacy unattended guard',
+    })
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const legacy = registry.managedCheckouts[first.checkout.id]
+    legacy.journal = null
+    legacy.delivery.cleanup = 'blocked'
+    legacy.delivery.cleanupMessage = 'Worktree 的 Git 身份或路径已变化，未执行清理。'
+    legacy.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    rmSync(lease.cwd, { recursive: true, force: true })
+    mkdirSync(lease.cwd, { recursive: true })
+    writeFileSync(join(lease.cwd, 'replacement.txt'), 'legacy replacement must survive\n')
+
+    await context.restart().reconcile()
+    expect(readFileSync(join(lease.cwd, 'replacement.txt'), 'utf8')).toBe('legacy replacement must survive\n')
+  }, 60_000)
+
+  test('Given an unregistered cleanup path is replaced by a directory junction When retry runs Then it refuses to follow and preserves the target', async () => {
+    const context = createContext({ removeWorktreeFailures: 1, removeWorktreeFailureLeavesResidue: true })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'cleanup before junction replacement\n')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: first.revision, commitMessage: 'fix: junction guard',
+    })
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+
+    rmSync(lease.cwd, { recursive: true, force: true })
+    const replacementTarget = join(context.root, 'junction-target')
+    mkdirSync(replacementTarget, { recursive: true })
+    writeFileSync(join(replacementTarget, 'must-survive.txt'), 'safe\n')
+    symlinkSync(replacementTarget, lease.cwd, process.platform === 'win32' ? 'junction' : 'dir')
+
+    const blocked = await context.module.operate({
+      action: 'retry_cleanup', sessionId: 'session-1', expectedRevision: finished.target.revision,
+    })
+    expect(blocked.status).toBe('finished')
+    if (blocked.status !== 'finished') throw new Error(`预期 finished，实际为 ${blocked.status}`)
+    expect(blocked.cleanup).toBe('pending')
+    expect(readFileSync(join(replacementTarget, 'must-survive.txt'), 'utf8')).toBe('safe\n')
+    expect(existsSync(lease.cwd)).toBe(true)
+  }, 60_000)
+
+  test('Given finalized delivery points at a replaced Local project identity When follow-up is requested Then it remains fail closed', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const worktreeLease = await context.module.lease('session-1')
+    writeFileSync(join(worktreeLease.cwd, 'tracked.txt'), 'finalized before identity mismatch\n')
+    const pending = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: first.revision,
+      commitMessage: 'fix: finalize before identity mismatch',
+    })
+    if (pending.status !== 'finished') throw new Error(`预期 finished，实际为 ${pending.status}`)
+    expect(pending.cleanup).toBe('pending')
+
+    const replacementRoot = join(context.root, 'replacement-local')
+    git(context.root, 'init', '-b', 'main', replacementRoot)
+    git(replacementRoot, 'config', 'user.name', 'Replacement Test')
+    git(replacementRoot, 'config', 'user.email', 'replacement@example.test')
+    writeFileSync(join(replacementRoot, 'replacement.txt'), 'replacement\n')
+    git(replacementRoot, 'add', 'replacement.txt')
+    git(replacementRoot, 'commit', '-m', 'replacement base')
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    registry.managedCheckouts[first.checkout.id].localRoot = replacementRoot
+    registry.managedCheckouts[first.checkout.id].revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+    const restarted = context.restart()
+
+    const inspected = await restarted.inspect('session-1')
+    expect(inspected.checkout.phase).toBe('recovery_required')
+    await expect(restarted.lease('session-1')).rejects.toMatchObject({ code: 'recovery_required' })
+    const next = await restarted.beginNextIteration('session-1')
+    expect(next.checkout).toMatchObject({ id: first.checkout.id, phase: 'recovery_required' })
+  }, 60_000)
+
+  test('Given a finalized checkout points at a project root that has been replaced When follow-up starts Then Local identity mismatch still fails closed', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'finalized before project replacement\n')
+    const finished = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: first.revision,
+      commitMessage: 'fix: finalized before replacement',
+    })
+    if (finished.status !== 'finished') throw new Error(`预期 finished，实际为 ${finished.status}`)
+
+    const replacementRoot = join(context.root, 'replacement-project')
+    git(context.root, 'init', '-b', 'replacement', replacementRoot)
+    git(replacementRoot, 'config', 'user.name', 'Replacement Test')
+    git(replacementRoot, 'config', 'user.email', 'replacement@example.test')
+    writeFileSync(join(replacementRoot, 'replacement.txt'), 'replacement\n')
+    git(replacementRoot, 'add', 'replacement.txt')
+    git(replacementRoot, 'commit', '-m', 'replacement base')
+    context.setProjectRoot('project-1', replacementRoot)
+
+    const inspected = await context.module.inspect('session-1')
+    expect(inspected.checkout.phase).toBe('recovery_required')
+    expect(inspected.delivery).toMatchObject({ state: 'finalized', commitOid: finished.commitOid })
+    await expect(context.module.lease('session-1')).rejects.toMatchObject({ code: 'recovery_required' })
+
+    const attempted = await context.module.beginNextIteration('session-1')
+    expect(attempted.checkout.phase).toBe('recovery_required')
+    expect(attempted.checkout.id).toBe(first.checkout.id)
+    expect(context.getCreateWorktreeCallCount()).toBe(1)
+  }, 60_000)
+
+  test('Given process restarts after Preview artifacts were retained When reconcile runs Then receipt survives and Preview remains safely withdrawable', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'crash preview\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '崩溃预览', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: crash preview',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[preview.target.checkout.id]
+    record.phase = 'mutating'
+    record.journal = {
+      operation: 'preview', operationId: 'crash-preview', step: 'artifacts_retained', startedAt: Date.now(),
+      previewId: record.delivery.preview.previewId, reviewId: record.delivery.review.reviewId,
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    await restarted.reconcile()
+    const recovered = await restarted.inspect('session-1')
+    expect(recovered.checkout.phase).toBe('ready')
+    expect(recovered.delivery?.state).toBe('preview_active')
+    const rollback = await restarted.operate({ action: 'rollback_preview', sessionId: 'session-1', expectedRevision: recovered.revision })
+    expect(rollback.status).toBe('preview_rolled_back')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+  }, 30_000)
+
+  test('Given process restarts after branch CAS but before Finalize registry update When reconcile runs Then it records the real Commit and retains Worktree', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'crash finalize\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '崩溃提交', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: crash finalize',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    git(context.projectRoot, 'add', 'tracked.txt')
+    git(context.projectRoot, 'commit', '-m', 'fix: crash finalize')
+    const commitOid = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[preview.target.checkout.id]
+    record.phase = 'mutating'
+    record.journal = {
+      operation: 'finalize_preview', operationId: 'crash-finalize', step: 'updating_ref', startedAt: Date.now(),
+      previewId: record.delivery.preview.previewId, reviewId: record.delivery.review.reviewId, commitOid,
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    await restarted.reconcile()
+    const recovered = await restarted.inspect('session-1')
+    expect(recovered.checkout.phase).toBe('finalized')
+    expect(recovered.delivery).toMatchObject({ state: 'finalized', commitOid, cleanup: 'blocked' })
+    expect(existsSync(lease.cwd)).toBe(true)
+  }, 30_000)
+
+  test('Given cleanup was pending and the Worktree gains new changes When retry or reconcile runs Then it blocks instead of force deleting user data', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'cleanup guard\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '清理保护', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: cleanup guard',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    const pending = await context.module.operate({
+      action: 'finalize_preview', sessionId: 'session-1', expectedRevision: preview.target.revision, commitMessage: 'fix: cleanup guard',
+    })
+    if (pending.status !== 'finished') throw new Error(`预期 finished，实际为 ${pending.status}`)
+    expect(pending.cleanup).toBe('pending')
+
+    writeFileSync(join(lease.cwd, 'after-finalize.txt'), 'must survive\n')
+    const blocked = await context.module.operate({ action: 'retry_cleanup', sessionId: 'session-1', expectedRevision: pending.target.revision })
+    expect(blocked.status).toBe('finished')
+    if (blocked.status !== 'finished') throw new Error(`预期 finished，实际为 ${blocked.status}`)
+    expect(blocked.cleanup).toBe('pending')
+    expect(blocked.cleanupReason).toBe('modified_after_finalize')
+    expect(blocked.cleanupMessage).toContain('提交后出现了新修改')
+    expect(existsSync(join(lease.cwd, 'after-finalize.txt'))).toBe(true)
+
+    await context.restart().reconcile()
+    expect(existsSync(join(lease.cwd, 'after-finalize.txt'))).toBe(true)
+    const inspected = await context.module.inspect('session-1')
+    expect(inspected.checkout.phase).toBe('finalized')
+    expect(inspected.delivery).toMatchObject({ state: 'finalized', cleanup: 'blocked' })
+  }, 60_000)
+
+  test('Given an iteration was delivered When a follow-up only reads Then no checkout is created, but confirmed modification starts iteration two lazily', async () => {
+    const context = createContext()
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const firstLease = await context.module.lease('session-1')
+    writeFileSync(join(firstLease.cwd, 'tracked.txt'), 'iteration one\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '第一轮', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'fix: iteration one',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    const delivered = await context.module.operate({
+      action: 'finalize_preview', sessionId: 'session-1', expectedRevision: preview.target.revision, commitMessage: 'fix: iteration one',
+    })
+    if (delivered.status !== 'finished') throw new Error(`预期 finished，实际为 ${delivered.status}`)
+
+    const followupLease = await context.module.lease('session-1')
+    expect(followupLease.followupOnly).toBe(true)
+    expect(followupLease.cwd).toBe(context.projectRoot)
+    expect(context.getRemoveWorktreeCallCount()).toBe(1)
+
+    const second = await context.module.beginNextIteration('session-1')
+    expect(second.checkout.id).not.toBe(first.checkout.id)
+    expect(second.checkout.phase).toBe('ready')
+    expect(second.delivery).toEqual({ state: 'working', iteration: 2 })
+    const secondLease = await context.module.lease('session-1')
+    expect(secondLease.followupOnly).toBeUndefined()
+    expect(secondLease.cwd).not.toBe(context.projectRoot)
+    expect(secondLease.cwd).not.toBe(firstLease.cwd)
+    expect(basename(secondLease.cwd)).toContain('--i2--')
+    expect(existsSync(secondLease.cwd)).toBe(true)
+  }, 30_000)
+
+  test('Given Preview is accepted with 24h retention When Finalize runs Then the committed Worktree is frozen and a new iteration uses a different checkout', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const firstLease = await context.module.lease('session-1')
+    writeFileSync(join(firstLease.cwd, 'tracked.txt'), 'retained iteration\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: '保留运行环境', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'feat: retain environment',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    const before = Date.now()
+    const retained = await context.module.operate({
+      action: 'finalize_preview', sessionId: 'session-1', expectedRevision: preview.target.revision,
+      commitMessage: 'feat: retain environment', retention: 'retain_24h',
+    })
+
+    expect(retained).toMatchObject({ status: 'finished', cleanup: 'retained' })
+    const retainedTarget = await context.module.inspect('session-1')
+    expect(retainedTarget.checkout.phase).toBe('retained')
+    expect(retainedTarget.delivery).toMatchObject({ state: 'retained', retention: 'retain_24h', cleanup: 'scheduled' })
+    if (retainedTarget.delivery?.state !== 'retained') throw new Error('预期 retained delivery')
+    expect(retainedTarget.delivery.expiresAt).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000)
+    expect(existsSync(firstLease.cwd)).toBe(true)
+    const managed = await context.module.listManagedWorktrees({ projectId: 'project-1' })
+    expect(managed).toHaveLength(1)
+    expect(managed[0]).toMatchObject({
+      checkoutId: retainedTarget.checkout.id,
+      ownerSessionTitle: '测试思路',
+      state: 'retained',
+      retention: 'retain_24h',
+      approximateBytes: null,
+      canCleanup: false,
+    })
+    expect(context.getMeasureDirectoryCallCount()).toBe(0)
+    expect(JSON.stringify(managed[0])).not.toContain(firstLease.cwd)
+
+    const diagnosed = await context.module.listManagedWorktrees({
+      checkoutId: retainedTarget.checkout.id,
+      includeDiagnostics: true,
+    })
+    expect(diagnosed).toHaveLength(1)
+    expect(diagnosed[0]).toMatchObject({
+      checkoutId: retainedTarget.checkout.id,
+      state: 'retained',
+      canCleanup: true,
+    })
+    expect(diagnosed[0]?.approximateBytes).toBeGreaterThan(0)
+    expect(context.getMeasureDirectoryCallCount()).toBe(1)
+
+    const followupLease = await context.module.lease('session-1')
+    expect(followupLease.followupOnly).toBe(true)
+    expect(followupLease.cwd).toBe(context.projectRoot)
+
+    const second = await context.module.beginNextIteration('session-1')
+    const secondLease = await context.module.lease('session-1')
+    expect(second.delivery).toEqual({ state: 'working', iteration: 2 })
+    expect(secondLease.cwd).not.toBe(firstLease.cwd)
+    expect(existsSync(firstLease.cwd)).toBe(true)
+  }, 60_000)
+
+  test('Given retained, working and dirty finalized Worktrees When cleanup inspection runs Then it is read-only and explains every cleanup decision', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    context.addSession('session-2', 'project-1', '仍在工作的任务')
+    context.addSession('session-3', 'project-1', '提交后又修改的任务')
+
+    const retainedTarget = await context.module.bind('session-1', { kind: 'isolated' })
+    const retainedLease = await context.module.lease('session-1')
+    writeFileSync(join(retainedLease.cwd, 'retained.txt'), 'retained\n')
+    const retained = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: retainedTarget.revision,
+      commitMessage: 'test: retained inspection', retention: 'retain_24h',
+    })
+    if (retained.status !== 'finished') throw new Error('预期 retained finish')
+
+    await context.module.bind('session-2', { kind: 'isolated' })
+
+    const dirtyTarget = await context.module.bind('session-3', { kind: 'isolated' })
+    const dirtyLease = await context.module.lease('session-3')
+    writeFileSync(join(dirtyLease.cwd, 'dirty.txt'), 'delivered\n')
+    const finalized = await context.module.operate({
+      action: 'finish', sessionId: 'session-3', expectedRevision: dirtyTarget.revision,
+      commitMessage: 'test: dirty finalized inspection',
+    })
+    if (finalized.status !== 'finished') throw new Error('预期 finalized finish')
+    writeFileSync(join(dirtyLease.cwd, 'after-finalize.txt'), 'must survive\n')
+
+    const before = readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')
+    const inspected = await context.module.inspectManagedWorktreeCleanup({ projectId: 'project-1' })
+    const after = readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')
+
+    expect(after).toBe(before)
+    expect(inspected.map((item) => ({ id: item.checkoutId, eligibility: item.cleanup?.eligibility, reason: item.cleanup?.reason }))).toEqual([
+      { id: dirtyTarget.checkout.id, eligibility: 'blocked', reason: 'uncommitted_changes' },
+      { id: retainedTarget.checkout.id, eligibility: 'retained', reason: 'retention_active' },
+      { id: expect.any(String), eligibility: 'blocked', reason: 'working' },
+    ])
+    expect(JSON.stringify(inspected)).not.toContain(context.projectRoot)
+  }, 120_000)
+
+  test('Given safe, retained and working Worktrees When bulk cleanup runs Then it rechecks and cleans only the safe candidate', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    context.addSession('session-2', 'project-1', '仍在工作的任务')
+    context.addSession('session-3', 'project-1', '到期可清理的任务')
+
+    const retainedTarget = await context.module.bind('session-1', { kind: 'isolated' })
+    const retainedLease = await context.module.lease('session-1')
+    writeFileSync(join(retainedLease.cwd, 'retained.txt'), 'retained\n')
+    const retained = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: retainedTarget.revision,
+      commitMessage: 'test: retain bulk', retention: 'retain_manual',
+    })
+    if (retained.status !== 'finished') throw new Error('预期 retained finish')
+
+    const working = await context.module.bind('session-2', { kind: 'isolated' })
+
+    const safeTarget = await context.module.bind('session-3', { kind: 'isolated' })
+    const safeLease = await context.module.lease('session-3')
+    writeFileSync(join(safeLease.cwd, 'safe.txt'), 'safe cleanup\n')
+    const safe = await context.module.operate({
+      action: 'finish', sessionId: 'session-3', expectedRevision: safeTarget.revision,
+      commitMessage: 'test: safe bulk cleanup',
+    })
+    if (safe.status !== 'finished') throw new Error('预期 finalized finish')
+
+    const inspection = await context.module.inspectManagedWorktreeCleanup({ projectId: 'project-1' })
+    const result = await context.module.bulkCleanupManagedWorktrees(inspection.map((item) => ({
+      checkoutId: item.checkoutId, expectedRevision: item.revision,
+    })))
+
+    expect(result.cleaned).toEqual([{ checkoutId: safeTarget.checkout.id, iteration: 1, commitOid: safe.commitOid }])
+    expect(result.retained.map((item) => ({ id: item.checkoutId, eligibility: item.cleanup.eligibility, reason: item.cleanup.reason }))).toEqual([
+      { id: retainedTarget.checkout.id, eligibility: 'retained' as const, reason: 'retention_active' as const },
+      { id: working.checkout.id, eligibility: 'blocked' as const, reason: 'working' as const },
+    ].sort((left, right) => left.id.localeCompare(right.id)))
+    expect(existsSync(safeLease.cwd)).toBe(false)
+    expect(existsSync(retainedLease.cwd)).toBe(true)
+  }, 120_000)
+
+  test('Given a candidate revision changes after cleanup inspection When bulk cleanup runs Then stale state is retained without mutation', async () => {
+    const context = createContext({ removeWorktreeFailures: 1 })
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'safe.txt'), 'safe cleanup\n')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: target.revision, commitMessage: 'test: stale bulk cleanup',
+    })
+    if (finished.status !== 'finished') throw new Error('预期 finalized finish')
+    const [inspection] = await context.module.inspectManagedWorktreeCleanup({ checkoutId: target.checkout.id })
+    if (!inspection) throw new Error('预期 cleanup inspection')
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    registry.managedCheckouts[target.checkout.id].revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const result = await context.restart().bulkCleanupManagedWorktrees([{ checkoutId: target.checkout.id, expectedRevision: inspection.revision }])
+
+    expect(result.cleaned).toEqual([])
+    expect(result.retained[0]).toMatchObject({ checkoutId: target.checkout.id, cleanup: { eligibility: 'blocked', reason: 'unknown' } })
+    expect(existsSync(lease.cwd)).toBe(true)
+  }, 90_000)
+
+  test('Given Worktree diagnostics are scanning a large directory When another managed mutation starts Then the read-only scan does not hold the mutation lock', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'retained for diagnostics\n')
+    const target = await context.module.inspect('session-1')
+    const retained = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      commitMessage: 'test: retain diagnostics fixture',
+      retention: 'retain_manual',
+    })
+    if (retained.status !== 'finished') throw new Error(`预期 finished，实际为 ${retained.status}`)
+
+    const pause = context.pauseNextDirectoryMeasure()
+    const diagnostics = context.module.listManagedWorktrees({
+      checkoutId: retained.target.checkout.id,
+      includeDiagnostics: true,
+    })
+    await pause.started
+
+    const mutation = context.module.manageManagedWorktree({
+      checkoutId: retained.target.checkout.id,
+      expectedRevision: retained.target.revision,
+      action: 'set_retention',
+      retention: 'retain_24h',
+    })
+    const winner = await Promise.race([
+      mutation.then(() => 'resolved' as const),
+      Bun.sleep(2_000).then(() => 'timeout' as const),
+    ])
+    pause.resume()
+    await diagnostics
+    await mutation
+
+    expect(winner).toBe('resolved')
+  }, 60_000)
+
+  test('Given expired Worktree cleanup is paused When another working session is inspected Then maintenance does not trigger a renderer timeout', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', '并发工作会话')
+    await context.module.bind('session-2', { kind: 'local' })
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'retained maintenance fixture\n')
+    const target = await context.module.inspect('session-1')
+    const retained = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      commitMessage: 'test: retain maintenance fixture',
+      retention: 'retain_24h',
+    })
+    if (retained.status !== 'finished' || retained.target.delivery?.state !== 'retained' || !retained.target.delivery.expiresAt) {
+      throw new Error('预期产生定时保留的 Worktree')
+    }
+
+    const pause = context.pauseNextGitInspect(lease.cwd)
+    const maintenance = context.module.cleanupExpiredRetained(retained.target.delivery.expiresAt + 1)
+    await pause.started
+
+    const inspection = context.module.inspect('session-2')
+    const winner = await Promise.race([
+      inspection.then(() => 'resolved' as const),
+      Bun.sleep(2_000).then(() => 'timeout' as const),
+    ])
+    pause.resume()
+    await maintenance
+    const inspected = await inspection
+
+    expect(winner).toBe('resolved')
+    expect(inspected.checkout.kind).toBe('local')
+  }, 60_000)
+
+  test('Given maintenance is queued behind an inspect When another session opens Then it waits for maintenance to start and bypasses it', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', '前置检查会话')
+    context.addSession('session-3', 'project-1', '后到工作会话')
+    await context.module.bind('session-2', { kind: 'local' })
+    await context.module.bind('session-3', { kind: 'local' })
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'queued maintenance fixture\n')
+    const target = await context.module.inspect('session-1')
+    const retained = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: target.revision,
+      commitMessage: 'test: retain queued maintenance fixture', retention: 'retain_24h',
+    })
+    if (retained.status !== 'finished' || retained.target.delivery?.state !== 'retained' || !retained.target.delivery.expiresAt) {
+      throw new Error('预期产生定时保留的 Worktree')
+    }
+
+    const firstPause = context.pauseNextGitInspect()
+    const firstInspection = context.module.inspect('session-2')
+    await firstPause.started
+    const maintenancePause = context.pauseNextGitInspect(lease.cwd)
+    const maintenance = context.module.cleanupExpiredRetained(retained.target.delivery.expiresAt + 1)
+    const secondInspection = context.module.inspect('session-3')
+
+    firstPause.resume()
+    await maintenancePause.started
+    const winner = await Promise.race([
+      secondInspection.then(() => 'resolved' as const),
+      Bun.sleep(2_000).then(() => 'timeout' as const),
+    ])
+    maintenancePause.resume()
+    await Promise.all([firstInspection, secondInspection, maintenance])
+
+    expect(winner).toBe('resolved')
+  }, 60_000)
+
+  test('Given a maintenance bypass inspect is still running When maintenance finishes Then a queued mutation waits for the inspect to drain', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', '待清理工作会话')
+    const workingTarget = await context.module.bind('session-2', { kind: 'isolated' })
+    const workingLease = await context.module.lease('session-2')
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const retainedLease = await context.module.lease('session-1')
+    writeFileSync(join(retainedLease.cwd, 'tracked.txt'), 'maintenance drain fixture\n')
+    const retainedTarget = await context.module.inspect('session-1')
+    const retained = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: retainedTarget.revision,
+      commitMessage: 'test: retain drain fixture', retention: 'retain_24h',
+    })
+    if (retained.status !== 'finished' || retained.target.delivery?.state !== 'retained' || !retained.target.delivery.expiresAt) {
+      throw new Error('预期产生定时保留的 Worktree')
+    }
+
+    const maintenancePause = context.pauseNextGitInspect(retainedLease.cwd)
+    const maintenance = context.module.cleanupExpiredRetained(retained.target.delivery.expiresAt + 1)
+    await maintenancePause.started
+    const bypassPause = context.pauseNextGitInspect(workingLease.cwd)
+    const inspection = context.module.inspect('session-2')
+    await bypassPause.started
+    const discard = context.module.operate({
+      action: 'discard',
+      sessionId: 'session-2',
+      expectedRevision: workingTarget.revision,
+      confirmDirty: false,
+    })
+
+    maintenancePause.resume()
+    const cleanupPersisted = await Promise.race([
+      (async () => {
+        while (true) {
+          const registry = JSON.parse(readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')) as {
+            managedCheckouts: Record<string, { phase: string }>
+          }
+          if (registry.managedCheckouts[retained.target.checkout.id]?.phase === 'discarded') return 'persisted' as const
+          await Bun.sleep(25)
+        }
+      })(),
+      Bun.sleep(20_000).then(() => 'timeout' as const),
+    ])
+    const mutationWinner = await Promise.race([
+      discard.then(() => 'resolved' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ])
+
+    expect(cleanupPersisted).toBe('persisted')
+    expect(mutationWinner).toBe('timeout')
+
+    bypassPause.resume()
+    const [, inspected, discarded] = await Promise.all([maintenance, inspection, discard])
+    expect(inspected.checkout.phase).toBe('ready')
+    expect(discarded.status).toBe('discarded')
+  }, 75_000)
+
+  test('Given retained Worktrees expire When maintenance runs Then only unchanged timed retention is cleaned and manual retention remains', async () => {
+    const timed = createContext()
+    await timed.module.bind('session-1', { kind: 'isolated' })
+    const timedLease = await timed.module.lease('session-1')
+    writeFileSync(join(timedLease.cwd, 'tracked.txt'), 'timed retention\n')
+    const timedTarget = await timed.module.inspect('session-1')
+    const timedResult = await timed.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: timedTarget.revision,
+      commitMessage: 'feat: timed retention', retention: 'retain_24h',
+    })
+    if (timedResult.status !== 'finished' || timedResult.target.delivery?.state !== 'retained') throw new Error('预期 timed retained')
+    const expiresAt = timedResult.target.delivery.expiresAt
+    if (!expiresAt) throw new Error('预期 expiresAt')
+    expect(await timed.module.cleanupExpiredRetained(expiresAt + 1)).toEqual([timedResult.target.checkout.id])
+    expect(existsSync(timedLease.cwd)).toBe(false)
+
+    const manual = createContext()
+    await manual.module.bind('session-1', { kind: 'isolated' })
+    const manualLease = await manual.module.lease('session-1')
+    writeFileSync(join(manualLease.cwd, 'tracked.txt'), 'manual retention\n')
+    const manualTarget = await manual.module.inspect('session-1')
+    const manualResult = await manual.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: manualTarget.revision,
+      commitMessage: 'feat: manual retention', retention: 'retain_manual',
+    })
+    expect(manualResult).toMatchObject({ status: 'finished', cleanup: 'retained' })
+    if (manualResult.status !== 'finished') throw new Error('预期 manual finished')
+    const extended = await manual.module.manageManagedWorktree({
+      checkoutId: manualResult.target.checkout.id,
+      expectedRevision: manualResult.target.revision,
+      action: 'set_retention',
+      retention: 'retain_3d',
+    })
+    expect(extended).toMatchObject({ retention: 'retain_3d', state: 'retained' })
+    const indefinite = await manual.module.manageManagedWorktree({
+      checkoutId: extended.checkoutId,
+      expectedRevision: extended.revision,
+      action: 'set_retention',
+      retention: 'retain_manual',
+    })
+    expect(indefinite.expiresAt).toBeNull()
+    expect(await manual.module.cleanupExpiredRetained(Date.now() + 365 * 24 * 60 * 60 * 1000)).toEqual([])
+    expect(existsSync(manualLease.cwd)).toBe(true)
+  }, 60_000)
+
+  test('Given an expired retained Worktree changed after commit When maintenance runs Then it is preserved and marked for attention', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'retained base\n')
+    const target = await context.module.inspect('session-1')
+    const result = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: target.revision,
+      commitMessage: 'feat: retained base', retention: 'retain_24h',
+    })
+    if (result.status !== 'finished' || result.target.delivery?.state !== 'retained' || !result.target.delivery.expiresAt) throw new Error('预期 retained')
+    writeFileSync(join(lease.cwd, 'after-commit.txt'), 'must survive\n')
+
+    expect(await context.module.cleanupExpiredRetained(result.target.delivery.expiresAt + 1)).toEqual([])
+    const preserved = await context.module.inspect('session-1')
+    expect(preserved.checkout.phase).toBe('retained')
+    expect(preserved.delivery).toMatchObject({ state: 'retained', cleanup: 'blocked' })
+    expect(existsSync(join(lease.cwd, 'after-commit.txt'))).toBe(true)
+  }, 75_000)
+
+  test('Given owner Isolated has task changes and Local has unrelated staged work When Finish runs Then it creates one task commit and automatically discards the Worktree', async () => {
+    const context = createContext()
+    writeFileSync(join(context.projectRoot, 'local-staged.txt'), 'keep staged\n')
+    git(context.projectRoot, 'add', 'local-staged.txt')
+    const stagedBefore = git(context.projectRoot, 'show', ':local-staged.txt')
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'finished task\n')
+
+    const result = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      commitMessage: 'fix: finish task',
+    })
+
+    expect(result.status).toBe('finished')
+    if (result.status !== 'finished') throw new Error(`预期 finished，实际为 ${result.status}`)
+    expect(result.cleanup).toBe('discarded')
+    expect(result.commitOid).toBe(git(context.projectRoot, 'rev-parse', 'HEAD'))
+    expect(git(context.projectRoot, 'show', '-s', '--format=%s', 'HEAD')).toBe('fix: finish task')
+    expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
+    expect(git(context.projectRoot, 'show', ':local-staged.txt')).toBe(stagedBefore)
+    expect(git(context.projectRoot, 'diff', '--cached', '--name-only')).toBe('local-staged.txt')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('finished task')
+    expect(result.target.checkout.phase).toBe('discarded')
+    expect(existsSync(lease.cwd)).toBe(false)
+  }, 45_000)
+
+  test('Given Finish finds a real content conflict When it plans delivery Then Local remains unchanged and the Worktree stays ready', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'local conflict\n')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'isolated conflict\n')
+
+    const result = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      commitMessage: 'fix: conflict',
+    })
+
+    expect(result.status).toBe('conflict')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe('local conflict\n')
+    expect((await context.module.inspect('session-1')).checkout.phase).toBe('ready')
+    expect(existsSync(lease.cwd)).toBe(true)
+  }, 15_000)
+
+  test('Given a collaborator inherits the owner Worktree When it finishes and owner releases it Then history is retained and Finish can continue safely', async () => {
+    const context = createContext()
+    context.setSessionDelegation('child-session', 'running')
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'shared finished task\n')
+    const localHeadBefore = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const inspected = await context.module.inspect('session-1')
+    expect(inspected.collaborators).toEqual([{
+      sessionId: 'child-session',
+      title: '测试思路 (worktree)',
+      status: 'running',
+      canRelease: false,
+    }])
+    const runningRelease = await context.module.operate({
+      action: 'release_collaborator',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      collaboratorSessionId: 'child-session',
+    })
+    expect(runningRelease).toMatchObject({ status: 'error', code: 'collaborator_active' })
+
+    context.setSessionDelegation('child-session', 'paused')
+    const unknownStatus = await context.module.inspect('session-1')
+    expect(unknownStatus.collaborators?.[0]).toMatchObject({ status: 'unknown', canRelease: false })
+    const unknownRelease = await context.module.operate({
+      action: 'release_collaborator',
+      sessionId: 'session-1',
+      expectedRevision: unknownStatus.revision,
+      collaboratorSessionId: 'child-session',
+    })
+    expect(unknownRelease).toMatchObject({ status: 'error', code: 'operation_not_allowed' })
+    context.setSessionDelegation('child-session', 'running')
+
+    const blocked = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      commitMessage: 'fix: shared task',
+    })
+
+    expect(blocked).toMatchObject({ status: 'error', code: 'collaborator_active' })
+    if (blocked.status !== 'error') throw new Error('预期协作占用阻止 Finish')
+    expect(blocked.message).toContain('测试思路 (worktree)（运行中）')
+    expect(blocked.message).not.toContain('child-session')
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHeadBefore)
+
+    context.setSessionDelegation('child-session', 'completed')
+    const completed = await context.module.inspect('session-1')
+    expect(completed.collaborators?.[0]).toMatchObject({ status: 'completed', canRelease: true })
+    context.markSessionDelegationCheckoutReleased('child-session')
+    await expect(context.module.lease('child-session')).rejects.toMatchObject({ code: 'operation_not_allowed' })
+    const released = await context.module.operate({
+      action: 'release_collaborator',
+      sessionId: 'session-1',
+      expectedRevision: completed.revision,
+      collaboratorSessionId: 'child-session',
+    })
+    expect(released).toMatchObject({
+      status: 'collaborator_released',
+      collaboratorSessionId: 'child-session',
+    })
+    if (released.status !== 'collaborator_released') throw new Error('预期释放协作占用')
+    expect(released.target.collaborators).toBeUndefined()
+    await expect(context.module.inspect('child-session')).rejects.toMatchObject({ code: 'target_unselected' })
+    await expect(context.module.bind('child-session', { kind: 'isolated' })).rejects.toMatchObject({ code: 'operation_not_allowed' })
+    const finished = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: released.target.revision,
+      commitMessage: 'fix: shared task',
+    })
+    expect(finished).toMatchObject({ status: 'finished', cleanup: 'discarded' })
+    expect(git(context.projectRoot, 'log', '-1', '--format=%s')).toBe('fix: shared task')
+    expect(existsSync(lease.cwd)).toBe(false)
+  }, 35_000)
+
+  test('Given multiple terminal collaborators occupy one Worktree When owner confirms bulk release Then all safe bindings are released in one revision', async () => {
+    const context = createContext()
+    context.addSession('child-2', 'project-1', '第二个研究会话')
+    context.setSessionDelegation('child-session', 'completed')
+    context.setSessionDelegation('child-2', 'cancelled')
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    await context.module.bind('child-2', { kind: 'inherit', parentSessionId: 'session-1' })
+
+    const result = await context.module.operate({
+      action: 'release_collaborators',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(result).toMatchObject({
+      status: 'collaborators_released',
+      collaboratorSessionIds: ['child-2', 'child-session'],
+      target: { revision: target.revision + 1 },
+    })
+    if (result.status !== 'collaborators_released') throw new Error('预期批量释放成功')
+    expect(result.target.collaborators).toBeUndefined()
+    await expect(context.module.inspect('child-session')).rejects.toMatchObject({ code: 'target_unselected' })
+    await expect(context.module.inspect('child-2')).rejects.toMatchObject({ code: 'target_unselected' })
+  }, 30_000)
+
+  test('Given terminal and running collaborators are mixed When bulk release is requested Then it fails closed without partially releasing any binding', async () => {
+    const context = createContext()
+    context.addSession('child-2', 'project-1', '仍在运行的会话')
+    context.setSessionDelegation('child-session', 'completed')
+    context.setSessionDelegation('child-2', 'running')
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    await context.module.bind('child-2', { kind: 'inherit', parentSessionId: 'session-1' })
+
+    const result = await context.module.operate({
+      action: 'release_collaborators', sessionId: 'session-1', expectedRevision: target.revision,
+    })
+
+    expect(result).toMatchObject({ status: 'error', code: 'collaborator_active' })
+    if (result.status !== 'error') throw new Error('预期批量释放 fail closed')
+    expect(result.message).toContain('仍在运行的会话')
+    const inspected = await context.module.inspect('session-1')
+    expect(inspected.collaborators).toHaveLength(2)
+    expect(await context.module.lease('child-session')).toMatchObject({ checkoutId: target.checkout.id })
+  }, 30_000)
+
+  test('Given bulk release expected revision is stale When requested Then no collaborator is released', async () => {
+    const context = createContext()
+    context.setSessionDelegation('child-session', 'completed')
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+
+    const result = await context.module.operate({
+      action: 'release_collaborators', sessionId: 'session-1', expectedRevision: target.revision - 1,
+    })
+
+    expect(result).toMatchObject({ status: 'error', code: 'stale_target' })
+    expect(await context.module.lease('child-session')).toMatchObject({ checkoutId: target.checkout.id })
+  }, 30_000)
+
+  test('Given a subdirectory Isolated changed outside the project When Apply runs Then it fails closed without advancing and project-only retry succeeds', async () => {
+    const context = createContext({ projectSubdirectory: join('packages', 'app') })
+    writeFileSync(join(context.repositoryRoot, 'outside.txt'), 'outside base\n')
+    writeFileSync(join(context.projectRoot, 'layered.txt'), 'layered base\n')
+    git(context.repositoryRoot, 'add', '.')
+    git(context.repositoryRoot, 'commit', '-m', 'subdirectory fixture')
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    const managedRepositoryRoot = git(lease.cwd, 'rev-parse', '--show-toplevel')
+    writeFileSync(join(lease.cwd, 'layered.txt'), 'isolated staged\n')
+    git(lease.cwd, 'add', 'layered.txt')
+    writeFileSync(join(lease.cwd, 'layered.txt'), 'isolated final unstaged\n')
+    writeFileSync(join(lease.cwd, 'new.txt'), 'isolated untracked\n')
+    writeFileSync(join(managedRepositoryRoot, 'outside.txt'), 'must not escape\n')
+
+    const rejected = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(rejected).toMatchObject({
+      status: 'error',
+      code: 'invalid_input',
+      target: { checkout: { phase: 'ready' } },
+    })
+    expect(readFileSync(join(context.projectRoot, 'layered.txt'), 'utf8')).toBe('layered base\n')
+    expect(readFileSync(join(context.repositoryRoot, 'outside.txt'), 'utf8')).toBe('outside base\n')
+    expect(existsSync(join(context.projectRoot, 'new.txt'))).toBeFalse()
+
+    git(managedRepositoryRoot, 'restore', 'outside.txt')
+    if (rejected.status !== 'error' || !rejected.target) throw new Error('预期越界 Apply 被拒绝')
+    const applied = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: rejected.target.revision,
+    })
+
+    expect(applied).toMatchObject({
+      status: 'previewed',
+      changedFiles: ['layered.txt', 'new.txt'],
+      target: { delivery: { state: 'preview_active' } },
+    })
+    expect(readFileSync(join(context.projectRoot, 'layered.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('isolated final unstaged\n')
+    expect(readFileSync(join(context.projectRoot, 'new.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('isolated untracked\n')
+    expect(readFileSync(join(context.repositoryRoot, 'outside.txt'), 'utf8')).toBe('outside base\n')
+    expect(git(lease.cwd, 'diff', '--cached', '--name-only')).toBe('packages/app/layered.txt')
+    expect(git(lease.cwd, 'diff', '--name-only')).toBe('packages/app/layered.txt')
+    expect(git(lease.cwd, 'ls-files', '--others', '--exclude-standard')).toBe('new.txt')
+  }, 30_000)
+
+  test('Given Apply engine detects stale Local When module returns operation result Then stale_local remains stable for renderer recompute guidance', async () => {
+    const staleEngine: SessionCheckoutApplyEngine = {
+      inspectReview: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      preflight: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      plan: async () => ({
+        status: 'ready',
+        plan: {
+          revision: 'plan-1',
+          localFingerprint: 'local-1',
+          isolatedFingerprint: 'isolated-1',
+          effectiveBaseOid: 'a'.repeat(40),
+          baseStrategy: 'recorded_base',
+          localHeadOid: 'b'.repeat(40),
+          localHeadRef: 'refs/heads/main',
+          isolatedHeadOid: 'c'.repeat(40),
+          changedFiles: ['tracked.txt'],
+        },
+      }),
+      apply: async () => ({
+        status: 'error',
+        error: { code: 'stale_local', message: 'Local 在 plan 后发生变化，请重新计算' },
+      }),
+      finish: async () => ({
+        status: 'error',
+        error: { code: 'stale_local', message: 'Local 在 plan 后发生变化，请重新计算' },
+      }),
+      preview: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      rollback: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      finalize: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+    }
+    const context = createContext({ applyEngine: staleEngine })
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+
+    const result = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      code: 'stale_local',
+      target: { checkout: { phase: 'ready' } },
+    })
+  })
+
+  test('Given Apply plan selected an effective base When reversible Preview projection is in flight Then journal persists strategy and both reviewed HEADs', async () => {
+    let signalApplyStarted!: () => void
+    const applyStarted = new Promise<void>((resolve) => { signalApplyStarted = resolve })
+    let releaseApply!: () => void
+    const applyGate = new Promise<void>((resolve) => { releaseApply = resolve })
+    const effectiveBaseOid = 'd'.repeat(40)
+    const localHeadOid = 'e'.repeat(40)
+    const isolatedHeadOid = 'f'.repeat(40)
+    const applyEngine: SessionCheckoutApplyEngine = {
+      inspectReview: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      preflight: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      plan: async () => ({
+        status: 'ready',
+        plan: {
+          revision: 'plan-effective-base',
+          localFingerprint: 'local-effective',
+          isolatedFingerprint: 'isolated-effective',
+          effectiveBaseOid,
+          baseStrategy: 'isolated_contains_local_head',
+          localHeadOid,
+          localHeadRef: 'refs/heads/main',
+          isolatedHeadOid,
+          changedFiles: ['tracked.txt'],
+        },
+      }),
+      apply: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      finish: async () => ({
+        status: 'error',
+        error: { code: 'stale_local', message: 'stop after journal inspection' },
+      }),
+      preview: async () => {
+        signalApplyStarted()
+        await applyGate
+        return { status: 'error', error: { code: 'stale_local', message: 'stop after journal inspection' } }
+      },
+      rollback: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      finalize: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+    }
+    const context = createContext({ applyEngine })
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+
+    const operation = context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+    await applyStarted
+
+    const registry = JSON.parse(readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')) as {
+      managedCheckouts: Record<string, { journal: Record<string, unknown> | null }>
+    }
+    const journal = Object.values(registry.managedCheckouts)[0]?.journal
+    expect(journal).toMatchObject({
+      operation: 'preview',
+      step: 'writing_local',
+      effectiveBaseOid,
+      baseStrategy: 'isolated_contains_local_head',
+      localHeadOid,
+      isolatedHeadOid,
+    })
+
+    releaseApply()
+    expect(await operation).toMatchObject({ status: 'error', code: 'stale_local' })
+    expect((await context.module.inspect('session-1')).source).toEqual(target.source)
+  })
+
+  test('Given Local 与 Isolated 修改同一区域 When operate Apply Then 返回冲突文件、Local 不变且 checkout 回 ready', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'local conflict\n')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'isolated conflict\n')
+    const localBefore = readFileSync(join(context.projectRoot, 'tracked.txt'))
+    const statusBefore = git(context.projectRoot, 'status', '--porcelain=v1')
+
+    const result = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+
+    expect(result).toMatchObject({
+      status: 'conflict',
+      code: 'apply_conflict',
+      localHeadOid: git(context.projectRoot, 'rev-parse', 'HEAD'),
+      conflictingFiles: ['tracked.txt'],
+      target: { checkout: { phase: 'ready' } },
+    })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'))).toEqual(localBefore)
+    expect(git(context.projectRoot, 'status', '--porcelain=v1')).toBe(statusBefore)
+  })
+
+  test('Given UI 持有旧 revision When 新操作到达 Then stale_target 拒绝迟到操作且不删除 checkout', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    const applied = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+    })
+    expect(applied.status).toBe('applied')
+
+    const stale = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: true,
+    })
+
+    expect(stale).toMatchObject({ status: 'error', code: 'stale_target' })
+    expect(existsSync(lease.cwd)).toBe(true)
+  }, 15_000)
+
+  test('Given 用户手工 worktree 与 managed checkout 并存 When Discard managed target Then 只删除精确 managed root', async () => {
+    const context = createContext()
+    const manualRoot = join(context.root, '用户手工 worktree')
+    const baseOid = git(context.projectRoot, 'rev-parse', 'HEAD')
+    git(context.projectRoot, 'worktree', 'add', '--detach', manualRoot, baseOid)
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+
+    const result = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: false,
+    })
+
+    expect(result.status).toBe('discarded')
+    expect(existsSync(lease.cwd)).toBe(false)
+    expect(existsSync(join(manualRoot, 'tracked.txt'))).toBe(true)
+    expect(git(manualRoot, 'rev-parse', 'HEAD')).toBe(baseOid)
+  })
+
+  test('Given dirty Isolated 与 inherited binding When owner Discard Then 先拒绝并列出协作子会话，释放 child 后才允许确认删除', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'dirty discard\n')
+    const target = await context.module.inspect('session-1')
+
+    const whileChildBound = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: true,
+    })
+    const inherited = await context.module.operate({
+      action: 'discard',
+      sessionId: 'child-session',
+      expectedRevision: target.revision,
+      confirmDirty: true,
+    })
+    await context.module.releaseSession('child-session', 'delete')
+    const unconfirmed = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: false,
+    })
+    const discarded = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: true,
+    })
+
+    expect(whileChildBound).toMatchObject({
+      status: 'error',
+      code: 'operation_not_allowed',
+      message: expect.stringContaining('测试思路 (worktree)'),
+    })
+    expect(inherited).toMatchObject({ status: 'error', code: 'not_owner' })
+    expect(unconfirmed).toMatchObject({ status: 'error', code: 'dirty_confirmation_required' })
+    expect(discarded).toMatchObject({ status: 'discarded', target: { checkout: { phase: 'discarded' } } })
+    expect(existsSync(lease.cwd)).toBe(false)
+    await expect(context.module.inspect('child-session')).rejects.toMatchObject({ code: 'target_unselected' })
+  }, 15_000)
+
+  test('Given dirty Isolated owner When session deletion is requested Then lifecycle refuses and preserves binding and checkout', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'dirty owner\n')
+
+    await expect(context.module.releaseSession('session-1', 'delete')).rejects.toMatchObject({
+      code: 'operation_not_allowed',
+      message: expect.stringContaining('Apply/Discard'),
+    })
+
+    expect((await context.module.inspect('session-1')).dirty).toBe(true)
+    expect(existsSync(lease.cwd)).toBe(true)
+  })
+
+  test('Given Local owner When session deletion is requested Then only its binding is released', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+
+    await context.module.releaseSession('session-1', 'delete')
+
+    await expect(context.module.inspect('session-1')).rejects.toMatchObject({ code: 'target_unselected' })
+    expect(existsSync(context.projectRoot)).toBe(true)
+  })
+
+  test('Given discarded Isolated owner When session deletion is requested Then binding can be released', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: target.revision,
+      confirmDirty: false,
+    })
+
+    await context.module.releaseSession('session-1', 'delete')
+
+    await expect(context.module.inspect('session-1')).rejects.toMatchObject({ code: 'target_unselected' })
+  })
+
+  test('Given inherited child binding When child session is deleted Then owner binding and checkout remain usable', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    const ownerLease = await context.module.lease('session-1')
+
+    await context.module.releaseSession('child-session', 'delete')
+
+    expect((await context.module.lease('session-1')).cwd).toBe(ownerLease.cwd)
+    await expect(context.module.inspect('child-session')).rejects.toMatchObject({ code: 'target_unselected' })
+  })
+
+  test('Given dirty orphan and Apply Preview crashes during planning When startup reconcile scans registry Then both are retained and pre-write journal safely returns ready', async () => {
+    const crashEngine: SessionCheckoutApplyEngine = {
+      inspectReview: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      preflight: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      plan: async () => { throw new Error('模拟 applying 崩溃') },
+      apply: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      finish: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      preview: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      rollback: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+      finalize: async () => ({ status: 'error', error: { code: 'invalid_plan', message: '不会执行' } }),
+    }
+    const context = createContext({ applyEngine: crashEngine })
+    await context.module.bind('session-1', { kind: 'isolated' })
+    const dirtyLease = await context.module.lease('session-1')
+    writeFileSync(join(dirtyLease.cwd, 'tracked.txt'), 'dirty orphan\n')
+    context.addSession('applying-owner', 'project-1')
+    const applying = await context.module.bind('applying-owner', { kind: 'isolated' })
+    const applyingLease = await context.module.lease('applying-owner')
+    writeFileSync(join(applyingLease.cwd, 'tracked.txt'), 'applying orphan\n')
+    await expect(context.module.operate({
+      action: 'apply',
+      sessionId: 'applying-owner',
+      expectedRevision: applying.revision,
+    })).rejects.toThrow('模拟 applying 崩溃')
+    context.removeSession('session-1')
+    context.removeSession('applying-owner')
+
+    const restarted = context.restart()
+    const summary = await restarted.reconcile()
+
+    expect(summary.orphanedCheckoutIds).toHaveLength(2)
+    expect(summary.dirtyOrphanedCheckoutIds).toHaveLength(2)
+    expect(summary.recoveryRequiredCheckoutIds).not.toContain(applying.checkout.id)
+    const [applyingSummary] = await restarted.listManagedWorktrees({ checkoutId: applying.checkout.id })
+    expect(applyingSummary?.phase).toBe('ready')
+    expect(summary.retainedCheckoutCount).toBe(2)
+    expect(existsSync(dirtyLease.cwd)).toBe(true)
+    expect(existsSync(applyingLease.cwd)).toBe(true)
+  })
+
+  test('Given owner 与 inherited 会话共享 Isolated When 文件变脏后 inspect Then 安全视图实时投影 ownership 与 dirty', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'isolated' })
+    await context.module.bind('child-session', { kind: 'inherit', parentSessionId: 'session-1' })
+    const lease = await context.module.lease('session-1')
+    writeFileSync(join(lease.cwd, 'tracked.txt'), 'dirty\n')
+
+    const owner = await context.module.inspect('session-1')
+    const inherited = await context.module.inspect('child-session')
+
+    expect({ ownership: owner.ownership, dirty: owner.dirty }).toEqual({ ownership: 'owner', dirty: true })
+    expect({ ownership: inherited.ownership, dirty: inherited.dirty }).toEqual({ ownership: 'inherited', dirty: true })
+    expect(JSON.stringify(owner).includes(lease.cwd)).toBe(false)
+  })
+})
