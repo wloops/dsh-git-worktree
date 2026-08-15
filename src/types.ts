@@ -1,0 +1,367 @@
+/**
+ * Type surface for dsh-git-worktree, ported from Domi's session-checkout
+ * domain (`@proma/shared` types/session-target.ts) with the Domi-specific
+ * surface removed: Local preview (preview/rollback_preview/finalize_preview),
+ * collaborator delegation, and Electron reveal IPC. The remaining lifecycle
+ * is: bind → working → ready_for_review → apply/finish/discard → delivered
+ * (or retained/finalized), with journal-based crash recovery and fingerprint
+ * CAS throughout.
+ * @module dsh-git-worktree/types
+ */
+
+/** Stable session-target reference in the durable layer. Paths and branches are not checkout identity. */
+export type SessionTargetRef =
+  | { kind: 'unselected' }
+  | { kind: 'local' }
+  | { kind: 'isolated'; checkoutId: string }
+
+export type SessionCheckoutKind = 'local' | 'isolated'
+
+export type SessionCheckoutPhase =
+  | 'preparing'
+  | 'ready'
+  /** @deprecated v1 registry/runtime compatibility; new mutations use mutating. */
+  | 'applying'
+  | 'mutating'
+  | 'recovery_required'
+  | 'finalized'
+  | 'retained'
+  | 'discarded'
+
+export type WorktreeValidationStatus = 'passed' | 'failed' | 'partial' | 'not_run'
+
+/** cleanup is the default immediate removal; the other values only apply when the user explicitly retains the runtime. */
+export type WorktreeRetentionMode = 'cleanup' | 'retain_24h' | 'retain_3d' | 'retain_manual'
+
+export type WorktreeCleanupReason =
+  | 'directory_busy'
+  | 'modified_after_finalize'
+  | 'identity_changed'
+  | 'detached_residue'
+  | 'quarantine_busy'
+
+export interface WorktreeValidationItem {
+  command: string
+  status: 'passed' | 'failed' | 'not_run'
+  summary?: string
+}
+
+export interface WorktreeReviewView {
+  reviewId: string
+  iteration: number
+  preparedAt: number
+  /** Deterministically rendered full Markdown body before the acceptance card. Historical records may omit it. */
+  detailsMarkdown?: string
+  summary: string
+  validationStatus: WorktreeValidationStatus
+  validationSummary?: string
+  tests: WorktreeValidationItem[]
+  changedFiles: string[]
+  suggestedCommitMessage: string
+}
+
+export interface WorktreeDeliveryProofView {
+  /** Local branch at commit time; null means detached and automatic finish rejects that state. */
+  localBranch: string | null
+  localHeadBefore: string
+  localHeadAfter: string
+  changedFiles: string[]
+  /** Whether this round's commit is still an ancestor of Local HEAD at view time. null when there is no commit. */
+  commitInLocalHistory: boolean | null
+}
+
+export type WorktreeDeliveryView =
+  | { state: 'working'; iteration: number }
+  | { state: 'ready_for_review'; review: WorktreeReviewView }
+  | {
+      state: 'finalized'
+      review: WorktreeReviewView
+      commitOid: string | null
+      proof?: WorktreeDeliveryProofView
+      cleanup: 'pending' | 'blocked'
+      cleanupMessage?: string
+    }
+  | {
+      state: 'retained'
+      review: WorktreeReviewView
+      commitOid: string | null
+      proof?: WorktreeDeliveryProofView
+      retention: Exclude<WorktreeRetentionMode, 'cleanup'>
+      retainedAt: number
+      expiresAt: number | null
+      cleanup: 'scheduled' | 'blocked'
+      cleanupMessage?: string
+    }
+  | { state: 'delivered'; iteration: number; commitOid: string | null; proof?: WorktreeDeliveryProofView; deliveredAt: number }
+
+export type WorktreeApplyPreflightBlockedReason =
+  | 'not_owner'
+  | 'not_ready_for_review'
+  | 'stale_target'
+  | 'stale_isolated'
+  | 'project_acceptance_busy'
+  | 'checkout_unavailable'
+  | 'git_error'
+
+export interface WorktreeApplyPreflightFacts {
+  checkoutId: string
+  reviewId: string
+  revision: number
+  configuredBaseOid: string
+  effectiveBaseOid: string
+  baseStrategy: ApplyBaseStrategy
+  localBranch: string | null
+  localHeadOid: string
+  isolatedHeadOid: string
+  changedFiles: string[]
+}
+
+export type WorktreeApplyPreflightView =
+  | ({ status: 'ready' | 'local_advanced' | 'already_in_local'; localModified: false } & WorktreeApplyPreflightFacts)
+  | ({ status: 'conflict'; localModified: false; conflictingFiles: string[] } & WorktreeApplyPreflightFacts)
+  | {
+      status: 'blocked'
+      localModified: false
+      checkoutId: string
+      reviewId: string | null
+      revision: number
+      reason: WorktreeApplyPreflightBlockedReason
+      message: string
+    }
+
+export interface SessionTargetProjectView {
+  id: string
+  name: string
+}
+
+export interface SessionTargetCheckoutView {
+  id: string
+  kind: SessionCheckoutKind
+  label: string
+  phase: SessionCheckoutPhase
+}
+
+export interface SessionTargetSourceView {
+  /** Source ref recorded when the target was created; detached sources use HEAD. */
+  ref: string
+  oid: string
+}
+
+export interface SessionTargetCurrentView {
+  /** null explicitly means the checkout is on detached HEAD. */
+  branch: string | null
+  oid: string
+}
+
+export interface SessionTargetView {
+  project: SessionTargetProjectView
+  checkout: SessionTargetCheckoutView
+  source: SessionTargetSourceView
+  current: SessionTargetCurrentView
+  ownership: 'owner' | 'inherited'
+  dirty: boolean
+  revision: number
+  /** Delivery state for isolated checkouts; Local targets do not carry it. */
+  delivery?: WorktreeDeliveryView
+}
+
+export type SessionTargetBindChoice =
+  | { kind: 'local' }
+  | { kind: 'isolated' }
+
+interface SessionCheckoutOperationBase {
+  sessionId: string
+  expectedRevision: number
+}
+
+export interface SessionCheckoutApplyOperation extends SessionCheckoutOperationBase {
+  action: 'apply'
+}
+
+export interface SessionCheckoutFinishOperation extends SessionCheckoutOperationBase {
+  action: 'finish'
+  commitMessage: string
+  retention?: WorktreeRetentionMode
+}
+
+export interface SessionCheckoutRetryCleanupOperation extends SessionCheckoutOperationBase {
+  action: 'retry_cleanup'
+}
+
+export interface SessionCheckoutDiscardOperation extends SessionCheckoutOperationBase {
+  action: 'discard'
+  confirmDirty: boolean
+}
+
+export interface SessionCheckoutRecoverOperation extends SessionCheckoutOperationBase {
+  action: 'recover'
+}
+
+export type SessionCheckoutOperation =
+  | SessionCheckoutApplyOperation
+  | SessionCheckoutFinishOperation
+  | SessionCheckoutRetryCleanupOperation
+  | SessionCheckoutDiscardOperation
+  | SessionCheckoutRecoverOperation
+
+export interface SessionCheckoutAppliedResult {
+  status: 'applied'
+  target: SessionTargetView
+  changedFiles: string[]
+}
+
+export interface SessionCheckoutFinishedResult {
+  status: 'finished'
+  target: SessionTargetView
+  changedFiles: string[]
+  /** null means no task delta, so no empty commit was created. */
+  commitOid: string | null
+  /** retained means the commit succeeded and the user explicitly kept the frozen runtime. */
+  cleanup: 'discarded' | 'pending' | 'retained'
+  cleanupMessage?: string
+  cleanupReason?: WorktreeCleanupReason
+}
+
+export type ManagedWorktreeCleanupEligibility = 'safe' | 'retained' | 'blocked'
+
+export type ManagedWorktreeCleanupBlockReason =
+  | 'working'
+  | 'review_pending'
+  | 'retention_active'
+  | 'uncommitted_changes'
+  | 'identity_mismatch'
+  | 'cleanup_failed'
+  | 'unknown'
+
+/** Read-only inspection conclusion without paths. Bulk mutations re-validate; this result is never authorization. */
+export interface ManagedWorktreeCleanupView {
+  eligibility: ManagedWorktreeCleanupEligibility
+  reason: ManagedWorktreeCleanupBlockReason
+  message: string
+  inspectedRevision: number
+}
+
+export interface BulkCleanupManagedWorktreeCandidate {
+  checkoutId: string
+  expectedRevision: number
+}
+
+export interface BulkCleanupManagedWorktreesResult {
+  cleaned: Array<{ checkoutId: string; iteration: number; commitOid: string | null }>
+  retained: Array<{ checkoutId: string; iteration: number; cleanup: ManagedWorktreeCleanupView }>
+}
+
+export type ManagedWorktreeSummaryState =
+  | 'working'
+  | 'ready_for_review'
+  | 'retained'
+  | 'cleanup_pending'
+  | 'needs_attention'
+  | 'delivered'
+
+/** Path-free projection for the management surface. */
+export interface ManagedWorktreeSummaryView {
+  checkoutId: string
+  revision: number
+  ownerSessionId: string
+  ownerSessionTitle: string
+  project: SessionTargetProjectView
+  iteration: number
+  state: ManagedWorktreeSummaryState
+  phase: SessionCheckoutPhase
+  dirty: boolean
+  commitOid: string | null
+  retention?: Exclude<WorktreeRetentionMode, 'cleanup'>
+  retainedAt?: number
+  expiresAt?: number | null
+  cleanupMessage?: string
+  cleanupReason?: WorktreeCleanupReason
+  approximateBytes: number | null
+  updatedAt: number
+  canCleanup: boolean
+  /** Read-only cleanup inspection; real cleanup re-validates. */
+  cleanup?: ManagedWorktreeCleanupView
+  /** Active owner sessions the management surface stops before a forced discard. */
+  activeSessionIds?: string[]
+}
+
+export type ApplyBaseStrategy =
+  | 'recorded_base'
+  | 'isolated_contains_local_head'
+  | 'local_contains_isolated_head'
+
+export interface SessionCheckoutConflictResult {
+  status: 'conflict'
+  code: 'apply_conflict'
+  reason: 'content_conflict'
+  target: SessionTargetView
+  baseStrategy: ApplyBaseStrategy
+  effectiveBaseOid: string
+  /** Local HEAD at conflict time; the agent can sync the isolated checkout to this commit and resolve. */
+  localHeadOid: string
+  isolatedHeadOid: string
+  canRetryAfterRefresh: false
+  conflictingFiles: string[]
+}
+
+export interface SessionCheckoutDiscardedResult {
+  status: 'discarded'
+  target: SessionTargetView
+}
+
+export interface SessionCheckoutRecoveredResult {
+  status: 'recovered'
+  target: SessionTargetView
+}
+
+export interface SessionCheckoutOperationErrorResult {
+  status: 'error'
+  code: SessionCheckoutErrorCode
+  message: string
+  target?: SessionTargetView
+}
+
+export type SessionCheckoutOperationResult =
+  | SessionCheckoutAppliedResult
+  | SessionCheckoutFinishedResult
+  | SessionCheckoutConflictResult
+  | SessionCheckoutDiscardedResult
+  | SessionCheckoutRecoveredResult
+  | SessionCheckoutOperationErrorResult
+
+export const SESSION_CHECKOUT_ERROR_CODES = [
+  'session_not_found',
+  'project_not_found',
+  'project_root_missing',
+  'not_git_repository',
+  'target_unselected',
+  'target_already_bound',
+  'project_mismatch',
+  'checkout_missing',
+  'checkout_mismatch',
+  'recovery_required',
+  'registry_corrupt',
+  'git_operation_failed',
+  'not_owner',
+  'stale_target',
+  'dirty_confirmation_required',
+  'apply_conflict',
+  'apply_failed',
+  'invalid_input',
+  'invalid_plan',
+  'stale_local',
+  'stale_isolated',
+  'git_error',
+  'commit_isolation_conflict',
+  'checkout_limit_reached',
+  'project_acceptance_busy',
+  'operation_not_allowed',
+  'recovery_unsafe',
+] as const
+
+export type SessionCheckoutErrorCode = typeof SESSION_CHECKOUT_ERROR_CODES[number]
+
+export interface SessionCheckoutFailure {
+  code: SessionCheckoutErrorCode
+  message: string
+}
