@@ -182,6 +182,8 @@ export interface SessionCheckoutFinishOperation extends SessionCheckoutOperation
   action: 'finish'
   commitMessage: string
   retention?: WorktreeRetentionMode
+  /** When present, Finish is bound to this persisted human-reviewed snapshot. */
+  expectedReviewId?: string
 }
 
 export interface SessionCheckoutRetryCleanupOperation extends SessionCheckoutOperationBase {

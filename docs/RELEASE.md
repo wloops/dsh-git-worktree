@@ -1,51 +1,91 @@
 # Release checklist（发布清单）
 
-发布不能马虎。**每一步都不能跳过**，尤其是第 5 步：发布只是开始，装得上、挂得上才算数。
+发布门禁必须同时覆盖 Host、Client、tarball 与真实安装。`check-publish` 默认允许 Domi managed Worktree 的未提交 review 状态；正式发布 CI 必须额外设置 `CHECK_PUBLISH_REQUIRE_CLEAN=1`。
 
-## 流程
+## 1. 同一快照构建与验证
 
-1. **构建 + 门禁**（本地，必须全绿）
-   ```sh
-   pnpm run build
-   pnpm run check:publish
-   ```
-   `check-publish` 断言：
-   - `package.json` 声明 `dsh.bundle.patch` 且文件存在（否则 `dsh plugin add` 只装普通依赖，插件不挂载）
-   - `cordis.patch.yml` 在 `files` 里（否则 tarball 不带它）
-   - patch 含 `- insert:` 且插入本包名的行
-   - `lib/index.js` 同时命名导出 `apply` 与 `inject`（Loader 以空注入列表挂载会在首次 `ctx.<service>` 崩溃）
-   - **工作区与 HEAD 一致**（git 安装从已提交源码构建，未提交的修复会让 npm 好、git 坏）
+```bash
+pnpm run typecheck
+pnpm test
+pnpm run build
+pnpm run check:publish
+pnpm pack --dry-run
+```
 
-2. **测试**
-   ```sh
-   pnpm test        # 48 passed / 2 skipped
-   ```
+当前 `check-publish` 断言：
 
-3. **版本 + tag**
-   ```sh
-   # bump version → commit → push master → tag → push tag
-   git tag v<版本> && git push origin master && git push origin v<版本>
-   ```
+- `dsh.bundle.patch` 存在、会进入 tarball，并插入本包 Host row；
+- `package.json.exports` 的每个 default/types/path target 都真实存在且受 `files` 覆盖；
+- Host `lib/index.js` 命名导出 `apply` 与 `inject`；
+- `dsh.client` 声明 Web 平台和 client injection；
+- `lib/client.js` 是可执行的 ModuleLoader closure，并发布 Client `apply` 与 `inject`；
+- 失效 export（例如历史 `./manager`）会直接阻断发布。
 
-4. **发布**（`prepublishOnly` 自动重跑 1 + 2）
-   ```sh
-   npm publish
-   ```
+正式发布或 tag CI 使用：
 
-5. **发布后实测**（最容易省、最容易出事的一步）
-   - npm 路径：`dsh plugin --profile <scratch> add dsh-git-worktree@<版本>`
-     → 无 `declares no dsh.bundle` 警告；`<scratch>/package.json` 的 `dsh.profile.bundles` 含本包
-   - git 路径：`dsh plugin --profile <scratch> add github:wloops/dsh-git-worktree#v<版本>`
-     → 首次会被 pnpm 的 `allowBuilds` 拦 prepare 构建，按提示加 key 后重跑
-     → 安装产物的 `lib/index.js` 含 `export const inject` / `export function apply`
-   - boot 挂载：`dsh --profile <scratch>` 启动后无错误输出、进程存活（崩溃会在数秒内带栈退出）
+```bash
+pnpm run check:publish:release
+# 等价：CHECK_PUBLISH_REQUIRE_CLEAN=1 pnpm run check:publish
+```
 
-6. **全部通过后**，再把正式 profile（如 `web`）更新到新版本。
+## 2. 功能 smoke
 
-## 历史教训（为什么有这些步骤）
+在临时 Git 仓库和 scratch Harness profile 中验证：
 
-| 版本 | 漏掉的验证 | 后果 |
-| --- | --- | --- |
-| 0.1.0 | 无 bundle 声明 / 无 patch 文件 | 装上后 DSH 无任何反应（评审当场拒收） |
-| 0.1.1 | `inject` 未作为命名导出 | boot 时 `cannot get property "tools" without inject` 崩溃 |
-| 0.1.2 (git 路径) | 修复未提交，只验证了工作区 | npm tarball 正常、git 源构建产物损坏——端到端实测才抓到 |
+1. Local Session 调用 `worktree_create`；Local `git status --porcelain` 不出现 Worktree 路径。
+2. 连续创建两个 target，checkout/path/sessionId 均唯一。
+3. Create ToolView 注册 Workspace，并打开精确预留 Session ID。
+4. 新 Session header cwd 等于 managed root；Read/Write/Bash 实际落在 Worktree。
+5. `worktree_ready_for_review` 显示 changed files、tests、validation 和 Commit Message。
+6. “提交并清理”产生一个 task-only Local commit；Local 原有 staged/unstaged/untracked 保留。
+7. 24h / 3d / manual retention 写入正确状态。
+8. 另一个 Session 即使属于同一项目，也不能 list/remove 不属于它的 Worktree。
+9. target Workspace cwd 被替换时，插件返回 `project_mismatch`。
+10. 历史 `applyBaseOid` 记录拒绝自动 Finish/Discard。
+
+## 3. 版本、提交与 tag
+
+```bash
+# bump version and update docs/changelog first
+git tag v<版本>
+git push origin <release-branch>
+git push origin v<版本>
+```
+
+不要在脏工作区创建 release tag；不要依赖未提交的 `prepare` 修复。
+
+## 4. 发布
+
+```bash
+npm publish
+```
+
+`prepublishOnly` 会重跑 build、publish gate 与 tests。pnpm >= 10 的 Git 安装需要 profile `allowBuilds` 允许 `dsh-git-worktree` 的 `prepare`。
+
+## 5. 发布后真实安装
+
+```bash
+dsh plugin --profile <scratch> add dsh-git-worktree@<版本>
+dsh --profile <scratch>
+```
+
+确认：
+
+- profile bundle rows 含 `dsh-git-worktree`；
+- Host 启动无 missing inject/export 错误；
+- Web Client 加载 `./client`，Create/Review ToolView 不是 generic card；
+- 浏览器控制台无 `ModuleLoader`、React duplicate、slot duplicate 或 CSS teardown 错误；
+- npm tarball 与 Git tag 安装都通过。
+
+全部通过后再升级正式 profile。
+
+## 历史教训
+
+| 问题 | 门禁 |
+| --- | --- |
+| 包安装但 Host 不挂载 | `dsh.bundle.patch` + patch row 检查 |
+| Host 入口缺少 `inject` | Host export 检查 |
+| `./manager` 指向不存在文件 | 全量 exports 遍历 |
+| Client 文件存在但不是 Loader closure | Client VM smoke |
+| Git 安装从旧 commit 构建 | release CI 的 clean-tree 检查 + tag 后真实安装 |
+| 表面绑定 isolated、实际 Session cwd 仍是 Local | scratch profile 的真实 Session header/文件工具 smoke |

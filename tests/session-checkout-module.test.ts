@@ -46,6 +46,7 @@ interface TestContext {
   getMeasureDirectoryCallCount(): number
   setSessionProject(sessionId: string, projectId: string): void
   setProjectRoot(projectId: string, root: string): void
+  addProject(projectId: string, name: string, root: string): void
   addSession(sessionId: string, projectId: string, title?: string): void
   removeSession(sessionId: string): void
   removeProject(projectId: string): void
@@ -275,6 +276,9 @@ function createContext(options: {
       const project = projects.get(projectId)
       if (project) project.root = projectRoot
     },
+    addProject: (projectId, name, projectRoot) => {
+      projects.set(projectId, { id: projectId, name, root: projectRoot })
+    },
     addSession: (sessionId, projectId, title) => {
       sessions.set(sessionId, { id: sessionId, projectId, title })
     },
@@ -359,10 +363,162 @@ describe('SessionCheckoutModule', () => {
     expect(target).toMatchObject({ ownership: 'owner', dirty: true })
   })
 
+  test('Given a Local session creates two isolated targets When their sessions open at the managed roots Then targets are unique and Local stays clean', async () => {
+    const context = createContext()
 
+    const first = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    const second = await context.module.createIsolatedTarget('session-1', 'target-session-2')
 
+    expect(first.managedRoot).not.toBe(second.managedRoot)
+    expect(first.target.checkout.id).not.toBe(second.target.checkout.id)
+    expect(await context.module.inspect('session-1')).toMatchObject({ checkout: { kind: 'local' } })
+    expect(git(context.repositoryRoot, 'status', '--porcelain=v1', '--untracked-files=all')).toBe('')
 
+    context.addProject('target-workspace-1', 'Target Workspace', first.managedRoot)
+    context.addSession('target-session-1', 'target-workspace-1', '测试思路 (worktree)')
+    const activated = await context.module.inspect('target-session-1')
+    expect(activated).toMatchObject({
+      checkout: { id: first.target.checkout.id, kind: 'isolated', phase: 'ready' },
+      ownership: 'owner',
+    })
+  })
 
+  test('Given the Local repository is nested inside another repository When creating a target Then fallback storage avoids polluting the outer repository', async () => {
+    const context = createContext({ outerRepository: true })
+    const statusBefore = git(context.root, 'status', '--porcelain=v1', '--untracked-files=all')
+
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+
+    expect(launch.managedRoot.startsWith(context.configDir)).toBe(true)
+    expect(git(context.root, 'status', '--porcelain=v1', '--untracked-files=all')).toBe(statusBefore)
+  })
+
+  test('Given a reserved target session opens on another cwd When inspected Then identity validation fails closed', async () => {
+    const context = createContext()
+    await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    context.addProject('wrong-workspace', 'Wrong Workspace', context.projectRoot)
+    context.addSession('target-session-1', 'wrong-workspace')
+
+    await expect(context.module.inspect('target-session-1')).rejects.toMatchObject({ code: 'project_mismatch' })
+  })
+
+  test('Given a target is reserved and later becomes ready When runtime context is assembled Then Local and Isolated instructions remain distinct', async () => {
+    const context = createContext()
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    expect(context.module.runtimeContext('session-1')).toContain('handoff pending')
+    expect(context.module.runtimeContext('session-1')).toContain('target-session-1')
+
+    context.addProject('target-workspace-1', 'Target Workspace', launch.managedRoot)
+    context.addSession('target-session-1', 'target-workspace-1')
+    expect(context.module.runtimeContext('target-session-1')).toContain(`Authoritative cwd: ${launch.managedRoot}`)
+    expect(context.module.runtimeContext('target-session-1')).toContain('worktree_ready_for_review')
+
+    writeFileSync(join(launch.managedRoot, 'tracked.txt'), 'ready\n')
+    await context.module.markReadyForReview('target-session-1', {
+      summary: 'ready context',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'test: ready context',
+    })
+    expect(context.module.runtimeContext('target-session-1')).toContain('Ready for Review')
+    expect(context.module.runtimeContext('target-session-1')).toContain('only the user may Finish')
+  })
+
+  test('Given a source owns an unopened reservation When it removes the checkout Then no Host target Session is required', async () => {
+    const context = createContext()
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    const [summary] = await context.module.listManagedWorktreesForSession('session-1')
+
+    const removed = await context.module.manageManagedWorktreeForSession('session-1', {
+      checkoutId: launch.target.checkout.id,
+      expectedRevision: summary.revision,
+      action: 'discard',
+      confirmDirty: true,
+    })
+
+    expect(removed.phase).toBe('discarded')
+    expect(existsSync(launch.managedRoot)).toBe(false)
+    expect(context.module.runtimeContext('session-1')).toContain('No isolated target is active')
+  })
+
+  test('Given another session in the same project When it lists or manages a checkout Then persisted owner ids do not authorize it', async () => {
+    const context = createContext()
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    context.addSession('intruder-session', 'project-1')
+
+    expect(await context.module.listManagedWorktreesForSession('intruder-session')).toEqual([])
+    const [owned] = await context.module.listManagedWorktreesForSession('session-1')
+    expect(owned.checkoutId).toBe(launch.target.checkout.id)
+    await expect(context.module.manageManagedWorktreeForSession('intruder-session', {
+      checkoutId: owned.checkoutId,
+      expectedRevision: owned.revision,
+      action: 'discard',
+      confirmDirty: true,
+    })).rejects.toMatchObject({ code: 'not_owner' })
+  })
+
+  test('Given a reviewed Worktree changes after Ready When strict Finish is requested Then unreviewed bytes never reach Local', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'reviewed\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'reviewed snapshot',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'test: reviewed snapshot',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'unreviewed\n')
+
+    const result = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId,
+      commitMessage: ready.delivery.review.suggestedCommitMessage,
+    })
+
+    expect(result).toMatchObject({ status: 'error', code: 'stale_isolated' })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe('base\n')
+    expect((await context.module.inspect('session-1')).delivery).toMatchObject({ state: 'working' })
+  })
+
+  test('Given a legacy Apply already wrote Local When Finish or Discard is requested Then the module fails closed', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'applied change\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'legacy apply',
+      validationStatus: 'passed',
+      tests: [],
+      suggestedCommitMessage: 'test: legacy apply',
+    })
+    const applied = await context.module.operate({
+      action: 'apply',
+      sessionId: 'session-1',
+      expectedRevision: ready.revision,
+    })
+    expect(applied.status).toBe('applied')
+    const afterApply = await context.module.inspect('session-1')
+
+    const finish = await context.module.operate({
+      action: 'finish',
+      sessionId: 'session-1',
+      expectedRevision: afterApply.revision,
+      commitMessage: 'must not commit zero delta',
+    })
+    expect(finish).toMatchObject({ status: 'error', code: 'operation_not_allowed' })
+    const discard = await context.module.operate({
+      action: 'discard',
+      sessionId: 'session-1',
+      expectedRevision: afterApply.revision,
+      confirmDirty: true,
+    })
+    expect(discard).toMatchObject({ status: 'error', code: 'operation_not_allowed' })
+    expect(git(context.repositoryRoot, 'status', '--porcelain=v1')).toContain('M tracked.txt')
+  })
 
   test('Given worktree add 残余包含未知文件 When 创建 Isolated Then fail closed 并保留恢复现场', async () => {
     const context = createContext({ createWorktreeFailures: 1, createWorktreeFailureLeavesFile: true })
@@ -503,7 +659,7 @@ describe('SessionCheckoutModule', () => {
     expect(result.status).toBe('recovered')
     if (result.status !== 'recovered') throw new Error(`预期 recovered，实际为 ${result.status}`)
     expect(result.target.checkout.phase).toBe('ready')
-    expect(git(context.repositoryRoot, 'worktree', 'list', '--porcelain')).toContain('.dsh-worktrees')
+    expect(git(context.repositoryRoot, 'worktree', 'list', '--porcelain')).toContain('-worktrees/')
   })
 
 

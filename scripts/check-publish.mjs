@@ -1,67 +1,119 @@
 /**
- * Pre-publish integrity gate: fails the release if the package would install
- * but never mount. Catches the class of mistakes that shipped without a boot
- * test — 0.1.0 (no dsh.bundle declaration, no cordis.patch.yml in the
- * tarball) and 0.1.1 (inject not exported as plugin metadata). Every check
- * here maps to a real failure mode of `dsh plugin --profile <p> add <pkg>`.
+ * Pre-publish integrity gate. It validates every declared export, the Host
+ * mount patch, and the browser closure bundle instead of checking only the
+ * root entry. Set CHECK_PUBLISH_REQUIRE_CLEAN=1 in release CI to additionally
+ * require a clean Git checkout.
  */
 import { execSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import vm from 'node:vm'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const require = createRequire(import.meta.url)
 const fail = (message) => { console.error(`check-publish: FAIL: ${message}`); process.exit(1) }
 const ok = (message) => console.log(`check-publish: ok: ${message}`)
-
 const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
 
-// 1. The bundle declaration `dsh plugin` reconciles on. Without it the
-//    package installs as a plain dependency and its plugin rows never enter
-//    the profile composition ("installed, but nothing happens").
+function exportTargets(value, label) {
+  if (typeof value === 'string') return [{ condition: 'default', target: value }]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(`${label} must be a path or condition map`)
+  return Object.entries(value).flatMap(([condition, nested]) => {
+    if (typeof nested === 'string') return [{ condition, target: nested }]
+    return exportTargets(nested, `${label}.${condition}`)
+  })
+}
+
+function includedByFiles(target) {
+  const normalized = target.replace(/^\.\//, '').replaceAll('\\', '/')
+  if (normalized === 'package.json') return true
+  return (manifest.files ?? []).some((entry) => {
+    const normalizedEntry = String(entry).replace(/^\.\//, '').replaceAll('\\', '/').replace(/\/$/, '')
+    return normalized === normalizedEntry || normalized.startsWith(`${normalizedEntry}/`)
+  })
+}
+
+// 1. Host bundle declaration and patch.
 const patchRel = manifest.dsh?.bundle?.patch
 if (typeof patchRel !== 'string' || patchRel.length === 0) {
-  fail('package.json lacks "dsh".bundle.patch — dsh plugin add will install the package as a plain dependency and nothing mounts')
+  fail('package.json lacks "dsh".bundle.patch — dsh plugin add would install a plain dependency without mounting it')
 }
-ok(`dsh.bundle.patch = ${patchRel}`)
-if (!existsSync(resolve(root, patchRel))) fail(`declared patch file ${patchRel} does not exist`)
+const patchPath = resolve(root, patchRel)
+if (!existsSync(patchPath)) fail(`declared patch file ${patchRel} does not exist`)
+if (!includedByFiles(patchRel)) fail(`${patchRel} is not covered by package.json "files"`)
+const patch = readFileSync(patchPath, 'utf8')
+if (!patch.includes('- insert:') || !patch.includes(`name: ${manifest.name}`)) {
+  fail(`${patchRel} must insert one plugin row named ${manifest.name}`)
+}
+ok(`Host mount patch ${patchRel}`)
 
-// 2. The patch file must reach the published tarball, or a registry install
-//    of this exact version fails the same way.
-const files = manifest.files ?? []
-if (!files.includes(patchRel.replace(/^\.\//, ''))) fail(`${patchRel} is missing from "files" — the published tarball will not carry it`)
-ok(`${patchRel} listed in "files"`)
+// 2. Every package export must exist and be included in the tarball.
+const exportsMap = manifest.exports
+if (!exportsMap || typeof exportsMap !== 'object' || Array.isArray(exportsMap)) fail('package.json lacks an exports map')
+let exportCount = 0
+for (const [subpath, value] of Object.entries(exportsMap)) {
+  for (const { condition, target } of exportTargets(value, `exports[${JSON.stringify(subpath)}]`)) {
+    exportCount += 1
+    if (!target.startsWith('./')) fail(`export ${subpath} (${condition}) must be package-relative: ${target}`)
+    const absolute = resolve(root, target)
+    const inside = relative(root, absolute)
+    if (inside.startsWith(`..${sep}`) || inside === '..') fail(`export ${subpath} escapes the package: ${target}`)
+    if (!existsSync(absolute)) fail(`export ${subpath} (${condition}) points to missing ${target} — run build first`)
+    if (!includedByFiles(target)) fail(`export ${subpath} (${condition}) target ${target} is not covered by package.json "files"`)
+  }
+}
+ok(`${exportCount} export targets exist and are publishable`)
 
-// 3. The patch must insert a row naming this package — that row is what the
-//    loader mounts at boot.
-const patch = readFileSync(resolve(root, patchRel), 'utf8')
-if (!patch.includes('- insert:')) fail(`${patchRel} does not contain an "- insert:" entry`)
-if (!patch.includes(`name: ${manifest.name}`)) fail(`${patchRel} does not insert a row with name ${manifest.name}`)
-ok(`${patchRel} inserts a row for ${manifest.name}`)
-
-// 4. The entry must export BOTH "function apply" and "const inject" as named
-//    exports: the loader reads named exports as plugin metadata. A bare
-//    function export mounts with an empty injection list and the first
-//    ctx.<service> access crashes the boot.
-const entryRel = manifest.exports?.['.']?.default ?? manifest.main
-if (typeof entryRel !== 'string' || entryRel.length === 0) fail('package.json exports["."].default is not a path')
-if (!existsSync(resolve(root, entryRel))) fail(`entry ${entryRel} does not exist — run build first`)
+// 3. Host entry metadata required by the Cordis loader.
+const entryRel = exportsMap['.']?.default ?? manifest.main
+if (typeof entryRel !== 'string') fail('exports["."].default is not a path')
 const entry = readFileSync(resolve(root, entryRel), 'utf8')
-if (!/export\s+function\s+apply\b/.test(entry)) fail(`${entryRel} does not export "function apply"`)
-if (!/export\s+const\s+inject\b/.test(entry)) fail(`${entryRel} does not export "const inject" — the loader mounts with no injection list and crashes on the first ctx.<service> access`)
-ok(`${entryRel} exports apply + inject`)
+if (!/export\s+function\s+apply\b/.test(entry)) fail(`${entryRel} does not export function apply`)
+if (!/export\s+const\s+inject\b/.test(entry)) fail(`${entryRel} does not export const inject`)
+ok(`${entryRel} exports Host apply + inject`)
 
-// 5. The git source must match the working tree. npm tarballs pack the
-//    working tree, but git installs (github:...#<tag>) rebuild from COMMITTED
-//    source — an uncommitted fix that passes every tarball check above still
-//    ships a broken git install under the same version number.
-let dirty = ''
-try {
-  dirty = execSync('git status --porcelain --untracked-files=no', { cwd: root, encoding: 'utf8' })
-} catch {
-  // Not a git checkout — nothing to compare against.
+// 4. Browser ToolView declaration and executable ModuleLoader closure.
+const client = manifest.dsh?.client
+if (!client || client.platform !== 'web' || !Array.isArray(client.inject) || client.inject.length === 0) {
+  fail('package.json must declare dsh.client { platform: "web", inject: [...] }')
 }
-if (dirty.trim() !== '') fail(`working tree differs from HEAD — git installs build from committed source, so commit first:\n${dirty}`)
-ok('working tree matches HEAD')
+const clientRel = exportsMap['./client']?.default
+if (typeof clientRel !== 'string') fail('exports["./client"].default is required for dsh.client')
+const clientSource = readFileSync(resolve(root, clientRel), 'utf8')
+const sandbox = {}
+sandbox.globalThis = sandbox
+let factory
+try {
+  factory = vm.runInNewContext(clientSource, sandbox, { filename: clientRel })
+} catch (error) {
+  fail(`client bundle is not an executable closure expression: ${error instanceof Error ? error.message : String(error)}`)
+}
+if (typeof factory !== 'function') fail('client bundle did not evaluate to a ModuleLoader factory')
+const clientExports = {}
+try {
+  await factory({ __require__: require, __exports__: clientExports })
+} catch (error) {
+  fail(`client bundle factory failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+}
+const loaded = sandbox.__dsh_current_exports__
+if (!loaded || typeof loaded.apply !== 'function' || !Array.isArray(loaded.inject)) {
+  fail('client bundle did not publish apply + inject through __dsh_current_exports__')
+}
+ok(`${clientRel} loads as a browser plugin closure`)
+
+// 5. Release CI and npm's prepublish lifecycle require committed source identity;
+// local review builds intentionally run against a dirty managed Worktree.
+const requireClean = process.env.CHECK_PUBLISH_REQUIRE_CLEAN === '1'
+  || process.argv.includes('--require-clean')
+if (requireClean) {
+  let dirty = ''
+  try { dirty = execSync('git status --porcelain --untracked-files=all', { cwd: root, encoding: 'utf8' }) } catch {}
+  if (dirty.trim() !== '') fail(`working tree differs from HEAD:\n${dirty}`)
+  ok('working tree matches HEAD')
+} else {
+  ok('Git cleanliness check deferred (set CHECK_PUBLISH_REQUIRE_CLEAN=1 for release CI)')
+}
 
 console.log('check-publish: all checks passed')

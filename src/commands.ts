@@ -1,16 +1,13 @@
 /**
- * `/worktree` human command surface: create, list, apply, finish, discard,
- * remove. Commands run against the receiving agent's session like the tools,
- * but are user-initiated, so destructive verbs carry their own confirmation
- * semantics (dirty discard is the user's own command).
+ * `/worktree` human command surface. Destructive verbs are intentionally
+ * user-initiated; model tools stop at Ready for Review.
  * @module dsh-git-worktree/commands
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import '@deepseek-ai/dsh-commands'
 import type { SessionCheckoutModule } from './index.js'
-import type { SessionTargetView } from './types.js'
+import type { SessionTargetView, WorktreeRetentionMode } from './types.js'
 
 function targetText(target: SessionTargetView): string {
   const lines = [
@@ -28,27 +25,32 @@ function sessionIdOf(agent: unknown): string {
   return session.id
 }
 
-const USAGE = 'Usage: /worktree create | list | apply | finish <message> | discard | remove <checkoutId>'
+const RETENTIONS = new Set<WorktreeRetentionMode>(['cleanup', 'retain_24h', 'retain_3d', 'retain_manual'])
+const USAGE = 'Usage: /worktree status | list | finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual] | finish <message> | discard | remove <checkoutId>'
+
+function finishedText(result: Extract<Awaited<ReturnType<SessionCheckoutModule['operate']>>, { status: 'finished' }>): string {
+  return `Finished: committed ${result.changedFiles.length} file(s) as ${result.commitOid?.slice(0, 7) ?? 'no-op'} (cleanup: ${result.cleanup}).`
+}
 
 /** Register the `/worktree` command. */
 export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutModule): void {
   ctx.commands.register({
     name: 'worktree',
-    description: 'manage Domi-grade git worktrees (create / list / apply / finish / discard / remove)',
-    input: { hint: 'create | list | apply | finish <message> | discard | remove <checkoutId>' },
+    description: 'inspect and explicitly accept managed worktree delivery',
+    input: { hint: 'status | list | finalize [retention] | finish <message> | discard | remove <checkoutId>' },
     handler: async (invocation) => {
-      const tokens = invocation.rawInput.trim().split(/\s+/u).filter(Boolean)
-      const verb = tokens[0] ?? 'list'
+      const rawInput = invocation.rawInput.trim()
+      const tokens = rawInput.split(/\s+/u).filter(Boolean)
+      const verb = tokens[0] ?? 'status'
       const sessionId = sessionIdOf(invocation.agent)
       try {
         switch (verb) {
-          case 'create': {
-            const target = await module.bind(sessionId, { kind: 'isolated' })
-            return { kind: 'success', text: `Worktree created:\n${targetText(target)}\n打开新会话并选择该工作区以在其中工作。` }
+          case 'status': {
+            return { kind: 'success', text: targetText(await module.inspect(sessionId)) }
           }
           case 'list': {
-            const summaries = await module.listManagedWorktrees()
-            if (summaries.length === 0) return { kind: 'success', text: 'No managed worktrees.' }
+            const summaries = await module.listManagedWorktreesForSession(sessionId)
+            if (summaries.length === 0) return { kind: 'success', text: 'No managed worktrees visible to this Session.' }
             return {
               kind: 'success',
               text: summaries.map((summary) => (
@@ -56,18 +58,41 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
               )).join('\n'),
             }
           }
-          case 'apply': {
+          case 'finalize': {
+            const hasReviewIdentity = tokens[1] !== undefined && !RETENTIONS.has(tokens[1] as WorktreeRetentionMode)
+            const expectedReviewId = hasReviewIdentity ? tokens[1] : undefined
+            const parsedRevision = hasReviewIdentity ? Number(tokens[2]) : undefined
+            const retention = (hasReviewIdentity ? tokens[3] : tokens[1] ?? 'cleanup') as WorktreeRetentionMode
+            if (!RETENTIONS.has(retention) || (hasReviewIdentity && (!expectedReviewId || !Number.isSafeInteger(parsedRevision)))) {
+              return { kind: 'error', text: USAGE }
+            }
             const target = await module.inspect(sessionId)
-            const result = await module.operate({ action: 'apply', sessionId, expectedRevision: target.revision })
-            if (result.status === 'applied') return { kind: 'success', text: `Applied ${result.changedFiles.length} file(s) to Local.` }
+            if (target.delivery?.state !== 'ready_for_review') {
+              return { kind: 'error', text: '当前 Worktree 尚未 Ready for Review，不能 finalize。' }
+            }
+            if (expectedReviewId && (
+              target.delivery.review.reviewId !== expectedReviewId
+              || target.revision !== parsedRevision
+            )) {
+              return { kind: 'error', text: '该验收卡已过期；请确认会话中的最新 Ready for Review 卡片。' }
+            }
+            const result = await module.operate({
+              action: 'finish',
+              sessionId,
+              expectedRevision: parsedRevision ?? target.revision,
+              commitMessage: target.delivery.review.suggestedCommitMessage,
+              retention,
+              ...(expectedReviewId ? { expectedReviewId } : {}),
+            })
+            if (result.status === 'finished') return { kind: 'success', text: finishedText(result) }
             if (result.status === 'conflict') {
-              return { kind: 'error', text: `Conflict: ${result.conflictingFiles.join('、')}\nLocal HEAD: ${result.localHeadOid.slice(0, 7)} — 在 worktree 内同步并解决后重试。` }
+              return { kind: 'error', text: `Conflict: ${result.conflictingFiles.join('、')}\nLocal HEAD: ${result.localHeadOid.slice(0, 7)} — 在 Worktree 内同步并解决后重新 Ready。` }
             }
             if (result.status === 'error') return { kind: 'error', text: `${result.code}: ${result.message}` }
-            return { kind: 'error', text: 'Apply 未返回预期结果' }
+            return { kind: 'error', text: 'Finalize 未返回预期结果' }
           }
           case 'finish': {
-            const commitMessage = tokens.slice(1).join(' ').trim()
+            const commitMessage = rawInput.slice(verb.length).trim()
             if (!commitMessage) return { kind: 'error', text: USAGE }
             const target = await module.inspect(sessionId)
             const result = await module.operate({
@@ -76,9 +101,8 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
               expectedRevision: target.revision,
               commitMessage,
             })
-            if (result.status === 'finished') {
-              return { kind: 'success', text: `Finished: committed ${result.changedFiles.length} file(s) as ${result.commitOid?.slice(0, 7) ?? 'no-op'} (cleanup: ${result.cleanup}).` }
-            }
+            if (result.status === 'finished') return { kind: 'success', text: finishedText(result) }
+            if (result.status === 'conflict') return { kind: 'error', text: `Conflict: ${result.conflictingFiles.join('、')}` }
             if (result.status === 'error') return { kind: 'error', text: `${result.code}: ${result.message}` }
             return { kind: 'error', text: 'Finish 未返回预期结果' }
           }
@@ -91,7 +115,7 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
               confirmDirty: true,
             })
             return result.status === 'discarded'
-              ? { kind: 'success', text: 'Worktree discarded.' }
+              ? { kind: 'success', text: 'Worktree discarded. This Session target is no longer available.' }
               : result.status === 'error'
                 ? { kind: 'error', text: `${result.code}: ${result.message}` }
                 : { kind: 'error', text: 'Discard 未返回预期结果' }
@@ -99,10 +123,10 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
           case 'remove': {
             const checkoutId = tokens[1]
             if (!checkoutId) return { kind: 'error', text: USAGE }
-            const summaries = await module.listManagedWorktrees({ checkoutId })
+            const summaries = await module.listManagedWorktreesForSession(sessionId, { checkoutId })
             const summary = summaries[0]
-            if (!summary) return { kind: 'error', text: `No managed worktree ${checkoutId}.` }
-            await module.manageManagedWorktree({
+            if (!summary) return { kind: 'error', text: `No managed worktree ${checkoutId} visible to this Session.` }
+            await module.manageManagedWorktreeForSession(sessionId, {
               checkoutId,
               expectedRevision: summary.revision,
               action: 'discard',

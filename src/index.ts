@@ -1,9 +1,9 @@
 /**
  * dsh-git-worktree plugin entry. The session-checkout domain (state machine,
  * apply engine, ports) is Domi-ported and host-agnostic; this file is the DSH
- * plugin face: exports the domain error type and the module contract, builds
- * the DSH adapters, mounts the state machine, and registers the model tools,
- * `/worktree` command, and session context note.
+ * plugin face: exports the domain error type and module contract, builds the
+ * DSH adapters, mounts the state machine, and registers safe model tools,
+ * human `/worktree` acceptance commands, and Session Target runtime context.
  * @module dsh-git-worktree
  */
 
@@ -69,9 +69,18 @@ export interface MarkReadyForReviewInput {
   suggestedCommitMessage: string
 }
 
+/** Handoff data used by the client to create the authoritative isolated Workspace/Session. */
+export interface IsolatedTargetLaunch {
+  targetSessionId: string
+  managedRoot: string
+  target: SessionTargetView
+}
+
 /** Complete core interface the session-checkout module exposes to business callers. */
 export interface SessionCheckoutModule {
   inspect(sessionId: string): Promise<SessionTargetView>
+  /** Synchronous registry snapshot for replay-stable model runtime context. */
+  runtimeContext(sessionId: string): string
   /** Read-only sync preflight; modifies no Local, worktree, registry, review state, or Git refs. */
   preflight?(sessionId: string, expectedRevision: number): Promise<WorktreeApplyPreflightView>
   /** Cross-module mutation under the same exclusive lock as bind/apply/discard/cleanup. */
@@ -80,11 +89,17 @@ export interface SessionCheckoutModule {
     operation: (target: SessionTargetView) => Promise<T>,
   ): Promise<T>
   bind(sessionId: string, choice: SessionTargetBindChoice): Promise<SessionTargetView>
+  /** Reserve a distinct owner session and checkout without changing the source session cwd/identity. */
+  createIsolatedTarget(sourceSessionId: string, targetSessionId: string): Promise<IsolatedTargetLaunch>
   /** Lazily create the next isolated checkout when a delivered owner session needs code changes. */
   beginNextIteration(sessionId: string): Promise<SessionTargetView>
   markReadyForReview(sessionId: string, input: MarkReadyForReviewInput): Promise<SessionTargetView>
   operate(input: SessionCheckoutOperation): Promise<SessionCheckoutOperationResult>
   listManagedWorktrees(input?: ListManagedWorktreesInput): Promise<ManagedWorktreeSummaryView[]>
+  /** Caller-scoped list for model and human session surfaces. */
+  listManagedWorktreesForSession(sessionId: string, input?: Omit<ListManagedWorktreesInput, 'projectId'>): Promise<ManagedWorktreeSummaryView[]>
+  /** Caller-scoped management; never treats persisted owner ids as authorization. */
+  manageManagedWorktreeForSession(sessionId: string, input: ManageManagedWorktreeInput): Promise<ManagedWorktreeSummaryView>
   /** Main-owned read-only cleanup inspection; writes no registry, refs, or directories. */
   inspectManagedWorktreeCleanup(input?: ListManagedWorktreesInput): Promise<ManagedWorktreeSummaryView[]>
   bulkCleanupManagedWorktrees(candidates: BulkCleanupManagedWorktreeCandidate[]): Promise<BulkCleanupManagedWorktreesResult>
@@ -108,6 +123,7 @@ import { createSessionCheckoutApplyEngine } from './session-checkout-apply.js'
 import { createSessionCheckoutModule } from './session-checkout-module.js'
 import { registerTools } from './tools.js'
 import { registerWorktreeCommand } from './commands.js'
+import { registerSessionTargetContext } from './session-target-context.js'
 
 const name = 'git-worktree'
 // Named export: the loader reads inject/apply named exports as plugin
@@ -134,9 +150,9 @@ function resolveStateDir(config: { stateDir?: string }): string {
 const RETENTION_MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000
 
 /**
- * Mount the plugin: DSH adapters, the session-checkout module, the seven
- * worktree tools, the `/worktree` command, the once-per-session worktree
- * context note, startup reconciliation, and the retention-expiry timer.
+ * Mount the plugin: DSH adapters, the session-checkout module, safe worktree
+ * tools, human acceptance command, dynamic target context, startup recovery,
+ * and the retention-expiry timer.
  */
 export function apply(ctx: Context, config: { stateDir?: string } = {}): void {
   const stateDir = resolveStateDir(config)
@@ -156,6 +172,7 @@ export function apply(ctx: Context, config: { stateDir?: string } = {}): void {
 
   registerTools(ctx, module)
   registerWorktreeCommand(ctx, module)
+  registerSessionTargetContext(ctx, module)
 
   // Startup recovery plus periodic expiry of retained worktrees. cordis's
   // typed Events map omits the runtime 'ready' event; the events service's

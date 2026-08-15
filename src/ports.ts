@@ -180,6 +180,8 @@ export interface ManagedCheckoutRecord {
   projectId: string
   projectName: string
   ownerSessionId: string
+  /** Local session that created this target; historical records may omit it. */
+  sourceSessionId?: string
   /** Canonical root of the project in the user's Local Checkout. */
   localRoot: string
   /** Canonical root of the project in the managed worktree; also the lease cwd. */

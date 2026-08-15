@@ -1,7 +1,7 @@
 {
   "name": "dsh-git-worktree",
   "version": "0.1.2",
-  "description": "Domi-grade git worktree isolation and delivery for DeepSeek Harness: permanent worktrees, ready-for-review / apply / finish / discard lifecycle, conflict handling, and safe cleanup.",
+  "description": "Experimental Git worktree Session Targets for DeepSeek Harness with real isolated sessions, review ToolViews, human-confirmed delivery, and safe cleanup.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -10,9 +10,9 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./manager": {
-      "types": "./lib/manager.d.ts",
-      "default": "./lib/manager.js"
+    "./client": {
+      "types": "./lib/client/index.d.ts",
+      "default": "./lib/client.js"
     },
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
@@ -25,6 +25,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-tool"
+      ],
+      "platform": "web"
     }
   },
   "repository": {
@@ -39,22 +46,34 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepare": "pnpm run build",
     "check:publish": "node scripts/check-publish.mjs",
-    "prepublishOnly": "pnpm run build && pnpm run check:publish && pnpm run test"
+    "check:publish:release": "node scripts/check-publish.mjs --require-clean",
+    "prepublishOnly": "pnpm run build && pnpm run check:publish:release && pnpm run test"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-commands": "0.1.0-rc.6",
     "@deepseek-ai/dsh-subprocess": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "@deepseek-ai/schemastery": "3.18.1"
   },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.0.0",
+    "@types/react": "~18.3.31",
+    "@types/react-dom": "~18.3.7",
+    "jsdom": "^24.1.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "^0.17.2",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },

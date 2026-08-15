@@ -1,36 +1,101 @@
-# Porting notes
+# Porting notes: Domi Session Target → DeepSeek Harness
 
-dsh-git-worktree's session-checkout domain is ported from [Domi](https://github.com/wloops/domi)'s production worktree system, which runs in Domi's Electron app on thousands of real tasks. The port is a **cut, not a rewrite**: the state machine (`session-checkout-module.ts`), apply engine (`session-checkout-apply.ts`), ports (`ports.ts`), and the Domi test suites were carried over and adapted.
+`dsh-git-worktree` reuses Domi's session-checkout domain and Git delivery engine, but Host identity cannot be copied mechanically. In Harness, a Session's persisted header cwd and Workspace attachment are the authority; a plugin registry is only supporting state.
 
-## What was removed (Domi-specific surface)
+## Preserved core
 
-| Removed | Why |
+- Managed checkout registry and revision CAS
+- Git common-dir / git-dir / canonical-path identity checks
+- Local and Isolated fingerprints including staged, unstaged, untracked, binary, and deletion states
+- Conflict-aware three-way planning and stale guards
+- Task-only Finish that preserves unrelated Local index and working-tree layers
+- Journal-based recovery, internal refs, conservative cleanup, quarantine, retention expiry, and Windows retry behavior
+
+The apply engine remains tested independently even though direct Apply is not exposed in the current product flow.
+
+## Harness adaptation
+
+### Authoritative Session Target
+
+`worktree_create` receives a Local source Session and preallocates a different target Session ID. It creates the Worktree and records the target binding, but does **not** mutate the source Session.
+
+The Create ToolView then performs:
+
+```text
+workspaces.create({ path: managedRoot })
+→ sessions.create({ workspaceId, sessionId: targetSessionId })
+→ sessions.open(targetSessionId)
+```
+
+When that target Session invokes the plugin, its current Workspace may have a different Workspace ID from the original Local Workspace. The module accepts it only if the Workspace root canonicalizes to the recorded `managedRoot`; otherwise it raises `project_mismatch`.
+
+### Worktree location
+
+Domi's non-polluting policy is restored:
+
+1. preferred: `<local-repo-parent>/<repo>-worktrees/<readable-unique-name>`;
+2. fallback after a clean creation failure: `<plugin-state>/<repository-key>/<readable-unique-name>`.
+
+Both locations are outside the Local checkout. Directory names include the reserved Session identity, iteration, and checkout identity, so parallel targets do not collide. The target path becomes its own registered Harness Workspace, so the new Session's `workspace-write` boundary is correct without nesting the Worktree in Local.
+
+### Human acceptance instead of direct Apply
+
+Domi's Electron product has a reversible Local Preview / Finalize / Rollback layer. Harness does not currently expose an equivalent transaction. The old plugin flow wrote directly to Local on `worktree_apply`, advanced `applyBaseOid`, and could then make Finish return a zero delta while Local remained modified.
+
+The public flow is therefore intentionally narrower:
+
+```text
+Working → Ready for Review → user /worktree finalize → task-only commit → cleanup or retention
+```
+
+- `worktree_apply` is not registered as a model tool or command.
+- Finish/Discard/Remove are not model tools.
+- The Review ToolView submits a user command carrying the exact `reviewId` and registry revision shown by that card.
+- Strict Finish rechecks the reviewed isolated fingerprint/head before any Local write; stale cards or post-review edits return `stale_target`/`stale_isolated` and require a new Ready snapshot.
+- Historical records containing `applyBaseOid` fail closed for automatic Finish/Discard and tell the user to inspect Local.
+
+### Caller scope
+
+Global registry data is not a capability. Model and command lists filter by the original project and by `ownerSessionId === caller` or `sourceSessionId === caller`. Management validates the caller first; only then may the internal state machine act on the stored owner binding.
+
+### Runtime context
+
+A replay-stable dynamic context reports only the current registry state:
+
+- Local with no target;
+- Local handoff pending (stop modifications and open the target card);
+- Isolated Working (authoritative cwd and Local boundary);
+- Ready for Review (model stops; user accepts);
+- Recovery required.
+
+Git/filesystem validation still runs at operation boundaries; prompt context is guidance, not authorization.
+
+## Client bundle
+
+The package exports `./client` and declares `dsh.client`. The browser closure registers keyed `tool.call.toolview` rows for:
+
+- `worktree_create`: path/checkout facts and an idempotent **Open isolated session** action;
+- `worktree_ready_for_review`: summary, files, tests, commit message, and explicit cleanup/retention actions.
+
+The ToolViews derive display state from durable logged call/result slices. They do not reconstruct checkout authority from UI state.
+
+## Deliberately deferred
+
+| Domi capability | Current status |
 | --- | --- |
-| Local Preview (`preview` / `rollback_preview` / `finalize_preview` + `preview_active`/`preview_detached` states, `PreviewReceipt`) | Depends on Domi's dual-checkout model and Electron UI; DSH has no equivalent |
-| Collaborator delegation (`release_collaborator*`, `collaborator_active`, delegation fields) | Waits on DSH's subagent child-cwd seam (upstream rc.6+) |
-| Handoff (`bindVerifiedIsolated`, `forkAgentSession`) | Same seam dependency |
-| Session lease (`lease`, `CheckoutLease`) | DSH's sandbox derives the workspace root from the session cwd natively |
-| Electron reveal IPC (`resolveManagedRootForReveal`) | No file-manager reveal in DSH |
-| Audit timing (`onTimingEvent`) | No audit pipeline in the plugin scope |
+| Reversible Local Preview / Finalize / Rollback | Deferred; direct Apply disabled |
+| Global Worktree Manager sheet | Deferred until a stable Host Remote/Projection management seam is added |
+| Electron reveal/close-session choreography | Replaced only by Web Workspace/Session navigation; immediate cleanup makes the isolated Session terminal |
+| Collaborator release/handoff UI | Partial domain remnants only; no complete Host lifecycle integration |
+| Dependency snapshot/restore | Deferred |
+| Audit timing pipeline | Deferred |
+| Workflow `agent({ isolation })` | Blocked by Harness's deferred workflow isolation option |
 
-## What was changed
+Subagents inherit their parent's persisted cwd. They are therefore isolated when spawned from the real target Session, but this plugin does not add a separate per-child Worktree policy.
 
-| Change | Detail |
-| --- | --- |
-| `apply` semantics | Domi's `apply` wrote Local through the preview engine (reversible). Here it calls `applyEngine.apply` directly: plan → verify → patch Local → stays `ready_for_review` (irreversible, but `finish` and `discard` close the loop) |
-| `finish` semantics | Calls `applyEngine.finish` directly instead of preview → finalize; same task-delta commit with user staged/working preservation |
-| Journal operations | `apply` replaced the shared `preview` journal; `reconcile` recovers `planning`-step `apply`/`finish` journals to `ready` (proven Local untouched) and everything else to `recovery_required` |
-| Worktree location | **Inside the repo** at `<repo>/.dsh-worktrees/` — DSH's `workspace-write` sandbox grants only the session workspace root, so Domi's outside-repo layout (sibling container / data dir) cannot work here |
-| Git runner | Port adapters use `ctx.subprocess` (tree-scoped termination); the apply engine keeps its own hardened `runGit` (trusted plugin code, testable against real git in temp repos) |
-| Internal refs | `refs/dsh-worktree/session-checkouts/<key>` (Domi used `refs/domi/...`) |
-| Commit identity | Internal snapshot commits use `dsh-git-worktree Apply <dsh-worktree-apply@localhost>` |
+## Verification map
 
-## Test assets
-
-- `tests/session-checkout-apply.test.ts` — ported from Domi (bun:test → vitest, Bun.spawn → spawnSync); **31 passed** against real git: conflict detection, fingerprint CAS, stale guards, monorepo boundary, binary files, Windows-style paths.
-- `tests/session-checkout-module.test.ts` — ported state-machine suite (journal recovery, reconcile, cleanup) follows once the DSH tool surface settles.
-
-## Upstream gaps this plugin waits on
-
-- Subagent worktree isolation needs the provider-prepared child-cwd seam (upstream commit `0647d61abf`, tracked in [paradoxSCH/dsh-worktree](https://github.com/paradoxSCH/dsh-worktree)).
-- Workflow `isolation: 'worktree'` needs the isolation-adapter seam (`runtime.ts` rejects it today).
+- `tests/session-checkout-module.test.ts`: real Worktree creation, unique target reservations, source/target identity, caller scope, runtime context, recovery, and legacy Apply fail-closed.
+- `tests/session-checkout-apply.test.ts`: real Git merge/Finish/fingerprint behavior.
+- `tests/client-toolview.test.tsx`: exact Session handoff and explicit user finalize actions.
+- `scripts/check-publish.mjs`: every package export, Host patch, Host metadata, `dsh.client`, and executable browser ModuleLoader closure.

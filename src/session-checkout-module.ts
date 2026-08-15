@@ -19,6 +19,7 @@ import type {
   WorktreeRetentionMode,
 } from './types.js'
 import { SessionCheckoutError } from './index.js'
+import { createManagedWorktreePathCandidates, sanitizeManagedWorktreeLabel } from './managed-worktree-path.js'
 import type {
   ListManagedWorktreesInput,
   ManageManagedWorktreeInput,
@@ -644,15 +645,74 @@ export function createSessionCheckoutModule(
     return dependencies.registry.read().sessionBindings[sessionId]
   }
 
+  function runtimeContext(sessionId: string): string {
+    const registry = dependencies.registry.read()
+    const binding = registry.sessionBindings[sessionId]
+    if (!binding) return ''
+    if (binding.target.kind === 'local') {
+      const pending = Object.values(registry.managedCheckouts)
+        .filter((record) => record.sourceSessionId === sessionId && record.phase !== 'discarded')
+        .filter((record) => record.delivery.state === 'working'
+          || record.delivery.state === 'ready_for_review'
+          || record.phase === 'preparing'
+          || record.phase === 'mutating'
+          || record.phase === 'recovery_required')
+        .sort((left, right) => managedUpdatedAt(right) - managedUpdatedAt(left))[0]
+      if (!pending) {
+        return 'Session Target: Local Checkout. No isolated target is active for this Session.'
+      }
+      return [
+        'Session Target: Local Checkout (handoff pending).',
+        `Managed checkout ${pending.checkoutId} is reserved for Session ${pending.ownerSessionId}.`,
+        'Stop code modifications in this Local Session. Ask the user to open the isolated Session from the Worktree card.',
+      ].join('\n')
+    }
+    if (binding.target.kind !== 'isolated') return 'Session Target is unselected. Do not mutate project files until a target is chosen.'
+    const record = registry.managedCheckouts[binding.target.checkoutId]
+    if (!record) return 'Session Target: Isolated Checkout record missing. Stop mutations and request recovery.'
+    if (record.phase === 'recovery_required') {
+      return `Session Target: Isolated Checkout ${record.checkoutId} requires recovery. Do not modify Local or clean up automatically.`
+    }
+    const lines = [
+      `Session Target: Isolated Checkout ${record.checkoutId}.`,
+      `Authoritative cwd: ${record.managedRoot}`,
+      `Original Local boundary: ${record.localRoot}`,
+      'Make task changes only in the authoritative cwd; never write directly to the Original Local boundary.',
+    ]
+    if (record.delivery.state === 'ready_for_review') {
+      lines.push('Delivery state: Ready for Review. The model must stop; only the user may Finish, retain, discard, or clean up through the Worktree card/command.')
+    } else if (record.delivery.state === 'working') {
+      lines.push('Delivery state: Working. When implementation and validation are complete, call worktree_ready_for_review as the final model tool.')
+    } else {
+      lines.push(`Delivery state: ${record.delivery.state}. Treat this Session as terminal unless the user starts a new iteration.`)
+    }
+    return lines.join('\n')
+  }
+
   async function resolveBinding(sessionId: string): Promise<SessionBindingRecord> {
     const session = requireSession(sessionId)
     const persisted = getPersistedBinding(sessionId)
     if (persisted) {
       if (session.projectId !== persisted.projectId) {
-        throw new SessionCheckoutError(
-          'project_mismatch',
-          '会话当前项目与已绑定 Session Target 不一致，已停止访问 checkout',
-        )
+        const record = persisted.target.kind === 'isolated'
+          ? dependencies.registry.read().managedCheckouts[persisted.target.checkoutId]
+          : undefined
+        const workspace = session.projectId ? dependencies.lookup.getProject(session.projectId) : undefined
+        let isolatedWorkspaceMatches = false
+        if (record && workspace && dependencies.files.exists(workspace.root)) {
+          try {
+            const workspaceRoot = await dependencies.files.canonicalize(workspace.root)
+            isolatedWorkspaceMatches = pathsEqual(workspaceRoot, record.managedRoot)
+          } catch {
+            isolatedWorkspaceMatches = false
+          }
+        }
+        if (!isolatedWorkspaceMatches) {
+          throw new SessionCheckoutError(
+            'project_mismatch',
+            '会话当前 Workspace 与已绑定 Session Target 不一致，已停止访问 checkout',
+          )
+        }
       }
       return persisted
     }
@@ -1434,6 +1494,19 @@ export function createSessionCheckoutModule(
     if (record.revision !== input.expectedRevision) {
       return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
     }
+    if (input.expectedReviewId !== undefined && (
+      record.delivery.state !== 'ready_for_review'
+      || record.delivery.review.reviewId !== input.expectedReviewId
+    )) {
+      return operationError('stale_target', '该验收卡已不是当前 Review，请刷新并确认最新交付', await inspectIsolated(binding))
+    }
+    if (record.applyBaseOid && (record.delivery.state === 'working' || record.delivery.state === 'ready_for_review')) {
+      return operationError(
+        'operation_not_allowed',
+        '该历史 Worktree 已通过旧版 Apply 写入 Local；为避免遗漏或重复提交，已禁止自动 Finish，请先人工核对 Local 后再清理记录。',
+        await inspectIsolated(binding),
+      )
+    }
     if (record.phase !== 'ready') {
       return operationError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能直接 Finish`, await inspectIsolated(binding))
     }
@@ -1505,6 +1578,25 @@ export function createSessionCheckoutModule(
         revision: current.revision + 1,
       }))
       return operationError(planResult.error.code, planResult.error.message, await inspectIsolated(binding))
+    }
+    if (
+      input.expectedReviewId !== undefined
+      && applying.delivery.state === 'ready_for_review'
+      && (
+        applying.delivery.review.reviewId !== input.expectedReviewId
+        || planResult.plan.isolatedFingerprint !== applying.delivery.review.isolatedFingerprint
+        || planResult.plan.isolatedHeadOid !== applying.delivery.review.isolatedHeadOid
+      )
+    ) {
+      const reviewIteration = applying.delivery.review.iteration
+      updateManagedCheckout(applying.checkoutId, (current) => ({
+        ...current,
+        phase: 'ready',
+        delivery: { state: 'working', iteration: reviewIteration },
+        journal: null,
+        revision: current.revision + 1,
+      }))
+      return operationError('stale_isolated', 'Worktree 在验收后又发生变化，请重新准备验收', await inspectIsolated(binding))
     }
 
     const iteration = applying.delivery.state === 'working'
@@ -1639,6 +1731,13 @@ export function createSessionCheckoutModule(
     if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
     if (record.revision !== input.expectedRevision) {
       return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+    }
+    if (record.applyBaseOid && (record.delivery.state === 'working' || record.delivery.state === 'ready_for_review')) {
+      return operationError(
+        'operation_not_allowed',
+        '该历史 Worktree 已通过旧版 Apply 写入 Local；不会自动 Discard，请先人工核对 Local 的未提交修改。',
+        await inspectIsolated(binding),
+      )
     }
     if (record.phase === 'recovery_required' && !dependencies.files.exists(record.managedRoot)) {
       await releaseApplyBaseBestEffort(record)
@@ -1980,17 +2079,53 @@ export function createSessionCheckoutModule(
       .sort((left, right) => right.updatedAt - left.updatedAt)
   }
 
+  async function listManagedWorktreesForSession(
+    sessionId: string,
+    input: Omit<ListManagedWorktreesInput, 'projectId'> = {},
+  ): Promise<ManagedWorktreeSummaryView[]> {
+    const session = requireSession(sessionId)
+    const persisted = getPersistedBinding(sessionId)
+    const projectId = persisted?.projectId ?? session.projectId
+    if (!projectId) throw new SessionCheckoutError('project_not_found', '会话尚未关联项目')
+    const allowedCheckoutIds = new Set(Object.values(dependencies.registry.read().managedCheckouts)
+      .filter((record) => record.projectId === projectId)
+      .filter((record) => record.ownerSessionId === sessionId || record.sourceSessionId === sessionId)
+      .map((record) => record.checkoutId))
+    const summaries = await listManagedWorktrees({ ...input, projectId })
+    return summaries.filter((summary) => allowedCheckoutIds.has(summary.checkoutId))
+  }
+
+  async function manageManagedWorktreeForSession(
+    sessionId: string,
+    input: ManageManagedWorktreeInput,
+  ): Promise<ManagedWorktreeSummaryView> {
+    requireSession(sessionId)
+    const record = dependencies.registry.read().managedCheckouts[input.checkoutId]
+    if (!record) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
+    if (record.ownerSessionId !== sessionId && record.sourceSessionId !== sessionId) {
+      throw new SessionCheckoutError('not_owner', '当前 Session 无权管理该 Worktree')
+    }
+    const persisted = getPersistedBinding(sessionId)
+    const callerProjectId = persisted?.projectId ?? dependencies.lookup.getSession(sessionId)?.projectId
+    if (callerProjectId !== record.projectId) {
+      throw new SessionCheckoutError('project_mismatch', '当前 Session 与 Worktree 不属于同一原始项目')
+    }
+    return manageManagedWorktree(input)
+  }
+
   async function manageManagedWorktree(input: ManageManagedWorktreeInput): Promise<ManagedWorktreeSummaryView> {
     const record = dependencies.registry.read().managedCheckouts[input.checkoutId]
     if (!record) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
     if (record.revision !== input.expectedRevision) throw new SessionCheckoutError('stale_target', 'Worktree 状态已变化，请刷新后重试')
     if (input.action === 'discard') {
-      const result = await operateTarget({
+      // Caller authorization is performed by the scoped wrapper (or a trusted Host manager).
+      // The reserved owner Session may not exist yet, so do not re-resolve it through lookup.
+      const result = await operateDiscard({
         action: 'discard',
         sessionId: record.ownerSessionId,
         expectedRevision: input.expectedRevision,
         confirmDirty: input.confirmDirty === true,
-      })
+      }, bindingForManagedRecord(record))
       if (result.status === 'error') throw new SessionCheckoutError(result.code, result.message)
       const updated = dependencies.registry.read().managedCheckouts[record.checkoutId]
       if (!updated) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
@@ -2062,8 +2197,9 @@ export function createSessionCheckoutModule(
     choice: SessionTargetBindChoice,
     createAttempt = 0,
     requestStartedAt = Date.now(),
+    sourceSessionId = sessionId,
   ): Promise<SessionTargetView> {
-      const session = requireSession(sessionId)
+      const session = requireSession(sourceSessionId)
       let nextIteration = 1
       let replacedDeliveredBinding: SessionBindingRecord | undefined
       const existing = getPersistedBinding(sessionId)
@@ -2101,7 +2237,7 @@ export function createSessionCheckoutModule(
         }
       }
 
-      const { project } = await resolveSessionProject(sessionId)
+      const { project } = await resolveSessionProject(sourceSessionId)
       const snapshot = await dependencies.git.inspect(project.root)
 
       if (choice.kind === 'local') {
@@ -2129,8 +2265,23 @@ export function createSessionCheckoutModule(
       const checkoutId = dependencies.createCheckoutId()
       const localRoot = await dependencies.files.canonicalize(project.root)
       const localGitRoot = await dependencies.files.canonicalize(snapshot.root)
-      // DSH workspace-write 沙箱只允许项目根目录内写入，worktree 必须放在仓库内部。
-      const managedGitRoot = join(localGitRoot, '.dsh-worktrees')
+      const pathCandidates = createManagedWorktreePathCandidates({
+        localGitRoot,
+        managedCheckoutsRoot: dependencies.managedCheckoutsRoot,
+        repositoryKey: sanitizeManagedWorktreeLabel(basename(localGitRoot)),
+        sessionId,
+        sessionTitle: session.title,
+        checkoutId,
+        iteration: nextIteration,
+      })
+      // Prefer a sibling directory so the Local checkout never sees the managed worktree as untracked.
+      // If that sibling would live inside an outer Git checkout, use plugin state immediately;
+      // a clean first-attempt failure also retries there.
+      const outerContainingRoot = await dependencies.git.findContainingWorktreeRoot(dirname(localGitRoot))
+      const siblingWouldPolluteOuter = outerContainingRoot !== null && !pathsEqual(outerContainingRoot, localGitRoot)
+      const managedGitRoot = createAttempt === 0 && !siblingWouldPolluteOuter
+        ? pathCandidates.siblingRoot
+        : pathCandidates.fallbackRoot
       dependencies.files.ensureDirectory(dirname(managedGitRoot))
       const projectRelativePath = relative(localGitRoot, localRoot)
       if (projectRelativePath.startsWith('..') || isAbsolute(projectRelativePath)) {
@@ -2142,6 +2293,7 @@ export function createSessionCheckoutModule(
         projectId: project.id,
         projectName: project.name,
         ownerSessionId: sessionId,
+        sourceSessionId,
         localRoot,
         managedRoot: resolve(managedRoot),
         managedGitRoot: resolve(managedGitRoot),
@@ -2245,7 +2397,7 @@ export function createSessionCheckoutModule(
         dependencies.registry.write(failedRegistry)
 
         if (createAttempt < 1) {
-          return bindTarget(sessionId, choice, createAttempt + 1, requestStartedAt)
+          return bindTarget(sessionId, choice, createAttempt + 1, requestStartedAt, sourceSessionId)
         }
         throw new SessionCheckoutError('git_operation_failed', 'Worktree 创建失败，已安全清理残余目录，可直接重试')
       }
@@ -2253,6 +2405,7 @@ export function createSessionCheckoutModule(
 
   return {
     inspect: inspectAvailable,
+    runtimeContext,
     preflight: (sessionId, expectedRevision) => withBindingLock(
       () => preflightTarget(sessionId, expectedRevision),
     ),
@@ -2263,6 +2416,27 @@ export function createSessionCheckoutModule(
       const requestStartedAt = Date.now()
       return withBindingLock(() => bindTarget(sessionId, choice, 0, requestStartedAt))
     },
+    createIsolatedTarget: (sourceSessionId, targetSessionId) => withBindingLock(async () => {
+      if (!targetSessionId || targetSessionId === sourceSessionId) {
+        throw new SessionCheckoutError('invalid_input', 'Isolated Target 必须使用独立的预分配 Session ID')
+      }
+      if (dependencies.lookup.getSession(targetSessionId) && !getPersistedBinding(targetSessionId)) {
+        throw new SessionCheckoutError('target_already_bound', '目标 Session ID 已被其他 Workspace 使用')
+      }
+      const sourceBinding = getPersistedBinding(sourceSessionId)
+      if (!sourceBinding) {
+        await bindTarget(sourceSessionId, { kind: 'local' })
+      } else if (sourceBinding.target.kind !== 'local') {
+        throw new SessionCheckoutError('operation_not_allowed', '只能从 Local Session 创建新的 Isolated Target')
+      }
+      const target = await bindTarget(targetSessionId, { kind: 'isolated' }, 0, Date.now(), sourceSessionId)
+      const binding = getPersistedBinding(targetSessionId)
+      const record = binding?.target.kind === 'isolated'
+        ? dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
+        : undefined
+      if (!record) throw new SessionCheckoutError('checkout_missing', 'Isolated Target 创建后记录缺失')
+      return { targetSessionId, managedRoot: record.managedRoot, target }
+    }),
     beginNextIteration: (sessionId) => {
       const requestStartedAt = Date.now()
       return withBindingLock(() => bindTarget(sessionId, { kind: 'isolated' }, 0, requestStartedAt))
@@ -2273,6 +2447,10 @@ export function createSessionCheckoutModule(
     operate: (input) => withBindingLock(() => operateTarget(input)),
     // 只读管理列表不占用全局 mutation lock；慢速目录诊断与用户操作互不阻塞。
     listManagedWorktrees,
+    listManagedWorktreesForSession,
+    manageManagedWorktreeForSession: (sessionId, input) => withBindingLock(
+      () => manageManagedWorktreeForSession(sessionId, input),
+    ),
     inspectManagedWorktreeCleanup,
     bulkCleanupManagedWorktrees: (candidates) => withBindingLock(() => bulkCleanupManagedWorktrees(candidates)),
     manageManagedWorktree: (input) => withBindingLock(() => manageManagedWorktree(input)),
