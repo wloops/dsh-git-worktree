@@ -1,6 +1,9 @@
 /** Browser-side orchestration over Harness Workspace and Session runtime faces. */
 
-import type { WorktreeCreatePayload } from './model.js'
+export interface IsolatedTargetLocation {
+  managedRoot: string
+  targetSessionId: string
+}
 
 export interface SnapshotStore<T> {
   getSnapshot(): T
@@ -39,9 +42,14 @@ export interface WorktreeClientServices {
 /** Idempotently register the managed root, create the preallocated Session, and navigate. */
 export async function openIsolatedTarget(
   services: WorktreeClientServices,
-  payload: WorktreeCreatePayload,
+  payload: IsolatedTargetLocation,
+  isActive: () => boolean = () => true,
 ): Promise<void> {
   const workspace = await services.workspaces.create({ path: payload.managedRoot })
+  if (!isActive()) return
+  if (workspace.path !== payload.managedRoot) {
+    throw new Error(`Harness registered the managed root at a different path: ${workspace.path}.`)
+  }
   const sessionId = await services.sessions.create({
     workspaceId: workspace.workspaceId,
     sessionId: payload.targetSessionId,
@@ -49,6 +57,7 @@ export async function openIsolatedTarget(
   if (sessionId !== payload.targetSessionId) {
     throw new Error(`Harness created unexpected Session ${sessionId}; expected ${payload.targetSessionId}.`)
   }
+  if (!isActive()) return
   services.sessions.open(sessionId)
 }
 

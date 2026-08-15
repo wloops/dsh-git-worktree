@@ -1,0 +1,42 @@
+import { createElement, type ComponentType } from 'react'
+import type { WorktreeConsoleAdapter } from '../../console-contract.js'
+import type { WorktreeClientServices } from '../actions.js'
+import { TargetStatusAction } from './TargetStatusAction.js'
+import { WorktreeConsoleView } from './WorktreeConsoleView.js'
+
+export interface TargetConsoleContextLike {
+  slots: {
+    inject(name: 'conversation.session.header.actions' | 'conversation.view', callback: () => unknown): void
+    register(
+      descriptor: Record<string, unknown>,
+      component: ComponentType<{ sessionId: string }>,
+    ): unknown
+  }
+}
+
+/** Register the Harness-native Session Target contributions against an injected adapter seam. */
+export function registerTargetConsole(
+  ctx: TargetConsoleContextLike,
+  adapter: WorktreeConsoleAdapter,
+  _services: WorktreeClientServices,
+): void {
+  const HeaderAction = ({ sessionId }: { sessionId: string }) =>
+    createElement(TargetStatusAction, { sessionId, adapter })
+  const ConsoleView = ({ sessionId }: { sessionId: string }) =>
+    createElement(WorktreeConsoleView, { sessionId, adapter, services: _services })
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+    name: 'conversation.session.header.actions',
+    id: 'worktree-target',
+    order: 30,
+    label: 'Worktree Target',
+  }, HeaderAction))
+  ctx.slots.inject('conversation.view', () => ctx.slots.register({
+    name: 'conversation.view',
+    id: 'worktree',
+    order: 20,
+    label: 'Worktree',
+  }, ConsoleView))
+}
+
+export { TargetStatusAction } from './TargetStatusAction.js'
+export { WorktreeConsoleView } from './WorktreeConsoleView.js'
