@@ -1,7 +1,7 @@
 {
   "name": "dsh-git-worktree",
-  "version": "0.1.1",
-  "description": "Domi-grade git worktree isolation and delivery for DeepSeek Harness: permanent worktrees, ready-for-review / apply / discard / finish lifecycle, conflict handling, and safe cleanup.",
+  "version": "0.1.2",
+  "description": "Domi-grade git worktree isolation and delivery for DeepSeek Harness: permanent worktrees, ready-for-review / apply / finish / discard lifecycle, conflict handling, and safe cleanup.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -42,7 +42,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "prepublishOnly": "pnpm run build && pnpm run test"
+    "prepare": "pnpm run build",
+    "check:publish": "node scripts/check-publish.mjs",
+    "prepublishOnly": "pnpm run build && pnpm run check:publish && pnpm run test"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",

@@ -23,10 +23,16 @@ DSH's `workspace-write` sandbox grants exactly the session workspace root. Workt
 ## Install
 
 ```sh
+# from npm (recommended)
 dsh plugin --profile web add dsh-git-worktree
-# or from GitHub
-dsh plugin --profile web add github:wloops/dsh-git-worktree#<tag>
+
+# or from GitHub source (built on install via the prepare script)
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.1.2
 ```
+
+Git installs build the package on the fly. On pnpm ≥ 10 that build script is
+blocked until allowed: add `dsh-git-worktree: true` under `allowBuilds` in the
+profile's `pnpm-workspace.yaml`, then re-run the add command.
 
 ## Status
 

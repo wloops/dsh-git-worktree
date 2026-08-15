@@ -23,10 +23,14 @@ DSH 的 `workspace-write` 沙箱只授予会话工作区根。因此 worktree �
 ## 安装
 
 ```sh
+# 从 npm（推荐）
 dsh plugin --profile web add dsh-git-worktree
-# 或从 GitHub
-dsh plugin --profile web add github:wloops/dsh-git-worktree#<tag>
+
+# 或从 GitHub 源码安装（安装时通过 prepare 脚本自动构建）
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.1.2
 ```
+
+Git 安装会在拉取后自动构建。pnpm ≥ 10 默认拦截依赖的构建脚本：在 profile 的 `pnpm-workspace.yaml` 的 `allowBuilds` 下添加 `dsh-git-worktree: true`，然后重跑 add 命令。
 
 ## 状态
 
