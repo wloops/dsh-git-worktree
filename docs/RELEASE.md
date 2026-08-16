@@ -14,7 +14,7 @@ pnpm pack --dry-run
 
 当前 `check-publish` 断言：
 
-- `dsh.bundle.patch` 存在、会进入 tarball，并插入本包 Host row；
+- `cordis.patch.yml` 存在、会进入 tarball，并插入本包 Host row；
 - `package.json.exports` 的每个 default/types/path target 都真实存在且受 `files` 覆盖；
 - Host `lib/index.js` 命名导出 `apply` 与 `inject`；
 - `dsh.client` 声明 Web 平台和 client injection；
@@ -43,16 +43,19 @@ pnpm run check:publish:release
 9. target Workspace cwd 被替换时，插件返回 `project_mismatch`。
 10. 历史 `applyBaseOid` 记录拒绝自动 Finish/Discard。
 
-## 3. 版本、提交与 tag
+## 3. 版本、提交、CI 与 tag
+
+先在受管 Worktree 中 bump version 并更新 docs/changelog，完成 Local 验收提交后，再在 clean Local 上运行：
 
 ```bash
-# bump version and update docs/changelog first
-git tag v<版本>
+pnpm run check:publish:release
 git push origin <release-branch>
+# 等待该精确 release commit 的 GitHub Actions 成功
+git tag -a v<版本> -m "v<版本>"
 git push origin v<版本>
 ```
 
-不要在脏工作区创建 release tag；不要依赖未提交的 `prepare` 修复。
+当前 release branch 是 `master`，CI 同时监听 `master` 与 `main`。不要在脏工作区创建 release tag；不要依赖未提交的 `prepare` 修复；branch CI 未通过时不得 tag 或 publish。
 
 ## 4. 发布
 
@@ -60,7 +63,7 @@ git push origin v<版本>
 npm publish
 ```
 
-`prepublishOnly` 会重跑 build、publish gate 与 tests。pnpm >= 10 的 Git 安装需要 profile `allowBuilds` 允许 `dsh-git-worktree` 的 `prepare`。
+`prepublishOnly` 会重跑 build、clean-tree publish gate 与 tests。发布前必须确认 npm 身份有效且目标版本尚未占用。pnpm >= 10 的 Git 安装需要 profile `allowBuilds` 允许 `dsh-git-worktree` 的 `prepare`。发布失败时保留已经推送的 release commit/tag 并报告；不得移动或覆盖 tag。
 
 ## 5. 发布后真实安装
 
@@ -83,7 +86,7 @@ dsh --profile <scratch>
 
 | 问题 | 门禁 |
 | --- | --- |
-| 包安装但 Host 不挂载 | `dsh.bundle.patch` + patch row 检查 |
+| 包安装但 Host 不挂载 | `cordis.patch.yml` + patch row 检查 |
 | Host 入口缺少 `inject` | Host export 检查 |
 | `./manager` 指向不存在文件 | 全量 exports 遍历 |
 | Client 脚本加载成功但没有注册 ModuleLoader factory | 在 VM 中按真实浏览器协议执行脚本，断言 `__ModuleLoader__.load` 的 ID/factory/apply/inject |

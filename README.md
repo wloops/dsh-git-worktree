@@ -7,7 +7,7 @@ An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It 
 ## How it works
 
 1. On a blank/new Local Session, clicking the **Worktree** switch first opens a confirmation dialog. Cancel creates nothing; confirm freezes the Local composer, creates the isolated target, transfers the unsent text/image draft, and opens the target. The user still sends the first prompt through the target's native composer, so no prompt is admitted to Local.
-2. Existing Local Sessions can also create a target from the **Worktree** tab, and the model may call `worktree_create`.
+2. Existing Local Sessions can also create a target through the model-owned `worktree_create` ToolView. The former project-scoped **Worktree** tab is temporarily not mounted while the primary flow is stabilised.
 3. The plugin creates a unique detached Worktree in a sibling container (with a plugin-state fallback) and reserves a distinct target Session ID. The source Session stays Local.
 4. Harness registers the Worktree path as a Workspace, creates the exact Host-reserved Session, and opens it. Its persisted Session header cwd is the authoritative Session Target.
 5. The agent changes and validates code only in that isolated cwd, then calls `worktree_ready_for_review` as its final model action.
@@ -29,7 +29,7 @@ Apply, Finish, Discard, and Remove are intentionally **not model tools**. A mode
 
 ### Harness-native Worktree Console
 
-The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Clicking it opens a confirmation dialog; only confirmation prepares the Host-allocated target and transfers the unsent text/image draft before navigation. The normal Harness Send path remains the only prompt path. Every persisted Session also gets a target capsule and a project-scoped **Worktree** view for advanced Create/Open/Inspect/Discard/Cleanup management. When Ready, `conversation.input.dock` shows one compact acceptance strip with a single primary action and a More menu; the historical ToolView stays compact and replayable. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`.
+The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Clicking it opens a confirmation dialog; only confirmation prepares the Host-allocated target and transfers the unsent text/image draft before navigation. The normal Harness Send path remains the only prompt path. Every persisted Session gets a read-only target capsule. When Ready, `conversation.input.dock` shows one compact acceptance strip with a single primary action and a More menu; the historical ToolView stays compact and replayable. The advanced `WorktreeConsoleView`, Host control plane, and strict Remote methods remain available internally, but the project-scoped `conversation.view` tab is intentionally not mounted in v0.2.0. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`.
 
 ### Human command
 
@@ -64,7 +64,7 @@ The Client uses strict Remote `preflight`, `preview`, `rollbackPreview`, and `fi
 dsh plugin --profile web add dsh-git-worktree
 
 # Git source (prepare builds Host + Client bundles)
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.1.2
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.2.0
 ```
 
 On pnpm >= 10, Git installs may require `dsh-git-worktree: true` under `allowBuilds` in the profile's `pnpm-workspace.yaml` before retrying the add command.
@@ -102,7 +102,7 @@ The default fixture is `dsh-git-worktree-dev/fixture` under the OS temporary dir
 ## Current limitations
 
 - The old direct `worktree_apply` surface remains disabled; public delivery is limited to explicit user Preview/rollback/finalize/direct-finish actions.
-- No cross-project global sidebar Manager yet; management is intentionally project- and Session-scoped in the Worktree Console.
+- No cross-project global sidebar Manager yet. The project-scoped Worktree Console implementation is retained for recovery and future redesign, but its visible `conversation.view` tab is temporarily not mounted.
 - No automatic Workflow `agent({ isolation })`; Harness still defers that option.
 - Subagents inherit the parent Session cwd, so they are isolated only after the parent is a real Worktree Session.
 - Dependency snapshot/restore and complete collaborator handoff UI are deferred.

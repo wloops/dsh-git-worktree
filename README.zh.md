@@ -7,7 +7,7 @@
 ## 工作流程
 
 1. 在 blank/new Local Session 中，用户点击 composer 工具栏的 **Worktree** 开关后先看到确认弹窗。取消不会创建任何资源；确认后插件才冻结 Local composer、创建 isolated target，把尚未发送的文本/图片草稿迁移过去并打开 target。首条消息仍由用户在 target 的原生 composer 中发送，任何 prompt 都不会先进入 Local。
-2. 已存在的 Local Session 仍可从 **Worktree** 标签页创建 target，模型也可调用 `worktree_create`。
+2. 已存在的 Local Session 仍可通过模型拥有的 `worktree_create` ToolView 创建 target。主流程稳定前，原项目级 **Worktree** 标签页暂不挂载。
 3. 插件在仓库同级容器中创建唯一 detached Worktree（不可用时回退到插件 stateDir），并预留一个独立 target Session ID；源 Session 始终保持 Local。
 4. Harness 把 Worktree 路径注册为 Workspace，使用 Host 预留的精确 ID 创建并打开 Session。持久化 Session header 的 cwd 才是权威 Session Target。
 5. Agent 只在该 isolated cwd 中修改和验证，完成后把 `worktree_ready_for_review` 作为最后一个模型操作。
@@ -29,7 +29,7 @@ Apply、Finish、Discard、Remove **不再作为模型工具**暴露。模型参
 
 ### Harness-native Worktree Console
 
-Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribution。blank Local Session 会在 Harness 官方 `conversation.input.left` composer 工具栏 Slot 中显示紧凑的 **Worktree** 开关；点击只打开确认弹窗，确认后才准备 Host 分配的 target，并在导航前迁移尚未发送的文本/图片草稿，标准 Harness Send 仍是唯一 prompt 路径。每个持久 Session 还可看到 target 状态胶囊和项目级 **Worktree** 高级管理视图；Ready 后则由 `conversation.input.dock` 显示一个始终可见的紧凑验收条，只保留一个主操作和“更多”菜单。列表行不包含路径；只有通过身份验证的 `current`、`create` 或 `inspect` 才返回 managed root。
+Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribution。blank Local Session 会在 Harness 官方 `conversation.input.left` composer 工具栏 Slot 中显示紧凑的 **Worktree** 开关；点击只打开确认弹窗，确认后才准备 Host 分配的 target，并在导航前迁移尚未发送的文本/图片草稿，标准 Harness Send 仍是唯一 prompt 路径。每个持久 Session 都可看到只读 target 状态胶囊；Ready 后由 `conversation.input.dock` 显示始终可见的紧凑验收条，只保留一个主操作和“更多”菜单。高级 `WorktreeConsoleView`、Host 控制面和 strict Remote 方法仍完整保留，但 v0.2.0 暂不挂载项目级 `conversation.view` 标签页。列表行不包含路径；只有通过身份验证的 `current`、`create` 或 `inspect` 才返回 managed root。
 
 ### 用户命令
 
@@ -64,7 +64,7 @@ Client 通过 strict Remote 调用 `preflight`、`preview`、`rollbackPreview`�
 dsh plugin --profile web add dsh-git-worktree
 
 # Git 源码安装（prepare 构建 Host + Client bundle）
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.1.2
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.2.0
 ```
 
 pnpm >= 10 可能会拦截 Git 依赖的构建脚本；在 profile 的 `pnpm-workspace.yaml` 的 `allowBuilds` 下加入 `dsh-git-worktree: true` 后重试。
@@ -102,7 +102,7 @@ pnpm run dev:dsh:remove
 ## 当前限制
 
 - 旧 `worktree_apply` 入口仍禁用；公开交付路径只允许用户触发的 Preview/rollback/finalize/direct finish。
-- 尚无跨项目全局侧栏 Manager；当前管理面刻意限定在项目与 Session 作用域内。
+- 尚无跨项目全局侧栏 Manager。项目级 Worktree Console 实现仍保留用于恢复与后续重做，但其可见 `conversation.view` 标签页暂不挂载。
 - Harness 仍未开放 Workflow `agent({ isolation })`。
 - 子 Agent 继承父 Session cwd；只有父 Session 已真实进入 Worktree 后才形成隔离。
 - dependency snapshot、完整 collaborator handoff UI 延后。
