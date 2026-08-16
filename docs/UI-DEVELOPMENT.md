@@ -33,7 +33,7 @@ DSH 的插件 UI 是**同一个 npm 包里的 Client 半**（浏览器代码）�
 
 | 位置 | Slot | kind | 风险 | 适用 |
 | --- | --- | --- | --- | --- |
-| **会话视图 tab** | `conversation.view` | list | none | **推荐**：worktree 列表/操作面板，随会话显示 |
+| **会话视图 tab** | `conversation.view` | list | none | seam 已验证；当前产品暂不注册 Worktree tab，先聚焦 pre-session 与验收主流程 |
 | 新会话 composer 工具栏 | `conversation.input.left` | list | low | blank Local Session 的 Worktree switch；创建期间必须 block source composer |
 | 会话头按钮 | `conversation.session.header.actions` | list | none | 打开面板的快捷入口 |
 | 全局浮层 | `shell.overlay` | list | none | 弹窗/抽屉 |
@@ -44,7 +44,7 @@ DSH 的插件 UI 是**同一个 npm 包里的 Client 半**（浏览器代码）�
 - standardProps：`sessionId`、`useSession`（ConversationSnapshot）、`useSessions`、`useWorkspaces`、`useProjection`、`useInput`、`inputActions`
 - ownerProps：`inspect` / `onInspectDone`
 
-**worktree 面板建议**：注册 `conversation.view` 的 `worktree` tab，数据全部走 `host.call`（worktree 是仓库/文件系统数据，在 Host 侧），不依赖会话快照。
+**当前产品决策**：`WorktreeConsoleView` 与 Host 管理能力继续保留，但暂不注册 `conversation.view` 的 `worktree` tab。恢复该入口时，数据仍必须全部走 Host Remote，不依赖会话快照。
 
 ## 2. 开发期：动态插件快速迭代（换 harness 后第一步）
 
@@ -229,7 +229,7 @@ Client 组件的 props 类型：`ConvViewProps` 来自 `@deepseek-ai/dsh-client-
    - `exports["./client"]` 存在且 default 路径存在
    - `files` 含 `lib/client.js`
 2. 按 `docs/RELEASE.md` 全流程：build（现在含 client bundle）→ check:publish → test → bump → tag → publish
-3. **发布后实测**：scratch profile 安装 → boot → 浏览器开 GUI 确认 Worktree tab 出现、数据能加载
+3. **发布后实测**：scratch profile 安装 → boot → 浏览器开 GUI 确认 Worktree tab 不出现，同时 pre-session 开关、Header 状态胶囊与验收 dock 正常
 
 ## 5. 已知坑清单
 

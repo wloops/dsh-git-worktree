@@ -35,17 +35,17 @@
 当前 Harness 已确认可用：
 
 - `conversation.input.left`：blank Local Session 的 pre-session Worktree switch；
-- `conversation.session.header.actions`：Session 级状态胶囊/入口；
-- `conversation.view`：Session 级 Worktree Console tab；
+- `conversation.session.header.actions`：Session 级只读状态胶囊；
+- `conversation.view`：Harness seam 仍可用，但当前不注册 Worktree Console tab，先聚焦主流程；
 - `shell.overlay`：根级抽屉或弹层；
 - `tool.call.toolview`：现有 Create/Ready 对话卡片。
 
 推荐的 Harness-native 组合：
 
 - blank Local composer 的 input-left switch 点击后只打开确认弹窗；用户确认后才 block source、准备并打开 target，再把后续发送交还标准 composer；
-- Header action 显示 `Local / Working / Ready / Recovery`；
-- 点击后切换到 `conversation.view` 的 `worktree` tab；
-- 只有确实需要跨列抽屉时才占用 `shell.overlay`；
+- Header action 只读显示 `Local / Working / Ready / Recovery`，不伪装成可点击导航；
+- Worktree Console 组件和 Host 管理能力继续保留，但暂不挂载 `conversation.view` 页签；
+- 只有主流程稳定后确实需要项目级管理入口时，才重新启用 view tab 或占用 `shell.overlay`；
 - ToolView 继续承担这次调用的上下文记录，不承担全局发现入口。
 
 ### 2.3 Workspace/Session
@@ -176,7 +176,7 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 ### Session Target UI 独占
 
 - 新增 `src/client/target-console/**`
-- Header action、Worktree tab/Drawer、Create/Open
+- Header 状态胶囊、保留但暂不挂载的 Worktree Console、Create/Open
 - target UI component tests
 - `src/client/index.tsx` 中 Slot wiring 区域
 

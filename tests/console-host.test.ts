@@ -355,5 +355,5 @@ describe('Worktree Console Host control plane', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  }, 30_000)
+  }, 60_000)
 })

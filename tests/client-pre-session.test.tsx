@@ -357,7 +357,7 @@ describe('Pre-session Worktree switch', () => {
 
     const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     expect(toggle.getAttribute('aria-checked')).toBe('false')
-    expect((toggle as HTMLButtonElement).disabled).toBe(false)
+    await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false))
 
     view.rerender(<PreSessionWorktreeToggle
       sessionId="source-session"

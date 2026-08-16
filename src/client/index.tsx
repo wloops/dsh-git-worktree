@@ -20,7 +20,7 @@ interface ClientContextLike {
   effect(setup: () => void | (() => void), label?: string): void
   slots: {
     inject(
-      name: 'tool.call.toolview' | 'conversation.session.header.actions' | 'conversation.view' | 'conversation.input.dock' | 'conversation.input.left',
+      name: 'tool.call.toolview' | 'conversation.session.header.actions' | 'conversation.input.dock' | 'conversation.input.left',
       callback: () => unknown,
     ): void
     register(

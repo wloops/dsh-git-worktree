@@ -22,8 +22,8 @@
    - 状态必须来自 `adapter.current({ sessionId })`，不按 cwd 字符串自行猜测。
 
 2. `conversation.view`
-   - 注册 `id: worktree`，建议 `order: 20`；
-   - tab label 为 `Worktree`；
+   - Harness seam 已验证，但当前产品暂不注册 `id: worktree` 页签；
+   - `WorktreeConsoleView` 保留为未挂载的管理/恢复组件，主流程稳定后再评估入口；
    - 展示当前项目 target 和 project-scoped Worktree list；
    - Header action 点击后应切换到该 view。若 Harness 当前 header owner props 无直接切 tab API，先把 action做成可访问状态入口并在组件内使用正式 conversation action；不得 DOM 查询/模拟点击。
 
@@ -153,8 +153,8 @@ sessions.open(targetSessionId)
 
 失败测试：
 
-- 注册 `conversation.view` 精确 id/order；
-- loading/empty/error/list 四种状态；
+- 断言当前不注册 `conversation.view`，同时保留 Header 状态胶囊和验收 dock；
+- `WorktreeConsoleView` 独立组件继续覆盖 loading/empty/error/list 四种状态；
 - 不显示 managedRoot（summary 无该字段）；
 - Ready/Recovery 行可识别。
 
@@ -181,7 +181,7 @@ sessions.open(targetSessionId)
 在 Harness 当前 Slot 类型面上验证：
 
 - Header action props；
-- conversation view切换方式；
+- 未来重新启用 conversation view 时的公开切换方式；
 - HMR/disposal；
 - Client bundle 不内联第二份 React；
 - existing ToolViews 仍注册。

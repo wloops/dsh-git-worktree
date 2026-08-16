@@ -84,12 +84,16 @@ describe('built Client ModuleLoader artifact', () => {
     const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
     await fiber
     expect(ctx.worktreeConsole).toBeDefined()
-    expect(register.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([
+    const descriptors = register.mock.calls.map(call => call[0])
+    expect(descriptors).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_create' }),
       expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_ready_for_review' }),
       expect.objectContaining({ name: 'conversation.session.header.actions', id: 'worktree-target' }),
-      expect.objectContaining({ name: 'conversation.view', id: 'worktree' }),
+      expect.objectContaining({ name: 'conversation.input.dock', id: 'worktree-review-status' }),
       expect.objectContaining({ name: 'conversation.input.left', id: 'worktree-pre-session' }),
+    ]))
+    expect(descriptors).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'conversation.view', id: 'worktree' }),
     ]))
     await expect(ctx.worktreeConsole.current({ sessionId: 'agent-1' })).resolves.toEqual(expected)
     expect(call).toHaveBeenCalledWith('/api', 'gitWorktree/current', { args: { agentId: 'agent-1' } }, expect.any(AbortSignal))

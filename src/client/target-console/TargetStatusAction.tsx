@@ -58,7 +58,7 @@ export function TargetStatusAction({ sessionId, adapter }: TargetStatusActionPro
       role="status"
       aria-live="polite"
       aria-label={accessibleLabel}
-      title="Session Target 状态；高级管理请打开 Worktree 标签页。"
+      title="Session Target 状态"
     >
       <span className="dsh-wtc-target-dot" aria-hidden />
       {label}

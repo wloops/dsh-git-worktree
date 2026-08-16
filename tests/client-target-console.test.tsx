@@ -3,11 +3,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentType } from 'react'
-import type {
-  WorktreeConsoleListResponse,
-  WorktreeConsoleOutcome,
-  WorktreeConsoleTargetDetails,
-} from '../src/console-contract.js'
+import type { WorktreeConsoleTargetDetails } from '../src/console-contract.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
 import { apply as applyClient, WORKTREE_CONSOLE_ADAPTER_SERVICE } from '../src/client/index.js'
 import { apply as applyRemoteClient } from '../src/client/console-remote/index.js'
@@ -154,6 +150,9 @@ describe('Harness-native Session Target slots', () => {
     render(<Header sessionId="session-from-slot-props" />)
     expect(screen.getByText('加载中…')).toBeTruthy()
     await waitFor(() => expect(screen.getByText('Local')).toBeTruthy())
+    const status = screen.getByRole('status', { name: 'Session Target：Local' })
+    expect(status.tagName).toBe('SPAN')
+    expect(status.getAttribute('title')).toBe('Session Target 状态')
     expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-from-slot-props' })
 
     slots.dispose()
@@ -281,46 +280,17 @@ describe('Harness-native Session Target slots', () => {
     expect((screen.getByRole('button', { name: '重新尝试撤回' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
-  test('registers conversation.view at order 20 and renders the project-scoped list without leaking paths', async () => {
+  test('暂不注册 conversation.view，同时保留 Header 状态胶囊和验收 dock', () => {
     const fixture = createWorktreeConsoleAdapterFixture()
-    let resolveList!: (value: WorktreeConsoleOutcome<WorktreeConsoleListResponse>) => void
-    fixture.adapter.list = vi.fn(async () => new Promise(resolve => { resolveList = resolve }))
-    const recovery = {
-      ...fixture.target,
-      checkoutId: 'checkout-recovery',
-      targetSessionId: 'target-recovery',
-      ownerSessionId: 'target-recovery',
-      state: 'recovery_required' as const,
-      phase: 'recovery_required' as const,
-      managedRoot: '/must-not-leak/from-list',
-      capabilities: { ...fixture.target.capabilities, create: false, finalize: false },
-    }
     const slots = new SlotsDouble()
+
     registerTargetConsole({ slots }, fixture.adapter, clientServices())
 
-    const entry = slots.entries.find(candidate => candidate.descriptor.name === 'conversation.view')
-    expect(entry?.descriptor).toMatchObject({
-      name: 'conversation.view',
-      id: 'worktree',
-      order: 20,
-      label: 'Worktree',
-    })
-
-    const View = entry!.component
-    render(<View sessionId="source-session" />)
-    expect(screen.getByText('正在加载 Worktree 控制台…')).toBeTruthy()
-    resolveList({
-      ok: true,
-      value: {
-        project: fixture.target.project,
-        worktrees: [fixture.target, recovery].map(({ managedRoot: _root, sourceOid: _source, currentBranch: _branch, ...summary }) => summary),
-      },
-    })
-
-    await waitFor(() => expect(screen.getAllByText('Fixture Project')).toHaveLength(2))
-    expect(screen.getAllByText('待验收').length).toBeGreaterThan(0)
-    expect(screen.getByText('需要恢复')).toBeTruthy()
-    expect(screen.queryByText('/must-not-leak/from-list')).toBeNull()
+    expect(slots.entries.some(candidate => candidate.descriptor.name === 'conversation.view')).toBe(false)
+    expect(slots.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ descriptor: expect.objectContaining({ name: 'conversation.session.header.actions', id: 'worktree-target' }) }),
+      expect.objectContaining({ descriptor: expect.objectContaining({ name: 'conversation.input.dock', id: 'worktree-review-status' }) }),
+    ]))
   })
 })
 
@@ -630,12 +600,16 @@ describe('Client entry integration', () => {
     expect(provided.get('worktreeConsole')).toBeDefined()
     expect(descriptors).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'conversation.session.header.actions', id: 'worktree-target' }),
+      expect.objectContaining({ name: 'conversation.input.dock', id: 'worktree-review-status' }),
+      expect.objectContaining({ name: 'conversation.input.left', id: 'worktree-pre-session' }),
+    ]))
+    expect(descriptors).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'conversation.view', id: 'worktree' }),
     ]))
     for (const dispose of disposers.reverse()) dispose()
   })
 
-  test('keeps both ToolViews while registering the Target slots when the adapter service is present', () => {
+  test('keeps the main-flow ToolViews and Target status slots while hiding the Worktree view tab', () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const services = clientServices()
     const descriptors: Record<string, unknown>[] = []
@@ -673,8 +647,11 @@ describe('Client entry integration', () => {
       expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_create' }),
       expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_ready_for_review' }),
       expect.objectContaining({ name: 'conversation.session.header.actions', id: 'worktree-target' }),
-      expect.objectContaining({ name: 'conversation.view', id: 'worktree', order: 20 }),
       expect.objectContaining({ name: 'conversation.input.dock', id: 'worktree-review-status', order: 10 }),
+      expect.objectContaining({ name: 'conversation.input.left', id: 'worktree-pre-session', order: 40 }),
+    ]))
+    expect(descriptors).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'conversation.view', id: 'worktree' }),
     ]))
     for (const dispose of disposers.reverse()) dispose()
     expect(descriptors).toHaveLength(0)
