@@ -21,7 +21,7 @@ function git(cwd: string, args: string[]): string {
 
 describe('local DSH development workflow', () => {
   test('Given no options When parsing the run command Then safe reusable defaults are selected', () => {
-    const root = join('G:', 'plugin')
+    const root = join(tmpdir(), 'dsh-plugin-root')
     const defaults = createDefaultOptions(root, join(tmpdir(), 'dsh-git-worktree-dev'))
 
     expect(parseDevDshArgs(['run'], defaults)).toEqual({
@@ -34,7 +34,7 @@ describe('local DSH development workflow', () => {
   })
 
   test('Given explicit development options When parsing Then profile, repository and port are preserved', () => {
-    const root = join('G:', 'plugin')
+    const root = join(tmpdir(), 'dsh-plugin-root')
     const defaults = createDefaultOptions(root, join(tmpdir(), 'dsh-git-worktree-dev'))
 
     expect(parseDevDshArgs([
@@ -50,7 +50,7 @@ describe('local DSH development workflow', () => {
       port: 4090,
       repo: join(root, 'sample-repo'),
       repoExplicit: true,
-      harnessRoot: join('G:', 'DeepSeek', 'deepseek-harness'),
+      harnessRoot: join(tmpdir(), 'DeepSeek', 'deepseek-harness'),
     })
   })
 
@@ -59,10 +59,12 @@ describe('local DSH development workflow', () => {
     mkdirSync(join(harnessRoot, 'apps', 'cli', 'src'), { recursive: true })
     writeFileSync(join(harnessRoot, 'package.json'), '{"private":true}')
     writeFileSync(join(harnessRoot, 'apps', 'cli', 'src', 'bin.ts'), '')
+    const projectRoot = join(tmpdir(), 'dsh-plugin-root')
+    const workspaceRoot = join(tmpdir(), 'dsh-fixture')
     const launch = createDshLaunch({
-      projectRoot: join('G:', 'plugin'),
+      projectRoot,
       harnessRoot,
-      workspaceRoot: join('C:', 'fixture'),
+      workspaceRoot,
       profile: 'web',
       port: 4091,
     })
@@ -71,12 +73,12 @@ describe('local DSH development workflow', () => {
       expect.stringContaining('pnpm'),
       '--dir', harnessRoot,
       'exec', 'node', '--import', 'tsx/esm',
-      join('G:', 'plugin', 'scripts', 'dsh-source-runner.mjs'),
-      join('C:', 'fixture'),
+      join(projectRoot, 'scripts', 'dsh-source-runner.mjs'),
+      workspaceRoot,
       join(harnessRoot, 'apps', 'cli', 'src', 'bin.ts'),
       '--profile', 'web', '--port', '4091',
     ])
-    expect(launch.cwd).toBe(join('G:', 'plugin'))
+    expect(launch.cwd).toBe(projectRoot)
   })
 
   test('Given a platform command shim When executing it Then arguments are forwarded without a shell error', () => {
