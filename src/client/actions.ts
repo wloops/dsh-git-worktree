@@ -10,6 +10,17 @@ export interface SnapshotStore<T> {
   subscribe(listener: () => void): () => void
 }
 
+export interface ClientSessionBinding {
+  /** Agent-scoped Client Context; present on real Harness bindings. */
+  ctx?: unknown
+  session: {
+    command(line: string): Promise<
+      | { ok: true; value: { matched: boolean } }
+      | { ok: false; error: { code: string; message: string } }
+    >
+  }
+}
+
 export interface ClientSessions {
   list: SnapshotStore<{
     current?: string
@@ -19,14 +30,7 @@ export interface ClientSessions {
   /** Harness resolves only after the new Session is projected into list/binding. */
   create(input: { workspaceId: string; sessionId: string }): Promise<string>
   open(sessionId: string): void
-  binding(sessionId: string): {
-    session: {
-      command(line: string): Promise<
-        | { ok: true; value: { matched: boolean } }
-        | { ok: false; error: { code: string; message: string } }
-      >
-    }
-  } | undefined
+  binding(sessionId: string): ClientSessionBinding | undefined
 }
 
 export interface ClientWorkspaces {
@@ -37,6 +41,30 @@ export interface ClientWorkspaces {
 export interface WorktreeClientServices {
   sessions: ClientSessions
   workspaces: ClientWorkspaces
+}
+
+export interface PreSessionInput {
+  setDraft(text: string): void
+  addImages(ids: readonly string[]): boolean
+  removeImage(id: string): void
+}
+
+/** Additional public Harness faces used only by the blank-session preparation flow. */
+export interface PreSessionWorktreeServices extends WorktreeClientServices {
+  sessions: ClientSessions
+  workspaces: ClientWorkspaces & {
+    archiveSession(sessionId: string): Promise<void>
+    delete(workspaceId: string): Promise<void>
+  }
+  conversation: {
+    blocks: {
+      set(sessionId: string, block: { reason: string } | undefined): void
+      storeFor(sessionId: string): { getSnapshot(): { reason: string } | undefined }
+    }
+    input: {
+      for(ctx: unknown): PreSessionInput
+    }
+  }
 }
 
 /** Idempotently register the managed root, create the preallocated Session, and navigate. */

@@ -34,6 +34,7 @@
 
 当前 Harness 已确认可用：
 
+- `conversation.input.left`：blank Local Session 的 pre-session Worktree switch；
 - `conversation.session.header.actions`：Session 级状态胶囊/入口；
 - `conversation.view`：Session 级 Worktree Console tab；
 - `shell.overlay`：根级抽屉或弹层；
@@ -41,6 +42,7 @@
 
 推荐的 Harness-native 组合：
 
+- blank Local composer 的 input-left switch 在用户点击后立即 block source，准备并打开 target，再把后续发送交还标准 composer；
 - Header action 显示 `Local / Working / Ready / Recovery`；
 - 点击后切换到 `conversation.view` 的 `worktree` tab；
 - 只有确实需要跨列抽屉时才占用 `shell.overlay`；
@@ -51,12 +53,14 @@
 创建后的 authoritative target 仍使用现有公共缝：
 
 ```text
-workspaces.create({ path: managedRoot })
+adapter.create({ sourceSessionId })
+→ workspaces.create({ path: managedRoot })
 → sessions.create({ workspaceId, sessionId: targetSessionId })
+→ conversation.input.for(targetBinding.ctx).setDraft/addImages
 → sessions.open(targetSessionId)
 ```
 
-Host 分配 `targetSessionId`，Client 不得自行选择 owner identity。target Session 持久化 cwd 必须 canonicalize 为 `managedRoot`，否则 fail closed。
+pre-session flow 不拦截私有 submit sink：点击开关后同步通过 `conversation.blocks` block source composer，target input 写入成功后才打开；随后第一条消息仍由 Harness 标准 composer 发送。Host 分配 `targetSessionId`，Client 不得自行选择 owner identity。target Session 持久化 cwd 必须 canonicalize 为 `managedRoot`，否则 fail closed。失败时 source draft 保持原样；若 checkout 已创建，Client 先按 target/source caller 边界请求 Discard，只有确认 Discard 成功后才归档 target Session、删除临时 Workspace。
 
 ## 3. 共享状态模型
 
@@ -175,7 +179,7 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 三个 Worktree 都从同一 foundation commit 开始。建议合并顺序：Backend → Review → Session Target UI，最后单独做一次小型 integration pass，统一：
 
 - Client `inject` 和 `ctx.remote.$mount()` 生命周期；
-- `src/client/index.tsx` 的三个 registrar；
+- `src/client/index.tsx` 的 ToolView、Target Console 与 Pre-session registrar；
 - package exports/files；
 - Client bundle smoke 与真实浏览器 E2E。
 

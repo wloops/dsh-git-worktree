@@ -38,7 +38,7 @@ describe('built Client ModuleLoader artifact', () => {
     const nodeRequire = createRequire(import.meta.url)
     const clientExports = handoff.factory((specifier) => nodeRequire(specifier))
     expect(clientExports.apply).toBeTypeOf('function')
-    expect(clientExports.inject).toEqual(['slots', 'workspaces', 'sessions', 'remote'])
+    expect(clientExports.inject).toEqual(['slots', 'workspaces', 'sessions', 'conversation', 'remote'])
   })
 
   test('mounts the strict contribution in a real Harness Client Remote service and withdraws it with the fiber', async () => {
@@ -66,6 +66,10 @@ describe('built Client ModuleLoader artifact', () => {
     } as never)
     ctx.provide('workspaces', {} as never)
     ctx.provide('sessions', {} as never)
+    ctx.provide('conversation', {
+      blocks: { set() {}, storeFor: () => ({ getSnapshot: () => undefined }) },
+      input: { for: () => ({ setDraft() {}, addImages: () => true, removeImage() {} }) },
+    } as never)
 
     const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
     await fiber
@@ -75,6 +79,7 @@ describe('built Client ModuleLoader artifact', () => {
       expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_ready_for_review' }),
       expect.objectContaining({ name: 'conversation.session.header.actions', id: 'worktree-target' }),
       expect.objectContaining({ name: 'conversation.view', id: 'worktree' }),
+      expect.objectContaining({ name: 'conversation.input.left', id: 'worktree-pre-session' }),
     ]))
     await expect(ctx.worktreeConsole.current({ sessionId: 'agent-1' })).resolves.toEqual(expected)
     expect(call).toHaveBeenCalledWith('/api', 'gitWorktree/current', { args: { agentId: 'agent-1' } }, expect.any(AbortSignal))

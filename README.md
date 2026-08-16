@@ -6,12 +6,13 @@ An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It 
 
 ## How it works
 
-1. In a Local Session, the user creates a target from the **Worktree** tab, or the model calls `worktree_create`.
-2. The plugin creates a unique detached Worktree in a sibling container (with a plugin-state fallback) and reserves a distinct target Session ID. The source Session stays Local.
-3. The Create ToolView's **Open isolated session** action registers the Worktree path as a Harness Workspace, creates the exact reserved Session, and opens it. Its persisted Session header cwd is the authoritative Session Target.
-4. The agent changes and validates code only in that isolated cwd, then calls `worktree_ready_for_review` as its final model action.
-5. The Worktree Console and replay-stable Review ToolView show the review-bound diff, validation evidence, changed files, and suggested commit message. The user explicitly chooses **Finalize cleanup** or a retention option.
-6. `/worktree finalize ...` creates one task-only commit on Local while preserving unrelated Local staged, unstaged, and untracked work.
+1. On a blank/new Local Session, the user can enable **Worktree** in the composer before sending the first prompt. The plugin freezes that Local composer, creates the isolated target, moves the unsent draft into it, and opens the target before any prompt is admitted.
+2. Existing Local Sessions can also create a target from the **Worktree** tab, and the model may call `worktree_create`.
+3. The plugin creates a unique detached Worktree in a sibling container (with a plugin-state fallback) and reserves a distinct target Session ID. The source Session stays Local.
+4. Harness registers the Worktree path as a Workspace, creates the exact Host-reserved Session, and opens it. Its persisted Session header cwd is the authoritative Session Target.
+5. The agent changes and validates code only in that isolated cwd, then calls `worktree_ready_for_review` as its final model action.
+6. The Worktree Console and replay-stable Review ToolView show the review-bound diff, validation evidence, changed files, and suggested commit message. The user explicitly chooses **Finalize cleanup** or a retention option.
+7. `/worktree finalize ...` creates one task-only commit on Local while preserving unrelated Local staged, unstaged, and untracked work.
 
 ## Surface
 
@@ -27,7 +28,7 @@ Apply, Finish, Discard, and Remove are intentionally **not model tools**. A mode
 
 ### Harness-native Worktree Console
 
-The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. Every Session gets a target status capsule and a project-scoped **Worktree** view for Create/Open/Inspect/Review/Discard/Cleanup. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`. If the Remote is unavailable, historical ToolViews remain readable while all mutations stay disabled.
+The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Enabling it immediately prepares the Host-allocated target and transfers the unsent text/image draft before navigation; the normal Harness Send path remains the only prompt path. Every persisted Session also gets a target status capsule and a project-scoped **Worktree** view for Create/Open/Inspect/Review/Discard/Cleanup. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`. If the Remote is unavailable, the switch remains fail-closed and historical ToolViews remain readable while mutations stay disabled.
 
 ### Human command
 
@@ -45,6 +46,7 @@ The client ToolViews invoke `finalize` as a user command carrying the card's exa
 ## Safety properties
 
 - Source and target Sessions have different IDs; the source Session is never privately relabelled as isolated.
+- Pre-session creation blocks the source composer synchronously and opens the target only after its managed Workspace, exact Session ID, and draft transfer succeed; failures leave the source draft untouched.
 - Target access fails closed unless its Harness Workspace path canonicalizes to the recorded managed root.
 - Worktree paths are unique and normally outside Local, so Local `git status` and task indexes cannot accidentally absorb the Worktree as a gitlink.
 - Legacy records that already used the old irreversible Apply path cannot automatically Finish or Discard; the user must first inspect Local.

@@ -2,11 +2,12 @@
 
 import type { ComponentType } from 'react'
 import type { WorktreeConsoleAdapter } from '../console-contract.js'
-import type { WorktreeClientServices } from './actions.js'
+import type { PreSessionWorktreeServices } from './actions.js'
 import type { ToolCallViewPropsLike } from './model.js'
 import { WorktreeCreateRow } from './WorktreeCreateRow.js'
 import { WorktreeReviewRow } from './WorktreeReviewRow.js'
 import { WORKTREE_STYLES } from './styles.js'
+import { registerPreSessionWorktree, type PreSessionSlotContextLike } from './pre-session/index.js'
 import { registerTargetConsole, type TargetConsoleContextLike } from './target-console/index.js'
 import { TARGET_CONSOLE_STYLES } from './target-console/target-console.styles.js'
 
@@ -19,23 +20,24 @@ interface ClientContextLike {
   effect(setup: () => void | (() => void), label?: string): void
   slots: {
     inject(
-      name: 'tool.call.toolview' | 'conversation.session.header.actions' | 'conversation.view',
+      name: 'tool.call.toolview' | 'conversation.session.header.actions' | 'conversation.view' | 'conversation.input.left',
       callback: () => unknown,
     ): void
     register(
       descriptor: Record<string, unknown>,
-      component: ComponentType<ToolCallViewPropsLike> | ComponentType<{ sessionId: string }>,
+      component: ComponentType<any>,
     ): unknown
   }
 }
 
 /** Required client services. */
-export const inject = ['slots', 'workspaces', 'sessions']
+export const inject = ['slots', 'workspaces', 'sessions', 'conversation']
 
-function servicesOf(ctx: ClientContextLike): WorktreeClientServices {
+function servicesOf(ctx: ClientContextLike): PreSessionWorktreeServices {
   return {
-    workspaces: ctx.get('workspaces') as WorktreeClientServices['workspaces'],
-    sessions: ctx.get('sessions') as WorktreeClientServices['sessions'],
+    workspaces: ctx.get('workspaces') as PreSessionWorktreeServices['workspaces'],
+    sessions: ctx.get('sessions') as PreSessionWorktreeServices['sessions'],
+    conversation: ctx.get('conversation') as PreSessionWorktreeServices['conversation'],
   }
 }
 
@@ -70,6 +72,11 @@ export function apply(ctx: ClientContextLike, adapterOverride?: WorktreeConsoleA
   if (adapter !== undefined) {
     registerTargetConsole(
       { slots: ctx.slots as TargetConsoleContextLike['slots'] },
+      adapter,
+      services,
+    )
+    registerPreSessionWorktree(
+      { slots: ctx.slots as PreSessionSlotContextLike['slots'] },
       adapter,
       services,
     )

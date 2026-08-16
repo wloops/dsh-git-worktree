@@ -2,6 +2,8 @@
 
 > [!WARNING]
 > 本文的 `harness.handle()/host.call()` 通信示例属于早期动态插件原型记录，**不是当前 Worktree Console 的实施契约**。当前 Harness 的正式跨端缝是 Typert Remote：Host `TypertRemoteService + @Remote`、构建生成 `./remote` contribution、Client `ctx.remote.$mount()`。新的状态、DTO、安全边界、Slot 选择与并行文件所有权以 [`WORKTREE-CONSOLE-ARCHITECTURE.md`](./WORKTREE-CONSOLE-ARCHITECTURE.md) 为准。本文仅保留历史调研和 Client bundle/Slot 调试参考。
+>
+> 当前 blank/new Session 的 Worktree 入口使用 Harness 公开 `conversation.input.left` Slot。用户点击开关后，Client 通过 `ctx.conversation.blocks` 暂停 source composer，经 strict Typert 创建 Host-owned target，再使用公开 `ctx.workspaces`、`ctx.sessions` 与 `ctx.conversation.input` 把草稿迁移到 target；没有复制 InputBar，也没有拦截私有 submit sink。
 
 给 dsh-git-worktree 加可视化 worktree 管理面板（列表 + 操作按钮）的历史路线：先在运行的 harness 里用动态插件快速迭代 UI，验证通过后再把 Client 代码并入 npm 包发布。本文原始 Slot/服务/机制记录来自 DSH `0.1.0-rc.5` 线；使用前必须按当前 Harness 源码复核。
 
@@ -32,6 +34,7 @@ DSH 的插件 UI 是**同一个 npm 包里的 Client 半**（浏览器代码）�
 | 位置 | Slot | kind | 风险 | 适用 |
 | --- | --- | --- | --- | --- |
 | **会话视图 tab** | `conversation.view` | list | none | **推荐**：worktree 列表/操作面板，随会话显示 |
+| 新会话 composer 工具栏 | `conversation.input.left` | list | low | blank Local Session 的 Worktree switch；创建期间必须 block source composer |
 | 会话头按钮 | `conversation.session.header.actions` | list | none | 打开面板的快捷入口 |
 | 全局浮层 | `shell.overlay` | list | none | 弹窗/抽屉 |
 | 设置页 | `settings.section` | list | none | 全局配置（如默认保留期） |

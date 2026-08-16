@@ -112,6 +112,15 @@ const client = manifest.dsh?.client
 if (!client || client.platform !== 'web' || !Array.isArray(client.inject) || client.inject.length === 0) {
   fail('package.json must declare dsh.client { platform: "web", inject: [...] }')
 }
+const requiredClientPackages = [
+  '@deepseek-ai/dsh-client-runtime',
+  '@deepseek-ai/dsh-client-ui-conversation',
+  '@deepseek-ai/dsh-api-gateway',
+]
+const missingClientPackages = requiredClientPackages.filter(name => !client.inject.includes(name))
+if (missingClientPackages.length > 0) {
+  fail(`package.json dsh.client.inject is missing: ${missingClientPackages.join(', ')}`)
+}
 const clientRel = exportsMap['./client']?.default
 if (typeof clientRel !== 'string') fail('exports["./client"].default is required for dsh.client')
 const clientSource = readFileSync(resolve(root, clientRel), 'utf8')
@@ -149,6 +158,7 @@ if (!clientExports || typeof clientExports.apply !== 'function' || !Array.isArra
   fail('client bundle factory did not return apply + inject')
 }
 if (!clientExports.inject.includes('remote')) fail('client bundle must inject the official Remote service before $mount')
+if (!clientExports.inject.includes('conversation')) fail('client bundle must inject the public conversation service for pre-session draft transfer')
 ok(`${clientRel} registers ${manifest.name} through the browser ModuleLoader contract`)
 
 // 6. Release CI and npm's prepublish lifecycle require committed source identity;
