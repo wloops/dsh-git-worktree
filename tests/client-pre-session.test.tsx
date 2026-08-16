@@ -9,6 +9,7 @@ import { PreSessionWorktreeToggle } from '../src/client/pre-session/PreSessionWo
 import { registerPreSessionWorktree } from '../src/client/pre-session/index.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
 
+
 function isolatedTarget(): WorktreeConsoleTargetDetails {
   const fixture = createWorktreeConsoleAdapterFixture().target
   return {
@@ -241,6 +242,38 @@ describe('Pre-session Worktree preparation', () => {
     expect(fixture.sourceActions.setDraft).not.toHaveBeenCalled()
   })
 
+  test('rolls back the target instead of clearing a Local draft changed after confirmation', async () => {
+    const fixture = successFixture()
+    let current = {
+      draft: 'confirmed draft', imageIds: ['image-1'], occurrences: [], phase: 'plain', draftRev: 7,
+    }
+    const createSession = fixture.services.sessions.create
+    fixture.services.sessions.create = vi.fn(async (request) => {
+      const result = await createSession(request)
+      current = { ...current, draft: 'newer Local edit', draftRev: 8 }
+      return result
+    })
+    fixture.adapter.discard = vi.fn(async () => ({
+      ok: true,
+      value: { target: { ...fixture.target, state: 'delivered', phase: 'discarded' } },
+    }))
+    const controller = createPreSessionWorktreeController(fixture.adapter, fixture.services)
+
+    await expect(controller.prepare({
+      sessionId: 'source-session',
+      input: { draft: 'confirmed draft', imageIds: ['image-1'], occurrences: [], phase: 'plain', draftRev: 7 },
+      currentInput: () => current,
+      inputActions: fixture.sourceActions,
+    })).rejects.toThrow(/发生了变化/)
+
+    expect(fixture.services.sessions.open).not.toHaveBeenCalled()
+    expect(fixture.targetInput.setDraft).not.toHaveBeenCalled()
+    expect(fixture.targetInput.addImages).not.toHaveBeenCalled()
+    expect(fixture.sourceActions.setDraft).not.toHaveBeenCalled()
+    expect(fixture.sourceActions.removeImage).not.toHaveBeenCalled()
+    expect(fixture.adapter.discard).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'target-session' }))
+  })
+
   test('coalesces repeated Worktree clicks for the same blank Session', async () => {
     const fixture = successFixture()
     let release!: () => void
@@ -337,7 +370,7 @@ describe('Pre-session Worktree switch', () => {
     expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
   })
 
-  test('locks repeated clicks while preparing and reports the isolated target as selected', async () => {
+  test('opens one confirmation dialog from the existing switch and creates only after confirmation', async () => {
     const fixture = successFixture()
     fixture.adapter.current = vi.fn(async () => ({
       ok: true,
@@ -348,7 +381,7 @@ describe('Pre-session Worktree switch', () => {
     render(<PreSessionWorktreeToggle
       sessionId="source-session"
       session={{ composerPhase: 'blank' }}
-      input={{ draft: 'draft', imageIds: [], occurrences: [], phase: 'plain' }}
+      input={{ draft: 'draft', imageIds: ['image-1'], occurrences: [], phase: 'plain', draftRev: 3 }}
       inputActions={inputActions}
       adapter={fixture.adapter}
       controller={{ prepare }}
@@ -356,14 +389,51 @@ describe('Pre-session Worktree switch', () => {
 
     const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     fireEvent.click(toggle)
-    fireEvent.click(toggle)
-    await waitFor(() => expect(screen.getByText('正在创建…')).toBeTruthy())
-    expect((toggle as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('dialog', { name: '在 Worktree 中开始？' })).toBeTruthy()
+    expect(screen.getByText('当前输入内容和 1 个附件将移动到新的 Worktree 会话。')).toBeTruthy()
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(prepare).not.toHaveBeenCalled()
+
+    const confirm = screen.getByRole('button', { name: '创建并切换' })
+    fireEvent.click(confirm)
+    fireEvent.click(confirm)
+    await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(true))
     expect(prepare).toHaveBeenCalledTimes(1)
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ draft: 'draft', imageIds: ['image-1'], draftRev: 3 }),
+    }))
 
     resolve(fixture.target)
     await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
+    expect(screen.queryByRole('dialog', { name: '在 Worktree 中开始？' })).toBeNull()
     expect(screen.getByText('已创建')).toBeTruthy()
+  })
+
+  test('cancels the confirmation without creating or mutating the Local draft', async () => {
+    const fixture = successFixture()
+    fixture.adapter.current = vi.fn(async () => ({
+      ok: true,
+      value: { target: { ...fixture.target, checkoutId: null, targetSessionId: null, ownerSessionId: 'source-session', state: 'local', phase: 'local', managedRoot: null, capabilities: { ...fixture.target.capabilities, create: true } } },
+    }))
+    const prepare = vi.fn()
+    render(<PreSessionWorktreeToggle
+      sessionId="source-session"
+      session={{ composerPhase: 'blank' }}
+      input={{ draft: 'keep this', imageIds: ['image-1'], occurrences: [], phase: 'plain', draftRev: 4 }}
+      inputActions={inputActions}
+      adapter={fixture.adapter}
+      controller={{ prepare }}
+    />)
+
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    expect(screen.queryByRole('dialog', { name: '在 Worktree 中开始？' })).toBeNull()
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(prepare).not.toHaveBeenCalled()
+    expect(inputActions.setDraft).not.toHaveBeenCalled()
+    expect(inputActions.removeImage).not.toHaveBeenCalled()
   })
 
   test('rechecks Host availability without creating when the initial current lookup fails', async () => {
@@ -421,8 +491,10 @@ describe('Pre-session Worktree switch', () => {
 
     const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: '创建并切换' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('session create failed'))
     expect((toggle as HTMLButtonElement).disabled).toBe(false)
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('dialog', { name: '在 Worktree 中开始？' })).toBeTruthy()
   })
 })

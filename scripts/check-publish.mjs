@@ -125,7 +125,11 @@ const clientRel = exportsMap['./client']?.default
 if (typeof clientRel !== 'string') fail('exports["./client"].default is required for dsh.client')
 const clientSource = readFileSync(resolve(root, clientRel), 'utf8')
 const browserRequires = [...clientSource.matchAll(/require\(["']([^"']+)["']\)/gu)].map(match => match[1])
-const allowedBrowserRequires = new Set(['react', 'react/jsx-runtime'])
+const allowedBrowserRequires = new Set([
+  'react',
+  'react/jsx-runtime',
+  '@deepseek-ai/dsh-client-ui-primitives',
+])
 const unsupportedBrowserRequires = browserRequires.filter(specifier => !allowedBrowserRequires.has(specifier))
 if (unsupportedBrowserRequires.length > 0) {
   fail(`${clientRel} requires modules absent from the browser ModuleLoader table: ${[...new Set(unsupportedBrowserRequires)].join(', ')}`)
@@ -148,9 +152,13 @@ try {
 if (!handoff || handoff.id !== manifest.name || typeof handoff.factory !== 'function') {
   fail(`client bundle must call window.__ModuleLoader__.load with id ${JSON.stringify(manifest.name)} and a factory`)
 }
+const browserRequire = (specifier) => {
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null }
+  return require(specifier)
+}
 let clientExports
 try {
-  clientExports = handoff.factory(require)
+  clientExports = handoff.factory(browserRequire)
 } catch (error) {
   fail(`client bundle factory failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
 }

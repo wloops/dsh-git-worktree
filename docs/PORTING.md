@@ -33,10 +33,10 @@ When that target Session invokes the plugin, its current Workspace may have a di
 
 Domi's non-polluting policy is restored:
 
-1. preferred: `<local-repo-parent>/<repo>-worktrees/<readable-unique-name>`;
-2. fallback after a clean creation failure: `<plugin-state>/<repository-key>/<readable-unique-name>`.
+1. preferred: `<local-repo-parent>/<repo>--worktrees/<repo>--<checkout-short>--worktree>`;
+2. fallback after an unsafe sibling or clean creation failure: `<plugin-state>/worktrees/<repository-key>/<repo>--<checkout-short>--worktree>`.
 
-Both locations are outside the Local checkout. Directory names include the reserved Session identity, iteration, and checkout identity, so parallel targets do not collide. The target path becomes its own registered Harness Workspace, so the new Session's `workspace-write` boundary is correct without nesting the Worktree in Local.
+Both locations are outside the Local checkout. The Host derives the repository label from the canonical Git root and the suffix from the trusted checkout identity. An existing short-ID path is never reused or deleted: the identity expands from 8 to 12 and then the full UUID form. Session and iteration remain registry/UI metadata rather than leaking into the Workspace basename. The target path becomes its own registered Harness Workspace, so the new Session's `workspace-write` boundary is correct without nesting the Worktree in Local.
 
 ### Human acceptance instead of direct Apply
 

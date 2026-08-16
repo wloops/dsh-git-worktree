@@ -71,6 +71,8 @@ export const WORKTREE_STYLES = String.raw`
 .dsh-wt-pre-session[data-state="preparing"] .dsh-wt-pre-session-state { color:#b46a13; }
 .dsh-wt-pre-session[data-state="error"] .dsh-wt-pre-session-state { color:#bd3b3b; }
 .dsh-wt-pre-session-error { position:absolute; left:0; bottom:calc(100% + 7px); z-index:20; width:max-content; max-width:min(360px, 75vw); padding:7px 9px; border:1px solid color-mix(in srgb, #bd3b3b 35%, transparent); border-radius:8px; background:color-mix(in srgb, Canvas 96%, #bd3b3b 4%); color:#bd3b3b; font-size:11px; font-weight:500; line-height:1.4; white-space:normal; box-shadow:0 8px 24px color-mix(in srgb, black 14%, transparent); }
+
+.dsh-wt-pre-session-note { margin:0; color:color-mix(in srgb, currentColor 62%, transparent); font-size:12px; line-height:1.5; }
 @media (max-width: 560px) { .dsh-wt-grid { grid-template-columns:1fr; gap:3px; } .dsh-wt-label { margin-top:4px; } .dsh-wt-pre-session-state { display:none; } }
 ${REVIEW_CONSOLE_STYLES}
 `

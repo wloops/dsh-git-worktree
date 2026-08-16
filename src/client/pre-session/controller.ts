@@ -10,6 +10,8 @@ export interface PreSessionDraftState {
   readonly imageIds: readonly string[]
   readonly occurrences: readonly unknown[]
   readonly phase: string
+  /** Monotonic Harness input revision captured when the confirmation opened. */
+  readonly draftRev?: number
 }
 
 export interface PreSessionDraftActions {
@@ -20,7 +22,10 @@ export interface PreSessionDraftActions {
 
 export interface PreparePreSessionWorktreeRequest {
   sessionId: string
+  /** Immutable confirmation-time snapshot moved into the target. */
   input: PreSessionDraftState
+  /** Live source state used for the final compare-and-clear boundary. */
+  currentInput?: () => PreSessionDraftState
   inputActions: PreSessionDraftActions
 }
 
@@ -33,6 +38,19 @@ export class PreSessionWorktreeError extends Error {
 
 function messageOf(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function sourceStillMatches(request: PreparePreSessionWorktreeRequest): boolean {
+  const current = request.currentInput?.() ?? request.input
+  return current.phase === 'plain'
+    && current.draft === request.input.draft
+    && sameStrings(current.imageIds, request.input.imageIds)
+    && current.occurrences.length === request.input.occurrences.length
+    && (request.input.draftRev === undefined || current.draftRev === request.input.draftRev)
 }
 
 /**
@@ -98,14 +116,17 @@ export class PreSessionWorktreeController {
         throw new PreSessionWorktreeError('目标 Session 已创建，但 Harness 尚未提供可迁移草稿的 Session binding。')
       }
       const targetInput = this.services.conversation.input.for(targetBinding.ctx)
+      if (!sourceStillMatches(request)) {
+        throw new PreSessionWorktreeError('确认后 Local 草稿或附件发生了变化，已取消迁移以避免覆盖新的输入。')
+      }
+      // From the final source CAS through target writes, navigation and source
+      // clear there is no await. This ordering matters for image IDs: a failed
+      // target archived after accepting them would release browser-owned bytes
+      // that the preserved source still references.
       targetInput.setDraft(request.input.draft)
       if (!targetInput.addImages(request.input.imageIds)) {
         throw new PreSessionWorktreeError('目标 Session 暂时拒绝接收草稿附件。')
       }
-
-      // Navigation happens only after every target-side write has succeeded.
-      // The source remains untouched until this point, so every earlier failure
-      // leaves the user's draft exactly where it started.
       this.services.sessions.open(created.targetSessionId)
       request.inputActions.setDraft('')
       for (const imageId of request.input.imageIds) request.inputActions.removeImage(imageId)

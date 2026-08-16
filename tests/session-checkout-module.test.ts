@@ -85,6 +85,7 @@ function createContext(options: {
   removeWorktreeFailureLeavesResidue?: boolean
   removeDirectoryTreeFailures?: number
   outerRepository?: boolean
+  checkoutIds?: string[]
 } = {}): TestContext {
   const root = mkdtempSync(join(tmpdir(), 'domi-checkout-测试 空格-'))
   temporaryRoots.push(root)
@@ -140,6 +141,11 @@ function createContext(options: {
       getUnboundTargetPolicy: () => 'unselected',
     },
   })
+  if (options.checkoutIds !== undefined) {
+    const generatedIds = [...options.checkoutIds]
+    const defaultCreateCheckoutId = dependencies.createCheckoutId
+    dependencies.createCheckoutId = () => generatedIds.shift() ?? defaultCreateCheckoutId()
+  }
   const inspectGit = dependencies.git.inspect
   let nextInspectPause: {
     expectedPath?: string
@@ -371,6 +377,8 @@ describe('SessionCheckoutModule', () => {
 
     expect(first.managedRoot).not.toBe(second.managedRoot)
     expect(first.target.checkout.id).not.toBe(second.target.checkout.id)
+    expect(basename(dirname(first.managedRoot))).toBe('本地-project--worktrees')
+    expect(basename(first.managedRoot)).toMatch(/^本地-project--[a-f0-9]{8}--worktree$/)
     expect(await context.module.inspect('session-1')).toMatchObject({ checkout: { kind: 'local' } })
     expect(git(context.repositoryRoot, 'status', '--porcelain=v1', '--untracked-files=all')).toBe('')
 
@@ -389,8 +397,49 @@ describe('SessionCheckoutModule', () => {
 
     const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
 
-    expect(launch.managedRoot.startsWith(context.configDir)).toBe(true)
+    expect(launch.managedRoot.startsWith(join(context.configDir, 'worktrees'))).toBe(true)
     expect(git(context.root, 'status', '--porcelain=v1', '--untracked-files=all')).toBe(statusBefore)
+  })
+
+  test('Given an eight-character checkout path already exists in the managed container When creating another target Then the Host extends the identity', async () => {
+    const context = createContext({
+      checkoutIds: [
+        'aaaaaaaa-0000-4000-8000-000000000000', 'operation-1',
+        'aaaaaaaa-1111-4111-8111-111111111111', 'operation-2',
+      ],
+    })
+    const first = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    const second = await context.module.createIsolatedTarget('session-1', 'target-session-2')
+
+    expect(basename(first.managedRoot)).toBe('本地-project--aaaaaaaa--worktree')
+    expect(basename(second.managedRoot)).toBe('本地-project--aaaaaaaa1111--worktree')
+    expect(existsSync(first.managedRoot)).toBe(true)
+  })
+
+  test('Given the sibling container has unknown content When creating a target Then the Host falls back without modifying it', async () => {
+    const context = createContext()
+    const siblingContainer = join(dirname(context.repositoryRoot), '本地-project--worktrees')
+    mkdirSync(siblingContainer)
+    writeFileSync(join(siblingContainer, 'unknown.txt'), 'foreign owner\n')
+
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+
+    expect(launch.managedRoot.startsWith(join(context.configDir, 'worktrees'))).toBe(true)
+    expect(readFileSync(join(siblingContainer, 'unknown.txt'), 'utf8')).toBe('foreign owner\n')
+  })
+
+  test('Given the sibling container is a symlink When creating a target Then the Host uses plugin fallback without touching the link target', async () => {
+    const context = createContext()
+    const siblingContainer = join(dirname(context.repositoryRoot), '本地-project--worktrees')
+    const foreign = join(context.root, 'foreign-worktrees')
+    mkdirSync(foreign)
+    writeFileSync(join(foreign, 'keep.txt'), 'foreign\n')
+    symlinkSync(foreign, siblingContainer, process.platform === 'win32' ? 'junction' : 'dir')
+
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+
+    expect(launch.managedRoot.startsWith(join(context.configDir, 'worktrees'))).toBe(true)
+    expect(readFileSync(join(foreign, 'keep.txt'), 'utf8')).toBe('foreign\n')
   })
 
   test('Given a reserved target session opens on another cwd When inspected Then identity validation fails closed', async () => {

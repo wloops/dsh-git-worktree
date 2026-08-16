@@ -13,6 +13,11 @@ interface ClientHandoff {
   factory(require: (specifier: string) => unknown): Record<string, unknown>
 }
 
+function platformRequire(nodeRequire: NodeRequire, specifier: string): unknown {
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null }
+  return nodeRequire(specifier)
+}
+
 function executeBundle(code: string): ClientHandoff {
   let handoff: ClientHandoff | undefined
   const window = {
@@ -29,14 +34,18 @@ describe('built Client ModuleLoader artifact', () => {
   test('inlines strict Remote codecs instead of requiring packages absent from the browser module table', () => {
     const source = readFileSync(resolve('lib/client.js'), 'utf8')
     const required = [...source.matchAll(/require\(["']([^"']+)["']\)/gu)].map(match => match[1])
-    expect(required).toEqual(['react', 'react/jsx-runtime'])
+    expect(required).toEqual([
+      'react',
+      'react/jsx-runtime',
+      '@deepseek-ai/dsh-client-ui-primitives',
+    ])
   })
 
   test('Given the emitted browser script When it executes Then it registers the package id and materializable exports', () => {
     const handoff = executeBundle(readFileSync(resolve('lib/client.js'), 'utf8'))
     expect(handoff.id).toBe('dsh-git-worktree')
     const nodeRequire = createRequire(import.meta.url)
-    const clientExports = handoff.factory((specifier) => nodeRequire(specifier))
+    const clientExports = handoff.factory(specifier => platformRequire(nodeRequire, specifier))
     expect(clientExports.apply).toBeTypeOf('function')
     expect(clientExports.inject).toEqual(['slots', 'workspaces', 'sessions', 'conversation', 'remote'])
   })
@@ -48,7 +57,8 @@ describe('built Client ModuleLoader artifact', () => {
       apply(ctx: Context): void
       inject: string[]
     }
-    const worktree = executeBundle(readFileSync(resolve('lib/client.js'), 'utf8')).factory(nodeRequire) as {
+    const worktree = executeBundle(readFileSync(resolve('lib/client.js'), 'utf8'))
+      .factory(specifier => platformRequire(nodeRequire, specifier)) as {
       apply(ctx: Context): void
       inject: string[]
     }

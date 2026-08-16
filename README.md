@@ -6,7 +6,7 @@ An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It 
 
 ## How it works
 
-1. On a blank/new Local Session, the user can enable **Worktree** in the composer before sending the first prompt. The plugin freezes that Local composer, creates the isolated target, moves the unsent draft into it, and opens the target before any prompt is admitted.
+1. On a blank/new Local Session, clicking the **Worktree** switch first opens a confirmation dialog. Cancel creates nothing; confirm freezes the Local composer, creates the isolated target, transfers the unsent text/image draft, and opens the target. The user still sends the first prompt through the target's native composer, so no prompt is admitted to Local.
 2. Existing Local Sessions can also create a target from the **Worktree** tab, and the model may call `worktree_create`.
 3. The plugin creates a unique detached Worktree in a sibling container (with a plugin-state fallback) and reserves a distinct target Session ID. The source Session stays Local.
 4. Harness registers the Worktree path as a Workspace, creates the exact Host-reserved Session, and opens it. Its persisted Session header cwd is the authoritative Session Target.
@@ -28,7 +28,7 @@ Apply, Finish, Discard, and Remove are intentionally **not model tools**. A mode
 
 ### Harness-native Worktree Console
 
-The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Enabling it immediately prepares the Host-allocated target and transfers the unsent text/image draft before navigation; the normal Harness Send path remains the only prompt path. Every persisted Session also gets a target status capsule and a project-scoped **Worktree** view for Create/Open/Inspect/Review/Discard/Cleanup. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`. If the Remote is unavailable, the switch remains fail-closed and historical ToolViews remain readable while mutations stay disabled.
+The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Clicking it opens a confirmation dialog; only confirmation prepares the Host-allocated target and transfers the unsent text/image draft before navigation. The normal Harness Send path remains the only prompt path. Every persisted Session also gets a target status capsule and a project-scoped **Worktree** view for Create/Open/Inspect/Review/Discard/Cleanup. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`. If the Remote is unavailable, the switch remains fail-closed and historical ToolViews remain readable while mutations stay disabled.
 
 ### Human command
 
@@ -46,9 +46,9 @@ The client ToolViews invoke `finalize` as a user command carrying the card's exa
 ## Safety properties
 
 - Source and target Sessions have different IDs; the source Session is never privately relabelled as isolated.
-- Pre-session creation blocks the source composer synchronously and opens the target only after its managed Workspace, exact Session ID, and draft transfer succeed; failures leave the source draft untouched.
+- The switch confirmation creates no resources. After confirm, the pre-session transaction blocks the source composer and opens the target only after its managed Workspace, exact Session ID, draft transfer, and source draft-revision CAS succeed; failures leave the source draft untouched.
 - Target access fails closed unless its Harness Workspace path canonicalizes to the recorded managed root.
-- Worktree paths are unique and normally outside Local, so Local `git status` and task indexes cannot accidentally absorb the Worktree as a gitlink.
+- New paths use `<repo>--worktrees/<repo>--<checkout-short>--worktree`; identity expands on collision instead of overwriting unknown paths. Unsafe siblings fall back to `<stateDir>/worktrees/<repository-key>/`, while legacy registry paths remain manageable.
 - Legacy records that already used the old irreversible Apply path cannot automatically Finish or Discard; the user must first inspect Local.
 - Lists and management actions are caller-scoped. A recorded `ownerSessionId` is never used as authorization by itself.
 - Finish preserves unrelated Local staged/working state and refuses stale Local or stale Isolated fingerprints.

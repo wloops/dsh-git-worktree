@@ -19,7 +19,10 @@ import type {
   WorktreeRetentionMode,
 } from './types.js'
 import { SessionCheckoutError } from './index.js'
-import { createManagedWorktreePathCandidates, sanitizeManagedWorktreeLabel } from './managed-worktree-path.js'
+import {
+  createManagedWorktreePathCandidates,
+  createManagedWorktreeRepositoryKey,
+} from './managed-worktree-path.js'
 import type {
   ListManagedWorktreesInput,
   ManageManagedWorktreeInput,
@@ -2265,24 +2268,74 @@ export function createSessionCheckoutModule(
       const checkoutId = dependencies.createCheckoutId()
       const localRoot = await dependencies.files.canonicalize(project.root)
       const localGitRoot = await dependencies.files.canonicalize(snapshot.root)
-      const pathCandidates = createManagedWorktreePathCandidates({
+      const repositoryKey = createManagedWorktreeRepositoryKey(localGitRoot)
+      const pathCandidates = [8, 12, 32].map(identityLength => createManagedWorktreePathCandidates({
         localGitRoot,
         managedCheckoutsRoot: dependencies.managedCheckoutsRoot,
-        repositoryKey: sanitizeManagedWorktreeLabel(basename(localGitRoot)),
-        sessionId,
-        sessionTitle: session.title,
+        repositoryKey,
         checkoutId,
-        iteration: nextIteration,
-      })
-      // Prefer a sibling directory so the Local checkout never sees the managed worktree as untracked.
-      // If that sibling would live inside an outer Git checkout, use plugin state immediately;
-      // a clean first-attempt failure also retries there.
+        identityLength,
+      }))
+      // Prefer one repository-owned sibling container so Local never sees its
+      // managed worktrees as untracked. A container that is a file/symlink is
+      // untrusted and falls back without modification. Existing child paths
+      // are never reused or cleaned: extend the trusted checkout identity.
       const outerContainingRoot = await dependencies.git.findContainingWorktreeRoot(dirname(localGitRoot))
       const siblingWouldPolluteOuter = outerContainingRoot !== null && !pathsEqual(outerContainingRoot, localGitRoot)
-      const managedGitRoot = createAttempt === 0 && !siblingWouldPolluteOuter
-        ? pathCandidates.siblingRoot
-        : pathCandidates.fallbackRoot
-      dependencies.files.ensureDirectory(dirname(managedGitRoot))
+      const usingSibling = createAttempt === 0 && !siblingWouldPolluteOuter
+      const managedContainer = usingSibling
+        ? pathCandidates[0]!.siblingContainer
+        : pathCandidates[0]!.fallbackContainer
+      const knownContainer = Object.values(dependencies.registry.read().managedCheckouts)
+        .some(record => pathsEqual(dirname(record.managedGitRoot), managedContainer))
+      const containerExisted = dependencies.files.exists(managedContainer)
+      let containerIdentity = containerExisted
+        ? await dependencies.files.inspectDirectoryIdentity(managedContainer)
+        : null
+      if (containerExisted && containerIdentity !== null && !knownContainer) {
+        // A same-named directory with unknown content is not ours. An empty
+        // directory has no user bytes to preserve, so remove/recreate it as the
+        // ownership boundary; a non-empty tree is left untouched and rejected.
+        let reclaimedEmpty = false
+        try { reclaimedEmpty = dependencies.files.removeEmptyDirectoryTree(managedContainer) } catch { /* fail closed below */ }
+        if (!reclaimedEmpty) containerIdentity = null
+        else {
+          try {
+            dependencies.files.ensureDirectory(managedContainer)
+            containerIdentity = await dependencies.files.inspectDirectoryIdentity(managedContainer)
+          } catch {
+            containerIdentity = null
+          }
+        }
+      } else if (!containerExisted) {
+        try {
+          dependencies.files.ensureDirectory(managedContainer)
+          containerIdentity = await dependencies.files.inspectDirectoryIdentity(managedContainer)
+        } catch {
+          containerIdentity = null
+        }
+      }
+      if (containerIdentity === null) {
+        if (usingSibling) {
+          return bindTarget(sessionId, choice, createAttempt + 1, requestStartedAt, sourceSessionId)
+        }
+        throw new SessionCheckoutError(
+          'checkout_mismatch',
+          'Worktree 回退容器不是可信目录，未创建或修改任何 checkout',
+        )
+      }
+      const managedGitRoot = pathCandidates
+        .map(candidate => usingSibling ? candidate.siblingRoot : candidate.fallbackRoot)
+        .find(candidate => !dependencies.files.exists(candidate))
+      if (managedGitRoot === undefined) {
+        if (usingSibling) {
+          return bindTarget(sessionId, choice, createAttempt + 1, requestStartedAt, sourceSessionId)
+        }
+        throw new SessionCheckoutError(
+          'checkout_mismatch',
+          'Worktree Checkout identity 路径均已存在，拒绝覆盖未知目录',
+        )
+      }
       const projectRelativePath = relative(localGitRoot, localRoot)
       if (projectRelativePath.startsWith('..') || isAbsolute(projectRelativePath)) {
         throw new SessionCheckoutError('checkout_mismatch', '项目根目录不在其 Git checkout 内')

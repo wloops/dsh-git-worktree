@@ -6,7 +6,7 @@
 
 ## 工作流程
 
-1. 在 blank/new Local Session 中，用户可以在发送第一条消息前，从 composer 工具栏显式启用 **Worktree**。插件会先冻结 Local composer，创建 isolated target，把尚未发送的草稿迁移过去并打开 target；任何 prompt 都不会先进入 Local。
+1. 在 blank/new Local Session 中，用户点击 composer 工具栏的 **Worktree** 开关后先看到确认弹窗。取消不会创建任何资源；确认后插件才冻结 Local composer、创建 isolated target，把尚未发送的文本/图片草稿迁移过去并打开 target。首条消息仍由用户在 target 的原生 composer 中发送，任何 prompt 都不会先进入 Local。
 2. 已存在的 Local Session 仍可从 **Worktree** 标签页创建 target，模型也可调用 `worktree_create`。
 3. 插件在仓库同级容器中创建唯一 detached Worktree（不可用时回退到插件 stateDir），并预留一个独立 target Session ID；源 Session 始终保持 Local。
 4. Harness 把 Worktree 路径注册为 Workspace，使用 Host 预留的精确 ID 创建并打开 Session。持久化 Session header 的 cwd 才是权威 Session Target。
@@ -28,7 +28,7 @@ Apply、Finish、Discard、Remove **不再作为模型工具**暴露。模型参
 
 ### Harness-native Worktree Console
 
-Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribution。blank Local Session 会在 Harness 官方 `conversation.input.left` composer 工具栏 Slot 中显示紧凑的 **Worktree** 开关；启用后立即准备 Host 分配的 target，并在导航前迁移尚未发送的文本/图片草稿，标准 Harness Send 仍是唯一 prompt 路径。每个持久 Session 还可看到 target 状态胶囊和项目级 **Worktree** 视图，用于 Create/Open/Inspect/Review/Discard/Cleanup。列表行不包含路径；只有通过身份验证的 `current`、`create` 或 `inspect` 才返回 managed root。Remote 不可用时开关 fail closed，历史 ToolView 证据仍可阅读，mutation 保持禁用。
+Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribution。blank Local Session 会在 Harness 官方 `conversation.input.left` composer 工具栏 Slot 中显示紧凑的 **Worktree** 开关；点击只打开确认弹窗，确认后才准备 Host 分配的 target，并在导航前迁移尚未发送的文本/图片草稿，标准 Harness Send 仍是唯一 prompt 路径。每个持久 Session 还可看到 target 状态胶囊和项目级 **Worktree** 视图，用于 Create/Open/Inspect/Review/Discard/Cleanup。列表行不包含路径；只有通过身份验证的 `current`、`create` 或 `inspect` 才返回 managed root。Remote 不可用时开关 fail closed，历史 ToolView 证据仍可阅读，mutation 保持禁用。
 
 ### 用户命令
 
@@ -46,9 +46,9 @@ Client ToolView 以用户身份调用 `finalize`，并携带该卡片精确的 r
 ## 安全不变量
 
 - source 与 target 使用不同 Session ID；不会再用插件私有 registry 把 Local Session 伪装成 isolated。
-- Pre-session 创建会同步 block source composer；只有 managed Workspace、精确 target Session 与草稿迁移全部成功后才打开 target，失败时 source 草稿保持原样。
+- Worktree 开关的确认弹窗不创建资源；用户确认后 Pre-session 事务才同步 block source composer。只有 managed Workspace、精确 target Session、草稿迁移与 source draft revision CAS 全部成功后才打开 target，失败时 source 草稿保持原样。
 - target Harness Workspace 必须 canonicalize 到记录的 managed root，否则访问 fail closed。
-- Worktree 路径唯一且通常位于 Local 仓库之外，Local `git status` 和备用 index 不会把它误收为 gitlink。
+- 新 Worktree 使用 `<repo>--worktrees/<repo>--<checkout-short>--worktree`；短 ID 冲突时扩展 identity，不覆盖未知目录。不安全 sibling 回退到 `<stateDir>/worktrees/<repository-key>/`，旧 registry 路径仍可管理。
 - 已走过旧版不可逆 Apply 的历史记录禁止自动 Finish / Discard，必须先人工核对 Local。
 - list 与 manage 都按真实 caller 作用域过滤；持久化 `ownerSessionId` 本身不是授权。
 - Finish 保留 Local 无关 staged/working 状态，并拒绝 stale Local / stale Isolated。

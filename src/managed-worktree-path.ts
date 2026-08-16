@@ -1,21 +1,20 @@
+import { createHash } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
-const DEFAULT_SESSION_TITLES = new Set(['新 Agent 会话', '新会话'])
 const WINDOWS_INVALID_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/g
 const WINDOWS_RESERVED_NAME = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i
-const DISPLAY_SUFFIX = /\s*\((?:worktree|fork)\)\s*$/i
 const REPEATED_DASHES = /-{2,}/g
 const MAX_LABEL_LENGTH = 40
+const DEFAULT_IDENTITY_LENGTH = 8
 
 function truncateCodePoints(value: string, maxLength: number): string {
   return Array.from(value).slice(0, maxLength).join('')
 }
 
-/** 将会话标题转换为跨平台安全、可读的单个目录名片段。 */
-export function sanitizeManagedWorktreeLabel(rawTitle: string | undefined): string {
-  const withoutDisplaySuffix = (rawTitle ?? '').replace(DISPLAY_SUFFIX, '').trim()
-  const source = DEFAULT_SESSION_TITLES.has(withoutDisplaySuffix) ? '' : withoutDisplaySuffix
-  let cleaned = source
+/** Convert a canonical repository basename into one safe, readable path segment. */
+export function sanitizeManagedWorktreeLabel(rawName: string | undefined): string {
+  let cleaned = (rawName ?? '')
+    .trim()
     .normalize('NFC')
     .replace(WINDOWS_INVALID_CHARACTERS, '-')
     .replace(/\s+/g, '-')
@@ -25,54 +24,63 @@ export function sanitizeManagedWorktreeLabel(rawTitle: string | undefined): stri
   cleaned = truncateCodePoints(cleaned, MAX_LABEL_LENGTH)
     .replace(/[.\s-]+$/g, '')
 
-  if (!cleaned) return 'worktree'
+  if (!cleaned) return 'repository'
   return WINDOWS_RESERVED_NAME.test(cleaned) ? `_${cleaned}` : cleaned
 }
 
-function shortIdentity(value: string, fallback: string): string {
-  return value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || fallback
+function checkoutIdentity(value: string, length: number): string {
+  const normalized = value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+  if (!normalized) return 'checkout'
+  return normalized.slice(0, Math.max(DEFAULT_IDENTITY_LENGTH, length))
 }
 
+/** Stable fallback partition that distinguishes repositories sharing one basename. */
+export function createManagedWorktreeRepositoryKey(canonicalGitRoot: string): string {
+  return createHash('sha256').update(canonicalGitRoot).digest('hex').slice(0, 12)
+}
+
+/** Physical basename: repository identity + trusted checkout identity only. */
 export function createManagedWorktreeDirectoryName(input: {
-  sessionId: string
-  sessionTitle?: string
-  checkoutId?: string
-  iteration?: number
+  repositoryName: string
+  checkoutId: string
+  identityLength?: number
 }): string {
-  const sessionIdentity = shortIdentity(input.sessionId, 'session')
-  if (!input.checkoutId || !input.iteration) {
-    return `${sanitizeManagedWorktreeLabel(input.sessionTitle)}--${sessionIdentity}`
-  }
-  const checkoutIdentity = shortIdentity(input.checkoutId, 'checkout')
-  return `${sanitizeManagedWorktreeLabel(input.sessionTitle)}--${sessionIdentity}--i${input.iteration}--${checkoutIdentity}`
+  const repositoryLabel = sanitizeManagedWorktreeLabel(input.repositoryName)
+  const identity = checkoutIdentity(input.checkoutId, input.identityLength ?? DEFAULT_IDENTITY_LENGTH)
+  return `${repositoryLabel}--${identity}--worktree`
 }
 
 export interface ManagedWorktreePathCandidates {
   siblingContainer: string
   siblingRoot: string
+  fallbackContainer: string
   fallbackRoot: string
 }
 
 /**
- * 只生成候选路径，不访问文件系统：
- * - siblingRoot：Git 根目录同级的可读容器；
- * - fallbackRoot：原 Domi 数据目录下、按 repository key 分组的安全回退。
+ * Generate one collision-length candidate without touching the filesystem.
+ * The caller probes 8/12/full checkout identities and chooses the first path
+ * that does not already exist.
  */
 export function createManagedWorktreePathCandidates(input: {
   localGitRoot: string
   managedCheckoutsRoot: string
   repositoryKey: string
-  sessionId: string
-  sessionTitle?: string
-  checkoutId?: string
-  iteration?: number
+  checkoutId: string
+  identityLength?: number
 }): ManagedWorktreePathCandidates {
   const repositoryLabel = sanitizeManagedWorktreeLabel(basename(input.localGitRoot))
-  const directoryName = createManagedWorktreeDirectoryName(input)
-  const siblingContainer = join(dirname(input.localGitRoot), `${repositoryLabel}-worktrees`)
+  const directoryName = createManagedWorktreeDirectoryName({
+    repositoryName: repositoryLabel,
+    checkoutId: input.checkoutId,
+    ...(input.identityLength === undefined ? {} : { identityLength: input.identityLength }),
+  })
+  const siblingContainer = join(dirname(input.localGitRoot), `${repositoryLabel}--worktrees`)
+  const fallbackContainer = join(input.managedCheckoutsRoot, 'worktrees', input.repositoryKey)
   return {
     siblingContainer,
     siblingRoot: join(siblingContainer, directoryName),
-    fallbackRoot: join(input.managedCheckoutsRoot, input.repositoryKey, directoryName),
+    fallbackContainer,
+    fallbackRoot: join(fallbackContainer, directoryName),
   }
 }

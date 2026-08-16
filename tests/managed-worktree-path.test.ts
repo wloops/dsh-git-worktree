@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   createManagedWorktreeDirectoryName,
   createManagedWorktreePathCandidates,
+  createManagedWorktreeRepositoryKey,
   sanitizeManagedWorktreeLabel,
 } from '../src/managed-worktree-path.ts'
 
@@ -11,48 +12,51 @@ describe('managed worktree path', () => {
     expect(sanitizeManagedWorktreeLabel('  修复 Worktree: 路径/命名？  ')).toBe('修复-Worktree-路径-命名？')
   })
 
-  test('处理 Windows 保留名、默认标题与过长标题', () => {
+  test('处理 Windows 保留名、空名称与过长仓库名', () => {
     expect(sanitizeManagedWorktreeLabel('CON')).toBe('_CON')
-    expect(sanitizeManagedWorktreeLabel('新 Agent 会话')).toBe('worktree')
+    expect(sanitizeManagedWorktreeLabel('')).toBe('repository')
     expect(Array.from(sanitizeManagedWorktreeLabel('很长'.repeat(30))).length).toBe(40)
   })
 
-  test('Worktree owner 目录移除 fork 展示后缀并追加 session 短 ID', () => {
+  test('物理目录只包含可信仓库名、Checkout 短 ID 和 worktree 后缀', () => {
     expect(createManagedWorktreeDirectoryName({
-      sessionId: 'c912a341-1234-5678-9012-abcdefabcdef',
-      sessionTitle: '测试思路 (worktree)',
-    })).toBe('测试思路--c912a341')
-
-    expect(createManagedWorktreeDirectoryName({
-      sessionId: '1fde02d4-1234-5678-9012-abcdefabcdef',
-      sessionTitle: '修复分叉菜单 (fork)',
-    })).toBe('修复分叉菜单--1fde02d4')
-  })
-
-  test('每个 iteration 使用 checkout identity 生成唯一目录', () => {
-    expect(createManagedWorktreeDirectoryName({
-      sessionId: 'c912a341-1234-5678-9012-abcdefabcdef',
-      sessionTitle: '测试思路',
+      repositoryName: 'dsh-git-worktree',
       checkoutId: '85846a61-4a12-41cf-8ecc-1e3f2fef7e40',
-      iteration: 2,
-    })).toBe('测试思路--c912a341--i2--85846a61')
+    })).toBe('dsh-git-worktree--85846a61--worktree')
   })
 
-  test('候选路径优先位于 Git 根目录同级，回退路径保留仓库 key 分组', () => {
+  test('短 ID 路径冲突时可以确定性扩展到更长 identity', () => {
+    expect(createManagedWorktreeDirectoryName({
+      repositoryName: 'dsh-git-worktree',
+      checkoutId: '85846a61-4a12-41cf-8ecc-1e3f2fef7e40',
+      identityLength: 12,
+    })).toBe('dsh-git-worktree--85846a614a12--worktree')
+    expect(createManagedWorktreeDirectoryName({
+      repositoryName: 'dsh-git-worktree',
+      checkoutId: '85846a61-4a12-41cf-8ecc-1e3f2fef7e40',
+      identityLength: 32,
+    })).toBe('dsh-git-worktree--85846a614a1241cf8ecc1e3f2fef7e40--worktree')
+  })
+
+  test('候选路径集中到仓库同级容器，并在插件 worktrees 根按仓库 key 回退', () => {
     const candidates = createManagedWorktreePathCandidates({
-      localGitRoot: join('D:', 'workspace', 'domi'),
-      managedCheckoutsRoot: join('C:', 'Users', 'A', '.domi', 'worktrees'),
+      localGitRoot: join('D:', 'workspace', 'dsh-git-worktree'),
+      managedCheckoutsRoot: join('C:', 'Users', 'A', '.dsh', 'plugins', 'dsh-git-worktree'),
       repositoryKey: '345d83347b',
-      sessionId: 'c912a341-1234-5678-9012-abcdefabcdef',
-      sessionTitle: '优化 Worktree 路径与命名',
+      checkoutId: '85846a61-4a12-41cf-8ecc-1e3f2fef7e40',
     })
 
-    expect(candidates.siblingContainer).toBe(join('D:', 'workspace', 'domi-worktrees'))
-    expect(candidates.siblingRoot).toBe(join(
-      'D:', 'workspace', 'domi-worktrees', '优化-Worktree-路径与命名--c912a341',
-    ))
+    const directoryName = 'dsh-git-worktree--85846a61--worktree'
+    expect(candidates.siblingContainer).toBe(join('D:', 'workspace', 'dsh-git-worktree--worktrees'))
+    expect(candidates.siblingRoot).toBe(join('D:', 'workspace', 'dsh-git-worktree--worktrees', directoryName))
     expect(candidates.fallbackRoot).toBe(join(
-      'C:', 'Users', 'A', '.domi', 'worktrees', '345d83347b', '优化-Worktree-路径与命名--c912a341',
+      'C:', 'Users', 'A', '.dsh', 'plugins', 'dsh-git-worktree', 'worktrees', '345d83347b', directoryName,
     ))
+  })
+
+  test('fallback repository key 绑定 canonical Git root 而不是可冲突的 basename', () => {
+    expect(createManagedWorktreeRepositoryKey('D:/workspace/team-a/repo'))
+      .not.toBe(createManagedWorktreeRepositoryKey('D:/workspace/team-b/repo'))
+    expect(createManagedWorktreeRepositoryKey('D:/workspace/team-a/repo')).toMatch(/^[a-f0-9]{12}$/)
   })
 })

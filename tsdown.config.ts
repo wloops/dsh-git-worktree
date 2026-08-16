@@ -13,7 +13,7 @@ export default defineConfig({
   sourcemap: false,
   dts: false,
   outExtensions: () => ({ js: '.js' }),
-  external: ['react', 'react/jsx-runtime'],
+  external: ['react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives'],
   // Strict Remote schemas execute in the browser bundle; zod is not a Harness
   // ModuleLoader platform entry and therefore must never survive as require('zod').
   noExternal: ['zod'],

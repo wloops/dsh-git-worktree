@@ -42,7 +42,7 @@
 
 推荐的 Harness-native 组合：
 
-- blank Local composer 的 input-left switch 在用户点击后立即 block source，准备并打开 target，再把后续发送交还标准 composer；
+- blank Local composer 的 input-left switch 点击后只打开确认弹窗；用户确认后才 block source、准备并打开 target，再把后续发送交还标准 composer；
 - Header action 显示 `Local / Working / Ready / Recovery`；
 - 点击后切换到 `conversation.view` 的 `worktree` tab；
 - 只有确实需要跨列抽屉时才占用 `shell.overlay`；
@@ -60,7 +60,7 @@ adapter.create({ sourceSessionId })
 → sessions.open(targetSessionId)
 ```
 
-pre-session flow 不拦截私有 submit sink：点击开关后同步通过 `conversation.blocks` block source composer，target input 写入成功后才打开；随后第一条消息仍由 Harness 标准 composer 发送。Host 分配 `targetSessionId`，Client 不得自行选择 owner identity。target Session 持久化 cwd 必须 canonicalize 为 `managedRoot`，否则 fail closed。失败时 source draft 保持原样；若 checkout 已创建，Client 先按 target/source caller 边界请求 Discard，只有确认 Discard 成功后才归档 target Session、删除临时 Workspace。
+pre-session flow 不拦截私有 submit sink：点击开关只冻结一份确认时草稿快照并打开受控弹窗，不创建 Host 资源；用户确认后才通过 `conversation.blocks` block source composer。target input 写入成功且 source `draftRev`、文本、附件仍与确认快照一致后才打开；随后第一条消息仍由 Harness 标准 composer 发送。Host 分配 `targetSessionId`，Client 不得自行选择 owner identity。target Session 持久化 cwd 必须 canonicalize 为 `managedRoot`，否则 fail closed。失败时 source draft 保持原样；若 checkout 已创建，Client 先按 target/source caller 边界请求 Discard，只有确认 Discard 成功后才归档 target Session、删除临时 Workspace。
 
 ## 3. 共享状态模型
 
