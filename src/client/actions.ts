@@ -76,14 +76,14 @@ export async function openIsolatedTarget(
   const workspace = await services.workspaces.create({ path: payload.managedRoot })
   if (!isActive()) return
   if (workspace.path !== payload.managedRoot) {
-    throw new Error(`Harness registered the managed root at a different path: ${workspace.path}.`)
+    throw new Error(`Harness 注册的工作目录与 Host 记录不一致：${workspace.path}`)
   }
   const sessionId = await services.sessions.create({
     workspaceId: workspace.workspaceId,
     sessionId: payload.targetSessionId,
   })
   if (sessionId !== payload.targetSessionId) {
-    throw new Error(`Harness created unexpected Session ${sessionId}; expected ${payload.targetSessionId}.`)
+    throw new Error(`Harness 创建了非预期 Session ${sessionId}；应为 ${payload.targetSessionId}`)
   }
   if (!isActive()) return
   services.sessions.open(sessionId)
@@ -97,10 +97,10 @@ export async function finalizeCurrentSession(
   retention: 'cleanup' | 'retain_24h' | 'retain_3d' | 'retain_manual',
 ): Promise<void> {
   const sessionId = services.sessions.list.getSnapshot().current
-  if (!sessionId) throw new Error('No current Session is selected.')
+  if (!sessionId) throw new Error('当前没有选中的 Session。')
   const binding = services.sessions.binding(sessionId)
-  if (!binding) throw new Error('Current Session is not ready.')
+  if (!binding) throw new Error('当前 Session 尚未就绪。')
   const result = await binding.session.command(`/worktree finalize ${reviewId} ${revision} ${retention}`)
   if (!result.ok) throw new Error(`Finalize command failed: ${result.error.code}: ${result.error.message}`)
-  if (!result.value.matched) throw new Error('The Host did not match the /worktree command.')
+  if (!result.value.matched) throw new Error('Host 未识别 /worktree 命令。')
 }

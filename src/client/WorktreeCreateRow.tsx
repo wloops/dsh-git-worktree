@@ -28,10 +28,10 @@ export function WorktreeCreateRow({ block, services }: Props) {
   }
 
   return (
-    <section className="dsh-wt-card" data-tool="worktree_create" data-state={state} aria-label="Isolated Session Target">
+    <section className="dsh-wt-card" data-tool="worktree_create" data-state={state} aria-label="隔离 Session Target">
       <header className="dsh-wt-head">
         <span className="dsh-wt-mark" aria-hidden />
-        <strong className="dsh-wt-title">Isolated Session Target</strong>
+        <strong className="dsh-wt-title">隔离 Session Target</strong>
         <span className="dsh-wt-subtitle">
           {model.lifecycle === 'running' ? '正在创建唯一 Worktree…' : payload ? '已就绪，等待打开' : '创建失败'}
         </span>
@@ -41,9 +41,9 @@ export function WorktreeCreateRow({ block, services }: Props) {
           <div className="dsh-wt-grid">
             <span className="dsh-wt-label">Checkout</span>
             <span className="dsh-wt-value dsh-wt-code">{payload.checkoutId}</span>
-            <span className="dsh-wt-label">Base</span>
+            <span className="dsh-wt-label">基线</span>
             <span className="dsh-wt-value dsh-wt-code">{payload.currentOid.slice(0, 12)}</span>
-            <span className="dsh-wt-label">Workspace</span>
+            <span className="dsh-wt-label">工作区</span>
             <button type="button" className="dsh-wt-value dsh-wt-code dsh-wt-path" onClick={() => void services.workspaces.openPath(payload.managedRoot)}>
               {payload.managedRoot}
             </button>

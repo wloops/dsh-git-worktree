@@ -2,7 +2,7 @@
 
 An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It ports Domi's hardened checkout/apply engine and adapts the product flow to Harness's authoritative Workspace/Session cwd model.
 
-> Current scope: real isolated Session creation, a Harness-native Session Target/Worktree Console, review-bound diff and ToolViews, human-confirmed task-only Finish, retention, crash recovery, fingerprint CAS, and conservative cleanup. It is not yet a complete replacement for Domi's global Worktree Manager or reversible Local Preview.
+> Current scope: real isolated Sessions, a Harness-native Session Target/Worktree Console, reversible Local Preview, accept/rollback/direct-finish flows, a project-scoped acceptance slot, durable recovery receipts, retention, crash recovery, fingerprint CAS, and conservative cleanup. It is not yet Domi's cross-project global Worktree Manager.
 
 ## How it works
 
@@ -11,8 +11,9 @@ An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It 
 3. The plugin creates a unique detached Worktree in a sibling container (with a plugin-state fallback) and reserves a distinct target Session ID. The source Session stays Local.
 4. Harness registers the Worktree path as a Workspace, creates the exact Host-reserved Session, and opens it. Its persisted Session header cwd is the authoritative Session Target.
 5. The agent changes and validates code only in that isolated cwd, then calls `worktree_ready_for_review` as its final model action.
-6. The Worktree Console and replay-stable Review ToolView show the review-bound diff, validation evidence, changed files, and suggested commit message. The user explicitly chooses **Finalize cleanup** or a retention option.
-7. `/worktree finalize ...` creates one task-only commit on Local while preserving unrelated Local staged, unstaged, and untracked work.
+6. A Domi-style status strip stays visible above the target composer when the Worktree is ready. Its compact Chinese Review card shows only the summary, validation state, file count, and collapsed test evidence—no Diff/Inspect controls or expanded retention buttons.
+7. The Ready primary action is **同步到 Local 验收**. The Host runs a read-only preflight and then creates an uncommitted, reversible Local Preview of the exact review. While Preview is active, the primary action becomes **验收通过并提交** and the More menu can roll the Preview back and resume Worktree editing. Ready's More menu also offers **跳过验收，直接提交** and Discard.
+8. Preview, rollback, and finalize are bound to revision/review/HEAD/fingerprint CAS. One canonical Local project can hold only one active Preview. Discard must roll an active Preview back first; Local drift fails closed into a preserved recovery state instead of overwriting user work.
 
 ## Surface
 
@@ -28,7 +29,7 @@ Apply, Finish, Discard, and Remove are intentionally **not model tools**. A mode
 
 ### Harness-native Worktree Console
 
-The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Clicking it opens a confirmation dialog; only confirmation prepares the Host-allocated target and transfers the unsent text/image draft before navigation. The normal Harness Send path remains the only prompt path. Every persisted Session also gets a target status capsule and a project-scoped **Worktree** view for Create/Open/Inspect/Review/Discard/Cleanup. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`. If the Remote is unavailable, the switch remains fail-closed and historical ToolViews remain readable while mutations stay disabled.
+The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Clicking it opens a confirmation dialog; only confirmation prepares the Host-allocated target and transfers the unsent text/image draft before navigation. The normal Harness Send path remains the only prompt path. Every persisted Session also gets a target capsule and a project-scoped **Worktree** view for advanced Create/Open/Inspect/Discard/Cleanup management. When Ready, `conversation.input.dock` shows one compact acceptance strip with a single primary action and a More menu; the historical ToolView stays compact and replayable. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`.
 
 ### Human command
 
@@ -41,7 +42,7 @@ The Client mounts the package-owned strict Typert Remote contribution through th
 /worktree remove <checkoutId>
 ```
 
-The client ToolViews invoke `finalize` as a user command carrying the card's exact review ID and revision. Finish rechecks the reviewed fingerprint/head before touching Local; stale cards or post-review edits require a new Ready snapshot. Commands also enforce owner/source scope, original project identity, and managed cwd identity.
+The Client uses strict Remote `preflight`, `preview`, `rollbackPreview`, and `finalizePreview`; `finalize` is reserved for an explicitly selected direct-finish shortcut. Every path carries the exact review ID/revision, and commit paths also carry the user-confirmed 1–500 character Commit Message plus retention. The Host revalidates caller, project, managed cwd, review identity, HEAD/fingerprint, and Local CAS; stale cards, post-review edits, and Local drift fail closed.
 
 ## Safety properties
 
@@ -51,7 +52,9 @@ The client ToolViews invoke `finalize` as a user command carrying the card's exa
 - New paths use `<repo>--worktrees/<repo>--<checkout-short>--worktree`; identity expands on collision instead of overwriting unknown paths. Unsafe siblings fall back to `<stateDir>/worktrees/<repository-key>/`, while legacy registry paths remain manageable.
 - Legacy records that already used the old irreversible Apply path cannot automatically Finish or Discard; the user must first inspect Local.
 - Lists and management actions are caller-scoped. A recorded `ownerSessionId` is never used as authorization by itself.
-- Finish preserves unrelated Local staged/working state and refuses stale Local or stale Isolated fingerprints.
+- A Preview receipt is persisted before Local writes and retains the prior working tree/index, Preview tree, and Isolated snapshot, so rollback/finalize can recover after Host restart.
+- A canonical Local root has one acceptance slot. Detached Previews release the slot while retaining recovery evidence.
+- Finish preserves unrelated Local staged/working state and refuses stale Local or stale Isolated fingerprints. Discard of an active Preview must first roll it back safely.
 - Cleanup validates path, Git common-dir, git-dir, directory identity, and final fingerprint; uncertain residue is retained or quarantined.
 
 ## Install
@@ -98,7 +101,7 @@ The default fixture is `dsh-git-worktree-dev/fixture` under the OS temporary dir
 
 ## Current limitations
 
-- No reversible Local Preview / Finalize / Rollback layer. The old direct `worktree_apply` surface is disabled.
+- The old direct `worktree_apply` surface remains disabled; public delivery is limited to explicit user Preview/rollback/finalize/direct-finish actions.
 - No cross-project global sidebar Manager yet; management is intentionally project- and Session-scoped in the Worktree Console.
 - No automatic Workflow `agent({ isolation })`; Harness still defers that option.
 - Subagents inherit the parent Session cwd, so they are isolated only after the parent is a real Worktree Session.

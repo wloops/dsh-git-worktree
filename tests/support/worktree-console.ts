@@ -5,6 +5,7 @@ import type {
   WorktreeConsoleCurrentRequest,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleDiscardRequest,
+  WorktreeConsoleFinalizePreviewRequest,
   WorktreeConsoleFinalizeRequest,
   WorktreeConsoleInspectRequest,
   WorktreeConsoleInspectResponse,
@@ -12,7 +13,11 @@ import type {
   WorktreeConsoleListResponse,
   WorktreeConsoleMutationResponse,
   WorktreeConsoleOutcome,
+  WorktreeConsolePreflightRequest,
+  WorktreeConsolePreflightResponse,
+  WorktreeConsolePreviewRequest,
   WorktreeConsoleRetryCleanupRequest,
+  WorktreeConsoleRollbackPreviewRequest,
   WorktreeConsoleReviewDiffRequest,
   WorktreeConsoleReviewDiffResponse,
   WorktreeConsoleSetRetentionRequest,
@@ -48,7 +53,11 @@ function readyTarget(): WorktreeConsoleTargetDetails {
       open: true,
       inspect: true,
       discard: true,
+      preflight: true,
+      preview: true,
+      rollbackPreview: false,
       finalize: true,
+      finalizePreview: false,
       setRetention: false,
       retryCleanup: false,
     },
@@ -98,7 +107,11 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           open: false,
           inspect: true,
           discard: false,
+          preflight: false,
+          preview: false,
+          rollbackPreview: false,
           finalize: false,
+          finalizePreview: false,
           setRetention: false,
           retryCleanup: false,
         },
@@ -134,12 +147,49 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         truncated: false,
       })
     },
+    async preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>> {
+      record('preflight', request)
+      return outcome({
+        preflight: {
+          status: 'ready', localModified: false, checkoutId: request.checkoutId, reviewId: request.expectedReviewId,
+          revision: request.expectedRevision, configuredBaseOid: 'a'.repeat(40), effectiveBaseOid: 'a'.repeat(40),
+          baseStrategy: 'recorded_base', localBranch: 'main', localHeadOid: 'a'.repeat(40), isolatedHeadOid: 'b'.repeat(40),
+          changedFiles: ['src/index.ts'],
+        },
+      })
+    },
+    async preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('preview', request)
+      return outcome({ target: {
+        ...target,
+        state: 'preview_active',
+        revision: target.revision + 1,
+        capabilities: { ...target.capabilities, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: true },
+      }, changedFiles: ['src/index.ts'] })
+    },
+    async rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('rollbackPreview', request)
+      if (request.resumeRevision) {
+        const { review: _review, reviewSlot: _slot, ...working } = target
+        return outcome({ target: {
+          ...working,
+          state: 'working',
+          revision: target.revision + 1,
+          capabilities: { ...target.capabilities, preflight: false, preview: false, rollbackPreview: false, finalize: false, finalizePreview: false },
+        }, changedFiles: ['src/index.ts'] })
+      }
+      return outcome({ target: { ...target, revision: target.revision + 1 }, changedFiles: ['src/index.ts'] })
+    },
     async discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
       record('discard', request)
       return outcome(delivered())
     },
     async finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
       record('finalize', request)
+      return outcome(delivered())
+    },
+    async finalizePreview(request: WorktreeConsoleFinalizePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('finalizePreview', request)
       return outcome(delivered())
     },
     async setRetention(request: WorktreeConsoleSetRetentionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {

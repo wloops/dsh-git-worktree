@@ -18,7 +18,7 @@ import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.
 
 interface SlotEntry {
   descriptor: Record<string, unknown>
-  component: ComponentType<{ sessionId: string }>
+  component: ComponentType<any>
   dispose: () => void
 }
 
@@ -26,14 +26,14 @@ class SlotsDouble implements TargetConsoleContextLike['slots'] {
   readonly entries: SlotEntry[] = []
   private readonly injectedDisposers: Array<() => void> = []
 
-  inject(_name: 'conversation.session.header.actions' | 'conversation.view', callback: () => unknown): void {
+  inject(_name: 'conversation.session.header.actions' | 'conversation.view' | 'conversation.input.dock', callback: () => unknown): void {
     const dispose = callback()
     if (typeof dispose === 'function') this.injectedDisposers.push(dispose as () => void)
   }
 
   register(
     descriptor: Record<string, unknown>,
-    component: ComponentType<{ sessionId: string }>,
+    component: ComponentType<any>,
   ): unknown {
     const entry = {
       descriptor,
@@ -74,7 +74,11 @@ function localTarget(): WorktreeConsoleTargetDetails {
       open: false,
       inspect: false,
       discard: false,
+      preflight: false,
+      preview: false,
+      rollbackPreview: false,
       finalize: false,
+      finalizePreview: false,
       setRetention: false,
       retryCleanup: false,
     },
@@ -118,8 +122,10 @@ describe('Harness-native Session Target slots', () => {
   test.each([
     ['local', 'Local'],
     ['working', 'Worktree'],
-    ['ready_for_review', 'Ready'],
-    ['recovery_required', 'Recovery'],
+    ['ready_for_review', '待验收'],
+    ['preview_active', 'Local 验收中'],
+    ['preview_detached', '预览待恢复'],
+    ['recovery_required', '需要恢复'],
   ] as const)('projects the server %s state in the Header capsule', async (state, label) => {
     const fixture = createWorktreeConsoleAdapterFixture()
     fixture.adapter.current = vi.fn(async () => ({
@@ -145,12 +151,62 @@ describe('Harness-native Session Target slots', () => {
 
     const Header = entry!.component
     render(<Header sessionId="session-from-slot-props" />)
-    expect(screen.getByText('Loading…')).toBeTruthy()
+    expect(screen.getByText('加载中…')).toBeTruthy()
     await waitFor(() => expect(screen.getByText('Local')).toBeTruthy())
     expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-from-slot-props' })
 
     slots.dispose()
     expect(slots.entries.some(candidate => candidate.descriptor.id === 'worktree-target')).toBe(false)
+  })
+
+  test('在 input dock 注册 Domi 式待验收状态条，并只显示一个主操作与更多菜单', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const slots = new SlotsDouble()
+
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+
+    const entry = slots.entries.find(candidate => candidate.descriptor.name === 'conversation.input.dock')
+    expect(entry?.descriptor).toMatchObject({
+      name: 'conversation.input.dock',
+      id: 'worktree-review-status',
+    })
+    const Dock = entry!.component
+    render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
+
+    await waitFor(() => expect(screen.getByText('Worktree 已准备好同步到 Local 验收')).toBeTruthy())
+    expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy()
+    expect(screen.getByLabelText('更多交付操作')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Inspect' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    await waitFor(() => expect(screen.getByText('本轮修改正在 Local 等待验收')).toBeTruthy())
+    expect(fixture.calls).toContainEqual({ method: 'preflight', request: {
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    } })
+    expect(fixture.calls).toContainEqual({ method: 'preview', request: {
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    } })
+  })
+
+  test('Preview rollback 中断后 dock 保持可见并提供恢复入口', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const recovery = {
+      ...fixture.target,
+      state: 'recovery_required' as const,
+      phase: 'recovery_required' as const,
+      revision: 9,
+      capabilities: { ...fixture.target.capabilities, discard: false, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: false },
+    }
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: recovery } }))
+    const slots = new SlotsDouble()
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+    const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+
+    render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
+
+    await waitFor(() => expect(screen.getByText('验收操作中断，需要恢复 Preview')).toBeTruthy())
+    expect((screen.getByRole('button', { name: '重新尝试撤回' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   test('registers conversation.view at order 20 and renders the project-scoped list without leaking paths', async () => {
@@ -180,7 +236,7 @@ describe('Harness-native Session Target slots', () => {
 
     const View = entry!.component
     render(<View sessionId="source-session" />)
-    expect(screen.getByText('Loading Worktree Console…')).toBeTruthy()
+    expect(screen.getByText('正在加载 Worktree 控制台…')).toBeTruthy()
     resolveList({
       ok: true,
       value: {
@@ -190,8 +246,8 @@ describe('Harness-native Session Target slots', () => {
     })
 
     await waitFor(() => expect(screen.getAllByText('Fixture Project')).toHaveLength(2))
-    expect(screen.getAllByText('Ready').length).toBeGreaterThan(0)
-    expect(screen.getByText('Recovery')).toBeTruthy()
+    expect(screen.getAllByText('待验收').length).toBeGreaterThan(0)
+    expect(screen.getByText('需要恢复')).toBeTruthy()
     expect(screen.queryByText('/must-not-leak/from-list')).toBeNull()
   })
 })
@@ -203,7 +259,7 @@ describe('Worktree Console loading and inspection', () => {
     fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: local } }))
     fixture.adapter.list = vi.fn(async () => ({ ok: true, value: { project: local.project, worktrees: [] } }))
     const view = renderConsole(fixture.adapter)
-    expect(await screen.findByText('No managed Worktrees in this project.')).toBeTruthy()
+    expect(await screen.findByText('这个项目还没有受管 Worktree。')).toBeTruthy()
     view.unmount()
 
     const failed = createWorktreeConsoleAdapterFixture()
@@ -213,7 +269,7 @@ describe('Worktree Console loading and inspection', () => {
     }))
     renderConsole(failed.adapter)
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('project_mismatch'))
-    expect(screen.getByRole('alert').textContent).toContain('current Session')
+    expect(screen.getByRole('alert').textContent).toContain('当前 Session')
   })
 
   test('shows managedRoot only after an explicit authorized inspect', async () => {
@@ -223,7 +279,7 @@ describe('Worktree Console loading and inspection', () => {
     renderConsole(fixture.adapter)
 
     expect(screen.queryByText(fixture.target.managedRoot!)).toBeNull()
-    fireEvent.click(await screen.findByRole('button', { name: 'Inspect checkout-1' }))
+    fireEvent.click(await screen.findByRole('button', { name: '检查 checkout-1' }))
     await waitFor(() => expect(screen.getByText(fixture.target.managedRoot!)).toBeTruthy())
     expect(fixture.adapter.inspect).toHaveBeenCalledWith({ sessionId: 'source-session', checkoutId: 'checkout-1' })
   })
@@ -261,8 +317,8 @@ describe('Worktree Console loading and inspection', () => {
     renderConsole(fixture.adapter)
 
     await screen.findByText('Manual recovery is required.')
-    expect(screen.getByText(/retain_24h/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Create Worktree' })).toBeNull()
+    expect(screen.getByText(/保留 24 小时/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '创建 Worktree' })).toBeNull()
   })
 })
 
@@ -277,7 +333,7 @@ describe('Worktree Console Create/Open', () => {
     const services = clientServices()
     renderConsole(fixture.adapter, services)
 
-    const create = await screen.findByRole('button', { name: 'Create Worktree' })
+    const create = await screen.findByRole('button', { name: '创建 Worktree' })
     fireEvent.click(create)
     fireEvent.click(create)
     expect(fixture.adapter.create).toHaveBeenCalledTimes(1)
@@ -325,7 +381,7 @@ describe('Worktree Console Create/Open', () => {
     const services = clientServices()
     const view = renderConsole(fixture.adapter, services)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Create Worktree' }))
+    fireEvent.click(await screen.findByRole('button', { name: '创建 Worktree' }))
     view.rerender(<WorktreeConsoleView sessionId="session-b" adapter={fixture.adapter} services={services} />)
     await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-b' }))
     resolveCreate({
@@ -354,7 +410,7 @@ describe('Worktree Console Create/Open', () => {
     services.workspaces.create = vi.fn(async () => new Promise(resolve => { resolveWorkspace = resolve }))
     const view = renderConsole(fixture.adapter, services)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Create Worktree' }))
+    fireEvent.click(await screen.findByRole('button', { name: '创建 Worktree' }))
     await waitFor(() => expect(services.workspaces.create).toHaveBeenCalled())
     view.unmount()
     resolveWorkspace({ workspaceId: 'workspace-target', path: fixture.target.managedRoot! })
@@ -386,7 +442,7 @@ describe('Worktree Console Create/Open', () => {
     const services = clientServices()
     renderConsole(fixture.adapter, services)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Create Worktree' }))
+    fireEvent.click(await screen.findByRole('button', { name: '创建 Worktree' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('source Session'))
     expect(services.workspaces.create).not.toHaveBeenCalled()
     expect(services.sessions.open).not.toHaveBeenCalled()
@@ -401,8 +457,8 @@ describe('Worktree Console Create/Open', () => {
     services.workspaces.create = vi.fn(async () => ({ workspaceId: 'wrong-workspace', path: '/another/project' }))
     renderConsole(fixture.adapter, services)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Create Worktree' }))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('different path'))
+    fireEvent.click(await screen.findByRole('button', { name: '创建 Worktree' }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('工作目录与 Host 记录不一致'))
     expect(services.sessions.create).not.toHaveBeenCalled()
     expect(services.sessions.open).not.toHaveBeenCalled()
   })
@@ -416,9 +472,9 @@ describe('Worktree Console Create/Open', () => {
     services.sessions.create = vi.fn(async () => 'unexpected-session')
     renderConsole(fixture.adapter, services)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Create Worktree' }))
+    fireEvent.click(await screen.findByRole('button', { name: '创建 Worktree' }))
 
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('unexpected Session'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('非预期 Session'))
     expect(services.sessions.open).not.toHaveBeenCalled()
   })
 
@@ -432,8 +488,8 @@ describe('Worktree Console Create/Open', () => {
     renderConsole(fixture.adapter, services)
 
     const row = await screen.findByRole('listitem')
-    fireEvent.click(within(row).getByRole('button', { name: 'Open checkout-1' }))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('no longer allows Open'))
+    fireEvent.click(within(row).getByRole('button', { name: '打开 checkout-1' }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('不允许打开该 Worktree'))
     expect(services.workspaces.create).not.toHaveBeenCalled()
     expect(services.sessions.open).not.toHaveBeenCalled()
   })
@@ -446,7 +502,7 @@ describe('Worktree Console Create/Open', () => {
     renderConsole(fixture.adapter, services)
 
     const row = await screen.findByRole('listitem')
-    fireEvent.click(within(row).getByRole('button', { name: 'Open checkout-1' }))
+    fireEvent.click(within(row).getByRole('button', { name: '打开 checkout-1' }))
 
     await waitFor(() => expect(fixture.adapter.inspect).toHaveBeenCalledWith({
       sessionId: 'source-session',
@@ -546,6 +602,7 @@ describe('Client entry integration', () => {
       expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_ready_for_review' }),
       expect.objectContaining({ name: 'conversation.session.header.actions', id: 'worktree-target' }),
       expect.objectContaining({ name: 'conversation.view', id: 'worktree', order: 20 }),
+      expect.objectContaining({ name: 'conversation.input.dock', id: 'worktree-review-status', order: 10 }),
     ]))
     for (const dispose of disposers.reverse()) dispose()
     expect(descriptors).toHaveLength(0)
@@ -553,30 +610,17 @@ describe('Client entry integration', () => {
 })
 
 describe('Worktree Console Review integration', () => {
-  test('opens the shared Review panel from a ready project row and keeps requests review-bound', async () => {
+  test('opens the shared compact Chinese Review panel without exposing Diff or Inspect inside the card', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
-    fixture.adapter.reviewDiff = vi.fn(async request => ({
-      ok: true,
-      value: {
-        reviewId: request.expectedReviewId,
-        revision: request.expectedRevision,
-        files: [{ path: 'src/index.ts', status: 'modified', patch: '+integrated', truncated: false }],
-        truncated: false,
-      },
-    }))
     renderConsole(fixture.adapter, clientServices(), 'target-session')
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Review checkout-1' }))
-    expect(screen.getByRole('region', { name: 'Worktree Review' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Show diff' }))
-
-    await waitFor(() => expect(fixture.adapter.reviewDiff).toHaveBeenCalledWith({
-      sessionId: 'target-session',
-      checkoutId: 'checkout-1',
-      expectedRevision: 7,
-      expectedReviewId: 'review-1',
-    }))
-    expect(screen.getByText('+integrated')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '验收 checkout-1' }))
+    expect(screen.getByRole('region', { name: 'Worktree 验收' })).toBeTruthy()
+    expect(screen.getByText('第 1 轮修改已准备验收')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Inspect' })).toBeNull()
+    expect(fixture.calls.some(call => call.method === 'reviewDiff')).toBe(false)
   })
 })
 
@@ -588,22 +632,45 @@ describe('Worktree Console guarded mutations', () => {
     renderConsole(fixture.adapter)
 
     const row = await screen.findByRole('listitem')
-    fireEvent.click(within(row).getByRole('button', { name: 'Discard checkout-1' }))
+    fireEvent.click(within(row).getByRole('button', { name: '放弃 checkout-1' }))
     expect(fixture.adapter.discard).not.toHaveBeenCalled()
 
-    const dialog = screen.getByRole('alertdialog', { name: 'Discard dirty Worktree?' })
-    const confirm = within(dialog).getByRole('button', { name: 'Confirm dirty discard' })
+    const dialog = screen.getByRole('alertdialog', { name: '放弃有修改的 Worktree？' })
+    const confirm = within(dialog).getByRole('button', { name: '确认放弃修改' })
     await waitFor(() => expect(document.activeElement).toBe(confirm))
     fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(screen.queryByRole('alertdialog')).toBeNull()
 
-    fireEvent.click(within(row).getByRole('button', { name: 'Discard checkout-1' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm dirty discard' }))
+    fireEvent.click(within(row).getByRole('button', { name: '放弃 checkout-1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认放弃修改' }))
     await waitFor(() => expect(fixture.adapter.discard).toHaveBeenCalledWith({
       sessionId: 'source-session',
       checkoutId: 'checkout-1',
       expectedRevision: 7,
       confirmDirty: true,
+    }))
+  })
+
+  test('Console 放弃 active Preview 时明确请求 Host 先安全 rollback', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const preview = {
+      ...fixture.target,
+      state: 'preview_active' as const,
+      revision: 8,
+      capabilities: { ...fixture.target.capabilities, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: true },
+    }
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: preview } }))
+    fixture.adapter.list = vi.fn(async () => ({ ok: true, value: { project: preview.project, worktrees: [summaryOf(preview)] } }))
+    fixture.adapter.discard = vi.fn(async () => ({ ok: true, value: { target: { ...summaryOf(preview), state: 'delivered', phase: 'discarded' } } }))
+    renderConsole(fixture.adapter, clientServices(), 'target-session')
+
+    const row = await screen.findByRole('listitem')
+    fireEvent.click(within(row).getByRole('button', { name: '放弃 checkout-1' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('只有撤回成功后才会删除 Worktree')
+    fireEvent.click(screen.getByRole('button', { name: '确认放弃修改' }))
+
+    await waitFor(() => expect(fixture.adapter.discard).toHaveBeenCalledWith({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 8, confirmDirty: true, rollbackPreview: true,
     }))
   })
 
@@ -632,7 +699,7 @@ describe('Worktree Console guarded mutations', () => {
     renderConsole(fixture.adapter)
 
     const row = await screen.findByRole('listitem')
-    fireEvent.click(within(row).getByRole('button', { name: 'Discard checkout-1' }))
+    fireEvent.click(within(row).getByRole('button', { name: '放弃 checkout-1' }))
     await waitFor(() => expect(within(row).getByText('r12')).toBeTruthy())
     expect(within(row).queryByText('r8')).toBeNull()
   })
@@ -652,7 +719,7 @@ describe('Worktree Console guarded mutations', () => {
     renderConsole(fixture.adapter)
 
     const row = await screen.findByRole('listitem')
-    fireEvent.click(within(row).getByRole('button', { name: 'Discard checkout-1' }))
+    fireEvent.click(within(row).getByRole('button', { name: '放弃 checkout-1' }))
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('stale_target'))
     await waitFor(() => expect(fixture.adapter.list).toHaveBeenCalledTimes(2))
@@ -682,7 +749,7 @@ describe('Worktree Console guarded mutations', () => {
     }))
     renderConsole(fixture.adapter)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry cleanup checkout-1' }))
+    fireEvent.click(await screen.findByRole('button', { name: '重试清理 checkout-1' }))
     await waitFor(() => expect(fixture.adapter.retryCleanup).toHaveBeenCalledWith({
       sessionId: 'source-session',
       checkoutId: 'checkout-1',

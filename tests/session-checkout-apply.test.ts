@@ -144,6 +144,94 @@ describe('SessionCheckoutApplyEngine', () => {
     expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('finished task\n')
   })
 
+  test('Given Preview receipt persistence fails When beforeWrite rejects Then Local remains byte-for-byte unchanged', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'prepared preview\n')
+    const engine = createSessionCheckoutApplyEngine()
+    let prepared = false
+
+    const result = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-prepared',
+      reviewId: 'review-prepared',
+      iteration: 1,
+      beforeWrite: async (receipt) => {
+        prepared = true
+        expect(receipt.previewWorkingTreeOid).toHaveLength(40)
+        expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('base\n')
+        throw new Error('模拟 registry 持久化失败')
+      },
+    })
+
+    expect(prepared).toBe(true)
+    expect(result).toMatchObject({ status: 'error', error: { code: 'git_error' } })
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('base\n')
+    expect(await runGit(fixture.localPath, ['status', '--porcelain=v1'])).toBe('')
+  })
+
+  test('Given a task Preview is active When a fresh engine rolls it back Then Local returns to its prior state and unrelated review work remains', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')
+    await runGit(fixture.localPath, ['add', 'local-staged.txt'])
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const engine = createSessionCheckoutApplyEngine()
+
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-1',
+      reviewId: 'review-1',
+      iteration: 1,
+    })
+
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('preview task\n')
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(fixture.baseOid)
+    expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('local-staged.txt')
+    await writeFile(join(fixture.localPath, 'review-note.txt'), 'created while reviewing\n')
+
+    const rollback = await createSessionCheckoutApplyEngine().rollback({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+    })
+
+    expect(rollback).toMatchObject({ status: 'preview_rolled_back', changedFiles: ['tracked.txt'] })
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('base\n')
+    expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('local-staged.txt')
+    expect(await readFile(join(fixture.localPath, 'review-note.txt'), 'utf8')).toBe('created while reviewing\n')
+  })
+
+  test('Given Preview is accepted after unrelated Local work When a fresh engine finalizes Then only the task enters one commit', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')
+    await runGit(fixture.localPath, ['add', 'local-staged.txt'])
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'accepted preview\n')
+    const engine = createSessionCheckoutApplyEngine()
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-2',
+      reviewId: 'review-2',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    await writeFile(join(fixture.localPath, 'merge.txt'), 'review-local\nsecond\nthird\n')
+    await writeFile(join(fixture.localPath, 'review-untracked.txt'), 'keep me\n')
+
+    const result = await createSessionCheckoutApplyEngine().finalize({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+      commitMessage: 'fix: accepted preview',
+    })
+
+    expect(result.status).toBe('finished')
+    if (result.status !== 'finished') throw new Error(`预期 finished，实际为 ${result.status}`)
+    expect(result.commitOid).toBe(await runGit(fixture.localPath, ['rev-parse', 'HEAD']))
+    expect(await runGit(fixture.localPath, ['show', '-s', '--format=%s', 'HEAD'])).toBe('fix: accepted preview')
+    expect(await runGit(fixture.localPath, ['show', '--format=', '--name-only', 'HEAD'])).toBe('tracked.txt')
+    expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('local-staged.txt')
+    expect(await runGit(fixture.localPath, ['diff', '--name-only'])).toBe('merge.txt')
+    expect(await readFile(join(fixture.localPath, 'review-untracked.txt'), 'utf8')).toBe('keep me\n')
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('accepted preview\n')
+  })
+
   test('Given Local has unrelated staged, unstaged and untracked work When Finish runs Then only task changes enter the commit and Local layers remain', async () => {
     const fixture = await createFixture()
     await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')

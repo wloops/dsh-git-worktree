@@ -118,7 +118,7 @@ export function registerTools(ctx: Context, module: SessionCheckoutModule): void
 
   ctx.tools.register(defineTool({
     name: 'worktree_ready_for_review',
-    description: 'Final model action for an isolated Session: persist the complete delivery report and suggested commit message, then stop. The user reviews the Worktree card and explicitly chooses Finish/retention; the model must not commit or clean up automatically.',
+    description: 'Isolated Session 的最后一个模型动作：把完整交付报告、验证证据和建议 Commit Message 仅写入本工具参数，然后立即停止。不要在调用前后用普通回复重复完整报告；最多用一句话提示用户通过底部验收条处理。用户会显式决定是否提交或放弃，模型不得自动提交或清理。',
     parameters: {
       summary: {
         type: 'string',
@@ -193,6 +193,7 @@ export function registerTools(ctx: Context, module: SessionCheckoutModule): void
         state: target.delivery.state,
         reviewId: target.delivery.review.reviewId,
         revision: target.revision,
+        iteration: target.delivery.review.iteration,
         changedFiles: target.delivery.review.changedFiles,
       }
     },

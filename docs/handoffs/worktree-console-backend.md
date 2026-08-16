@@ -126,7 +126,7 @@ Local fingerprint/head CAS
 project acceptance lock
 ```
 
-Commit Message 从 persisted review 读取。Remote request 不接受 commitMessage。
+Finalize Remote 接受用户在官方确认 Modal 中确认的 `commitMessage`，但它不是授权材料。strict codec 与 Host control plane 都必须拒绝空白或超过 500 字符的值；caller、project、review ID/revision、fingerprint/head 和 Local CAS 校验保持不变。
 
 ### reviewDiff
 
@@ -200,7 +200,8 @@ lib/typert.remote-client.*
 - current/list/create/inspect/mutations 全部 caller-scoped；
 - path 只在授权 detail 中出现；
 - Review diff 严格绑定 review identity；
-- finalize 不接受任意 Commit Message；
+- preflight/preview/rollbackPreview/finalizePreview 使用 strict codec，并在 Host 绑定 caller、review、revision、HEAD/fingerprint、Local CAS 与项目级验收槽位；
+- finalize 只作为 Ready direct finish，接受 strict codec 与 Host 双重验证后的 1–500 字符用户确认 Commit Message，且该文本不能影响任何授权判断；
 - Typert artifacts 进入 npm payload且 publish gate 检查；
 - 现有 tool/command 行为保持兼容；
 - 不修改 Harness。
@@ -221,7 +222,7 @@ pnpm pack --dry-run
 
 - React UI；
 - Sidebar/Drawer 样式；
-- Local Preview/Rollback；
+- 浏览器选择 Preview receipt、Local 路径或验收槽位 owner；
 - 模型工具扩展；
 - hunk acceptance；
 - 修改 Harness api-remotes 固定组合。

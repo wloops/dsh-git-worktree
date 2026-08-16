@@ -8,6 +8,7 @@ import {
   type WorktreeConsoleListResponse,
   type WorktreeConsoleMutationResponse,
   type WorktreeConsoleOutcome,
+  type WorktreeConsolePreflightResponse,
   type WorktreeConsoleReviewDiffResponse,
 } from '../console-contract.js'
 
@@ -16,6 +17,7 @@ const strict = <T extends z.core.$ZodLooseShape>(shape: T) => z.object(shape).st
 export const sessionIdSchema = z.string().min(1)
 export const checkoutIdSchema = z.string().min(1).refine(value => !value.includes('..') && !/[\\/\0]/u.test(value), 'unsafe checkout id')
 export const reviewIdSchema = z.string().min(1)
+export const commitMessageSchema = z.string().trim().min(1).max(500)
 export const revisionSchema = z.number().int().nonnegative()
 export const oidSchema = z.union([
   z.literal('unversioned'),
@@ -49,7 +51,11 @@ const capabilitiesSchema = strict({
   open: z.boolean(),
   inspect: z.boolean(),
   discard: z.boolean(),
+  preflight: z.boolean(),
+  preview: z.boolean(),
+  rollbackPreview: z.boolean(),
   finalize: z.boolean(),
+  finalizePreview: z.boolean(),
   setRetention: z.boolean(),
   retryCleanup: z.boolean(),
 })
@@ -71,6 +77,8 @@ const targetSummarySchema = strict({
   expiresAt: z.number().finite().nullable().optional(),
   cleanupMessage: z.string().optional(),
   review: reviewSchema.optional(),
+  reviewSlot: z.enum(['available', 'waiting']).optional(),
+  reviewSlotOwnerSessionId: sessionIdSchema.optional(),
   capabilities: capabilitiesSchema,
 })
 const targetDetailsSchema = targetSummarySchema.extend({
@@ -112,6 +120,34 @@ const diffFileSchema = strict({
   patch: z.string().nullable(),
   truncated: z.boolean(),
 })
+const preflightFactsSchema = {
+  localModified: z.literal(false),
+  checkoutId: checkoutIdSchema,
+  reviewId: reviewIdSchema,
+  revision: revisionSchema,
+  configuredBaseOid: oidSchema,
+  effectiveBaseOid: oidSchema,
+  baseStrategy: z.enum(['recorded_base', 'isolated_contains_local_head', 'local_contains_isolated_head']),
+  localBranch: z.string().nullable(),
+  localHeadOid: oidSchema,
+  isolatedHeadOid: oidSchema,
+  changedFiles: z.array(z.string()),
+}
+const preflightSchema = z.union([
+  strict({ status: z.enum(['ready', 'local_advanced', 'already_in_local']), ...preflightFactsSchema }),
+  strict({ status: z.literal('conflict'), ...preflightFactsSchema, conflictingFiles: z.array(z.string()) }),
+  strict({
+    status: z.literal('blocked'),
+    localModified: z.literal(false),
+    checkoutId: z.string(),
+    reviewId: reviewIdSchema.nullable(),
+    revision: revisionSchema,
+    reason: z.enum(['not_owner', 'not_ready_for_review', 'stale_target', 'stale_isolated', 'project_acceptance_busy', 'checkout_unavailable', 'git_error']),
+    message: z.string(),
+  }),
+])
+export const preflightResponseSchema: z.ZodType<WorktreeConsolePreflightResponse> = strict({ preflight: preflightSchema })
+
 export const reviewDiffResponseSchema: z.ZodType<WorktreeConsoleReviewDiffResponse> = strict({
   reviewId: reviewIdSchema,
   revision: revisionSchema,

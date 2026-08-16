@@ -104,10 +104,11 @@ export interface ManagedCheckoutCreateJournal extends ManagedCheckoutJournalBase
 }
 
 export interface ManagedCheckoutMutationJournal extends ManagedCheckoutJournalBase {
-  operation: 'apply' | 'finish' | 'cleanup'
+  operation: 'apply' | 'preview' | 'rollback_preview' | 'finish' | 'finalize_preview' | 'cleanup'
   step: 'planning' | 'artifacts_retained' | 'writing_local' | 'updating_ref' | 'replacing_index' | 'removing_worktree'
   baseOid?: string
   planRevision?: string
+  previewId?: string
   reviewId?: string
   localFingerprint?: string
   isolatedFingerprint?: string
@@ -117,6 +118,8 @@ export interface ManagedCheckoutMutationJournal extends ManagedCheckoutJournalBa
   isolatedHeadOid?: string
   commitOid?: string
   retention?: WorktreeRetentionMode
+  /** rollback_preview crash recovery must preserve whether the review returns to working or ready_for_review. */
+  resumeRevision?: boolean
   changedFiles?: string[]
   managedDirectoryIdentity?: DirectoryIdentity
   cleanupQuarantinePath?: string
@@ -139,6 +142,27 @@ export interface ManagedWorktreeReviewRecord {
   isolatedHeadOid: string
 }
 
+export interface ManagedPreviewReceipt {
+  previewId: string
+  reviewId: string
+  iteration: number
+  previewedAt: number
+  configuredBaseOid: string
+  effectiveBaseOid: string
+  baseStrategy: ApplyBaseStrategy
+  localHeadOid: string
+  localHeadRef: string | null
+  localFingerprintBefore: string
+  localFingerprintPreview: string
+  localWorkingTreeOid: string
+  localIndexTreeOid: string
+  previewWorkingTreeOid: string
+  isolatedHeadOid: string
+  isolatedFingerprint: string
+  isolatedSnapshotOid: string
+  changedFiles: string[]
+}
+
 export interface ManagedDeliveryProof {
   localBranch: string | null
   localHeadBefore: string
@@ -149,6 +173,15 @@ export interface ManagedDeliveryProof {
 export type ManagedCheckoutDelivery =
   | { state: 'working'; iteration: number }
   | { state: 'ready_for_review'; review: ManagedWorktreeReviewRecord }
+  | { state: 'preview_active'; review: ManagedWorktreeReviewRecord; preview: ManagedPreviewReceipt }
+  | {
+      state: 'preview_detached'
+      review: ManagedWorktreeReviewRecord
+      preview: ManagedPreviewReceipt
+      detachedAt: number
+      reason: 'stale_local' | 'preview_modified'
+      attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard'
+    }
   | {
       state: 'finalized'
       review: ManagedWorktreeReviewRecord

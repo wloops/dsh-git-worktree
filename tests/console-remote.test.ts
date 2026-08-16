@@ -39,8 +39,12 @@ const METHODS = [
   'create',
   'inspect',
   'reviewDiff',
+  'preflight',
+  'preview',
+  'rollbackPreview',
   'discard',
   'finalize',
+  'finalizePreview',
   'setRetention',
   'retryCleanup',
 ]
@@ -73,6 +77,10 @@ describe('manual strict Worktree Console Remote contribution', () => {
       && inspect.parameters[1]!.codec.schema.parse('../checkout')).toThrow()
     expect(() => inspect.result.mode === 'strict'
       && inspect.result.schema.parse({ ok: true, value: { target: { managedRoot: 42 } } })).toThrow()
+    const finalize = WORKTREE_CONSOLE_DESCRIPTORS.find((descriptor) => descriptor.method === 'finalize')!
+    const commitMessage = finalize.parameters.find(parameter => parameter.name === 'commitMessage')!
+    expect(() => commitMessage.codec.mode === 'strict' && commitMessage.codec.schema.parse('   ')).toThrow()
+    expect(() => commitMessage.codec.mode === 'strict' && commitMessage.codec.schema.parse('x'.repeat(501))).toThrow()
   })
 
   it('is automatically discovered from the package ./typert export by the official Loader', async () => {

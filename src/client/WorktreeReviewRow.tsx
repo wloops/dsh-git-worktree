@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetSummary } from '../console-contract.js'
 import type { WorktreeClientServices } from './actions.js'
 import { parseReviewTool, type ToolCallViewPropsLike } from './model.js'
+import { requestWorktreeReviewRefresh } from './review-console/status-events.js'
 import {
   WorktreeReviewPanel,
   type WorktreeReviewEvidence,
@@ -15,7 +16,7 @@ interface Props extends ToolCallViewPropsLike {
   adapter?: WorktreeConsoleAdapter
 }
 
-export function WorktreeReviewRow({ block, inspect, sessionId, adapter }: Props) {
+export function WorktreeReviewRow({ block, sessionId, adapter }: Props) {
   const model = parseReviewTool(block)
   const payload = model.payload
   const args = model.args
@@ -26,7 +27,7 @@ export function WorktreeReviewRow({ block, inspect, sessionId, adapter }: Props)
   const review: WorktreeReviewEvidence | null = payload && args ? {
     reviewId: payload.reviewId,
     revision: payload.revision,
-    iteration: 0,
+    iteration: payload.iteration,
     preparedAt: 0,
     summary: args.summary,
     validationStatus: args.validationStatus,
@@ -36,6 +37,10 @@ export function WorktreeReviewRow({ block, inspect, sessionId, adapter }: Props)
     suggestedCommitMessage: args.suggestedCommitMessage,
     ...(args.details ? { detailsMarkdown: args.details } : {}),
   } : null
+
+  useEffect(() => {
+    if (payload && sessionId) requestWorktreeReviewRefresh(sessionId)
+  }, [payload?.reviewId, payload?.revision, sessionId])
 
   useEffect(() => {
     setLiveTarget(undefined)
@@ -58,7 +63,7 @@ export function WorktreeReviewRow({ block, inspect, sessionId, adapter }: Props)
     ? {
         sessionId,
         checkoutId: liveTarget.checkoutId,
-        expectedRevision: payload.revision,
+        expectedRevision: liveTarget.review?.reviewId === payload.reviewId ? liveTarget.revision : payload.revision,
         expectedReviewId: payload.reviewId,
       }
     : undefined
@@ -66,14 +71,13 @@ export function WorktreeReviewRow({ block, inspect, sessionId, adapter }: Props)
     ? `实时 Worktree Console 不可用：${liveError}`
     : adapter && sessionId
       ? '正在连接实时 Worktree Console；历史验收证据仍可查看。'
-      : '实时 Worktree Console 未连接；连接后刷新即可查看 Diff 并执行操作。'
+      : '实时 Worktree Console 未连接；连接后即可执行验收操作。'
 
   return (
-    <section className="dsh-wt-card" data-tool="worktree_ready_for_review" data-state={state} aria-label="Worktree Ready for Review">
+    <section className="dsh-wt-card" data-tool="worktree_ready_for_review" data-state={state} aria-label="Worktree 待验收">
       {review ? (
         <WorktreeReviewPanel
           review={review}
-          inspect={inspect}
           adapter={adapter}
           identity={identity}
           target={liveTarget}
@@ -84,7 +88,7 @@ export function WorktreeReviewRow({ block, inspect, sessionId, adapter }: Props)
       ) : (
         <header className="dsh-wt-head">
           <span className="dsh-wt-mark" aria-hidden />
-          <strong className="dsh-wt-title">Ready for Review</strong>
+          <strong className="dsh-wt-title">Worktree 待验收</strong>
           <span className="dsh-wt-subtitle">
             {model.lifecycle === 'running' ? '正在冻结验收快照…' : '验收信息不可用'}
           </span>

@@ -34,6 +34,7 @@ import type {
   DirectoryIdentity,
   GitCheckoutSnapshot,
   ManagedCheckoutRecord,
+  ManagedPreviewReceipt,
   SessionBindingRecord,
   SessionCheckoutDependencies,
   SessionCheckoutProjectRecord,
@@ -41,10 +42,10 @@ import type {
 } from './ports.js'
 
 /**
- * dsh-git-worktree session-checkout state machine, ported from Domi with the
- * Local-preview delegation surface removed. Lifecycle: bind → working →
- * ready_for_review → apply / finish / discard → delivered, with journal-based
- * crash recovery and fingerprint CAS throughout.
+ * dsh-git-worktree session-checkout state machine, ported from Domi. It keeps
+ * receipt-first Local Preview, rollback/finalize, project acceptance slots,
+ * crash recovery and fingerprint CAS while adapting ownership to Harness's
+ * separate source Local Session and target owner Session.
  * @module dsh-git-worktree/session-checkout-module
  */
 
@@ -211,6 +212,19 @@ export function createSessionCheckoutModule(
       : undefined
     if (delivery.state === 'working') return delivery
     if (delivery.state === 'ready_for_review') return { state: delivery.state, review: delivery.review }
+    if (delivery.state === 'preview_active') {
+      return { state: delivery.state, review: delivery.review, previewedAt: delivery.preview.previewedAt }
+    }
+    if (delivery.state === 'preview_detached') {
+      return {
+        state: delivery.state,
+        review: delivery.review,
+        previewedAt: delivery.preview.previewedAt,
+        detachedAt: delivery.detachedAt,
+        reason: delivery.reason,
+        attemptedAction: delivery.attemptedAction,
+      }
+    }
     if (delivery.state === 'finalized') {
       return {
         state: delivery.state,
@@ -627,6 +641,14 @@ export function createSessionCheckoutModule(
     }
     const { snapshot, status } = validation.checkout
     const delivery = projectDelivery(record)
+    const activePreview = delivery?.state === 'ready_for_review'
+      ? Object.values(registry.managedCheckouts).find((candidate) => (
+          candidate.checkoutId !== record.checkoutId
+          && candidate.phase !== 'discarded'
+          && pathsEqual(candidate.localRoot, record.localRoot)
+          && holdsProjectAcceptanceSlot(candidate)
+        ))
+      : undefined
     return {
       project: { id: record.projectId, name: record.projectName },
       checkout: {
@@ -641,6 +663,12 @@ export function createSessionCheckoutModule(
       dirty: status.dirty,
       revision: record.revision,
       delivery,
+      ...(delivery?.state === 'ready_for_review'
+        ? {
+            reviewSlot: activePreview ? 'waiting' as const : 'available' as const,
+            ...(activePreview ? { reviewSlotOwnerSessionId: activePreview.ownerSessionId } : {}),
+          }
+        : {}),
     }
   }
 
@@ -653,16 +681,37 @@ export function createSessionCheckoutModule(
     const binding = registry.sessionBindings[sessionId]
     if (!binding) return ''
     if (binding.target.kind === 'local') {
-      const pending = Object.values(registry.managedCheckouts)
+      const projectPreview = Object.values(registry.managedCheckouts)
+        .filter((record) => record.projectId === binding.projectId && record.phase !== 'discarded')
+        .filter((record) => record.delivery.state === 'preview_active'
+          || record.delivery.state === 'preview_detached')
+        .sort((left, right) => managedUpdatedAt(right) - managedUpdatedAt(left))[0]
+      const pending = projectPreview ?? Object.values(registry.managedCheckouts)
         .filter((record) => record.sourceSessionId === sessionId && record.phase !== 'discarded')
         .filter((record) => record.delivery.state === 'working'
           || record.delivery.state === 'ready_for_review'
+          || record.delivery.state === 'preview_active'
+          || record.delivery.state === 'preview_detached'
           || record.phase === 'preparing'
           || record.phase === 'mutating'
           || record.phase === 'recovery_required')
         .sort((left, right) => managedUpdatedAt(right) - managedUpdatedAt(left))[0]
       if (!pending) {
         return 'Session Target: Local Checkout. No isolated target is active for this Session.'
+      }
+      if (pending.delivery.state === 'preview_active') {
+        return [
+          'Session Target: Local Checkout (Worktree Preview active).',
+          `Managed checkout ${pending.checkoutId} has a reversible Preview in this Local boundary.`,
+          'Do not modify project files or run repository-changing commands. Only the user may accept, rollback, or discard the Preview through the Worktree acceptance UI.',
+        ].join('\n')
+      }
+      if (pending.delivery.state === 'preview_detached') {
+        return [
+          'Session Target: Local Checkout (Worktree Preview recovery required).',
+          `Managed checkout ${pending.checkoutId} still has preserved Preview recovery evidence.`,
+          'Do not modify project files or attempt automatic cleanup. The user must retry rollback; the Worktree stays preserved until rollback succeeds.',
+        ].join('\n')
       }
       return [
         'Session Target: Local Checkout (handoff pending).',
@@ -683,9 +732,13 @@ export function createSessionCheckoutModule(
       'Make task changes only in the authoritative cwd; never write directly to the Original Local boundary.',
     ]
     if (record.delivery.state === 'ready_for_review') {
-      lines.push('Delivery state: Ready for Review. The model must stop; only the user may Finish, retain, discard, or clean up through the Worktree card/command.')
+      lines.push('Delivery state: Ready for Review. The model must stop; only the user may preview, directly finish, discard, or clean up through the Worktree acceptance UI.')
+    } else if (record.delivery.state === 'preview_active') {
+      lines.push('Delivery state: Local Preview active. The model must remain read-only; only the user may accept and commit, rollback, or discard through the Worktree acceptance UI.')
+    } else if (record.delivery.state === 'preview_detached') {
+      lines.push('Delivery state: Preview detached after Local drift. Do not mutate Local or the Worktree; the user must retry rollback, and Discard remains blocked until recovery succeeds.')
     } else if (record.delivery.state === 'working') {
-      lines.push('Delivery state: Working. When implementation and validation are complete, call worktree_ready_for_review as the final model tool.')
+      lines.push('Delivery state: Working. When implementation and validation are complete, put the complete report only in worktree_ready_for_review and call it as the final model tool. Do not duplicate that report in ordinary assistant prose; at most one short sentence may point the user to the bottom acceptance bar.')
     } else {
       lines.push(`Delivery state: ${record.delivery.state}. Treat this Session as terminal unless the user starts a new iteration.`)
     }
@@ -843,10 +896,114 @@ export function createSessionCheckoutModule(
       }
       if (
         current.phase === 'mutating'
-        && (current.journal?.operation === 'apply' || current.journal?.operation === 'finish')
+        && (current.journal?.operation === 'finalize_preview' || current.journal?.operation === 'finish')
+        && current.journal.step === 'updating_ref'
+        && typeof current.journal.commitOid === 'string'
+        && current.delivery.state === 'preview_active'
+      ) {
+        const local = await dependencies.git.inspect(current.localRoot)
+        if (local?.headOid === current.journal.commitOid) {
+          const retention = current.journal.retention ?? 'cleanup'
+          const recoveredAt = Date.now()
+          record = retention === 'cleanup'
+            ? {
+                ...current,
+                phase: 'finalized',
+                delivery: {
+                  state: 'finalized',
+                  review: current.delivery.review,
+                  commitOid: current.journal.commitOid,
+                  proof: {
+                    localBranch: current.delivery.preview.localHeadRef?.startsWith('refs/heads/')
+                      ? current.delivery.preview.localHeadRef.slice('refs/heads/'.length)
+                      : null,
+                    localHeadBefore: current.delivery.preview.localHeadOid,
+                    localHeadAfter: current.journal.commitOid,
+                    changedFiles: [...current.delivery.preview.changedFiles],
+                  },
+                  isolatedFingerprint: current.delivery.preview.isolatedFingerprint,
+                  finalizedAt: recoveredAt,
+                  cleanup: 'blocked',
+                  cleanupMessage: 'Commit 已创建，但进程在 Local index 完成前中断；请确认 Local 状态后再处理 Worktree。',
+                },
+                journal: null,
+                revision: current.revision + 1,
+              }
+            : {
+                ...current,
+                phase: 'retained',
+                delivery: {
+                  state: 'retained',
+                  review: current.delivery.review,
+                  commitOid: current.journal.commitOid,
+                  proof: {
+                    localBranch: current.delivery.preview.localHeadRef?.startsWith('refs/heads/')
+                      ? current.delivery.preview.localHeadRef.slice('refs/heads/'.length)
+                      : null,
+                    localHeadBefore: current.delivery.preview.localHeadOid,
+                    localHeadAfter: current.journal.commitOid,
+                    changedFiles: [...current.delivery.preview.changedFiles],
+                  },
+                  isolatedFingerprint: current.delivery.preview.isolatedFingerprint,
+                  retention,
+                  retainedAt: recoveredAt,
+                  expiresAt: retentionExpiresAt(retention, recoveredAt),
+                  cleanup: 'blocked',
+                  cleanupMessage: 'Commit 已创建并保留 Worktree，但进程在 Local index 完成前中断；请确认 Local 状态。',
+                },
+                journal: null,
+                revision: current.revision + 1,
+              }
+        } else {
+          record = {
+            ...current,
+            phase: 'ready',
+            journal: null,
+            revision: current.revision + 1,
+          }
+        }
+        registry.managedCheckouts[checkoutId] = record
+        registry.revision += 1
+        changed = true
+      } else if (
+        current.phase === 'mutating'
+        && current.journal?.operation === 'preview'
+        && (
+          current.journal.step === 'planning'
+          || (current.journal.step === 'writing_local' && current.delivery.state === 'ready_for_review')
+        )
+      ) {
+        // Preview receipt 尚未保留，apply patch 也尚未执行；可证明 Local 未被触碰。
+        record = {
+          ...current,
+          phase: 'ready',
+          journal: null,
+          revision: current.revision + 1,
+        }
+        registry.managedCheckouts[checkoutId] = record
+        registry.revision += 1
+        changed = true
+      } else if (
+        current.phase === 'mutating'
+        && (current.journal?.operation === 'finalize_preview' || current.journal?.operation === 'finish')
         && current.journal.step === 'planning'
       ) {
-        // planning 阶段尚未触碰 Local，可安全重试。
+        // Finalize 的 branch/index 写入发生在 updating_ref 之后；planning 中断可安全重试。
+        record = {
+          ...current,
+          phase: 'ready',
+          journal: null,
+          revision: current.revision + 1,
+        }
+        registry.managedCheckouts[checkoutId] = record
+        registry.revision += 1
+        changed = true
+      } else if (
+        current.phase === 'mutating'
+        && (current.journal?.operation === 'preview' || current.journal?.operation === 'finish')
+        && current.journal.step === 'artifacts_retained'
+        && current.delivery.state === 'preview_active'
+      ) {
         record = {
           ...current,
           phase: 'ready',
@@ -940,7 +1097,7 @@ export function createSessionCheckoutModule(
     }
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
     if (!record) throw new SessionCheckoutError('checkout_missing', 'Isolated Checkout 记录不存在')
-    if (record.phase !== 'ready') {
+    if (record.phase !== 'ready' || record.delivery.state === 'preview_active' || record.delivery.state === 'preview_detached') {
       throw new SessionCheckoutError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能准备验收`)
     }
     const inspected = await inspectIsolated(binding)
@@ -1143,7 +1300,11 @@ export function createSessionCheckoutModule(
   }
 
   function holdsProjectAcceptanceSlot(record: ManagedCheckoutRecord): boolean {
-    return record.journal?.operation === 'apply' || record.journal?.operation === 'finish'
+    return record.delivery.state === 'preview_active'
+      || record.journal?.operation === 'preview'
+      || record.journal?.operation === 'rollback_preview'
+      || record.journal?.operation === 'finalize_preview'
+      || record.journal?.operation === 'finish'
   }
 
   function findProjectAcceptanceHolder(record: ManagedCheckoutRecord): ManagedCheckoutRecord | undefined {
@@ -1153,6 +1314,22 @@ export function createSessionCheckoutModule(
       && pathsEqual(candidate.localRoot, record.localRoot)
       && holdsProjectAcceptanceSlot(candidate)
     ))
+  }
+
+  async function retainPreviewArtifacts(record: ManagedCheckoutRecord, receipt: ManagedPreviewReceipt): Promise<void> {
+    const prefix = `previews/${receipt.previewId}`
+    await dependencies.git.retainInternalArtifact(record.localRoot, record.checkoutId, `${prefix}/local-working`, receipt.localWorkingTreeOid)
+    await dependencies.git.retainInternalArtifact(record.localRoot, record.checkoutId, `${prefix}/local-index`, receipt.localIndexTreeOid)
+    await dependencies.git.retainInternalArtifact(record.localRoot, record.checkoutId, `${prefix}/preview-working`, receipt.previewWorkingTreeOid)
+    await dependencies.git.retainInternalArtifact(record.localRoot, record.checkoutId, `${prefix}/isolated-snapshot`, receipt.isolatedSnapshotOid)
+  }
+
+  async function releasePreviewArtifactsBestEffort(record: ManagedCheckoutRecord, previewId: string): Promise<void> {
+    try {
+      await dependencies.git.releaseInternalArtifacts(record.localRoot, record.checkoutId, `previews/${previewId}`)
+    } catch {
+      console.warn('[session-checkout] 清理 Preview refs 失败，已保守保留不可见引用')
+    }
   }
 
   function blockedPreflight(
@@ -1240,6 +1417,260 @@ export function createSessionCheckoutModule(
     return { ...common, status }
   }
 
+  async function operatePreview(
+    input: Extract<SessionCheckoutOperation, { action: 'preview' }>,
+    binding: SessionBindingRecord,
+  ): Promise<SessionCheckoutOperationResult> {
+    if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
+      return operationError('not_owner', '只有 owner Isolated 会话可以同步验收')
+    }
+    let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
+    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (record.revision !== input.expectedRevision) {
+      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+    }
+    if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
+      return operationError('operation_not_allowed', '当前 Worktree 尚未处于可验收状态', await inspectIsolated(binding))
+    }
+    const holder = findProjectAcceptanceHolder(record)
+    if (holder) {
+      return operationError(
+        'project_acceptance_busy',
+        `同一项目已有验收任务正在占用 Local：${holder.projectName}`,
+        await inspectIsolated(binding),
+      )
+    }
+    const inspected = await inspectIsolated(binding)
+    if (inspected.checkout.phase !== 'ready') {
+      return operationError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复', inspected)
+    }
+    record = dependencies.registry.read().managedCheckouts[record.checkoutId]
+    if (!record || record.delivery.state !== 'ready_for_review') {
+      return operationError('stale_target', '验收状态已变化，请刷新后重试')
+    }
+    const review = record.delivery.review
+    const operationId = dependencies.createCheckoutId()
+    const previewId = dependencies.createCheckoutId()
+    const startedAt = Date.now()
+    const applyBaseOid = record.applyBaseOid ?? record.baseOid
+    const mutating = updateManagedCheckout(record.checkoutId, (current) => ({
+      ...current,
+      phase: 'mutating',
+      journal: {
+        operation: 'preview',
+        operationId,
+        step: 'planning',
+        startedAt,
+        baseOid: applyBaseOid,
+        previewId,
+        reviewId: review.reviewId,
+      },
+      revision: current.revision + 1,
+    }))
+    if (!mutating) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+
+    const planResult = await dependencies.applyEngine.plan({
+      baseOid: applyBaseOid,
+      isolatedPath: mutating.managedRoot,
+      localPath: mutating.localRoot,
+    })
+    if (planResult.status === 'conflict') {
+      updateManagedCheckout(mutating.checkoutId, (current) => ({ ...current, phase: 'ready', journal: null, revision: current.revision + 1 }))
+      return {
+        status: 'conflict',
+        code: 'apply_conflict',
+        reason: 'content_conflict',
+        target: await inspectIsolated(binding),
+        baseStrategy: planResult.baseStrategy,
+        effectiveBaseOid: planResult.effectiveBaseOid,
+        localHeadOid: planResult.localHeadOid,
+        isolatedHeadOid: planResult.isolatedHeadOid,
+        canRetryAfterRefresh: false,
+        conflictingFiles: planResult.conflictingFiles,
+      }
+    }
+    if (planResult.status === 'error') {
+      updateManagedCheckout(mutating.checkoutId, (current) => ({ ...current, phase: 'ready', journal: null, revision: current.revision + 1 }))
+      return operationError(planResult.error.code, planResult.error.message, await inspectIsolated(binding))
+    }
+    if (planResult.plan.isolatedFingerprint !== review.isolatedFingerprint) {
+      updateManagedCheckout(mutating.checkoutId, (current) => ({
+        ...current,
+        phase: 'ready',
+        delivery: { state: 'working', iteration: review.iteration },
+        journal: null,
+        revision: current.revision + 1,
+      }))
+      return operationError('stale_isolated', 'Worktree 在标记可验收后又发生变化，请重新准备验收', await inspectIsolated(binding))
+    }
+    updateManagedCheckout(mutating.checkoutId, (current) => ({
+      ...current,
+      journal: {
+        operation: 'preview',
+        operationId,
+        step: 'writing_local',
+        startedAt,
+        baseOid: applyBaseOid,
+        previewId,
+        reviewId: review.reviewId,
+        planRevision: planResult.plan.revision,
+        localFingerprint: planResult.plan.localFingerprint,
+        isolatedFingerprint: planResult.plan.isolatedFingerprint,
+        effectiveBaseOid: planResult.plan.effectiveBaseOid,
+        baseStrategy: planResult.plan.baseStrategy,
+        localHeadOid: planResult.plan.localHeadOid,
+        isolatedHeadOid: planResult.plan.isolatedHeadOid,
+        changedFiles: [...planResult.plan.changedFiles],
+      },
+      revision: current.revision + 1,
+    }))
+    const previewResult = await dependencies.applyEngine.preview(planResult.plan, {
+      previewId,
+      reviewId: review.reviewId,
+      iteration: review.iteration,
+      beforeWrite: async (receipt) => {
+        await retainPreviewArtifacts(mutating, receipt)
+        updateManagedCheckout(mutating.checkoutId, (current) => ({
+          ...current,
+          delivery: { state: 'preview_active', review, preview: receipt },
+          journal: current.journal?.operation === 'preview'
+            ? { ...current.journal, step: 'artifacts_retained' }
+            : current.journal,
+          revision: current.revision + 1,
+        }))
+      },
+    })
+    if (previewResult.status === 'error') {
+      const current = dependencies.registry.read().managedCheckouts[mutating.checkoutId]
+      const definitelyUnchanged = previewResult.error.code === 'stale_local'
+        || previewResult.error.code === 'stale_isolated'
+        || previewResult.error.code === 'invalid_plan'
+        || previewResult.error.code === 'invalid_input'
+        || current?.journal?.step === 'writing_local'
+      if (current?.journal?.step === 'writing_local') await releasePreviewArtifactsBestEffort(mutating, previewId)
+      if (definitelyUnchanged || current?.journal?.step === 'artifacts_retained') {
+        updateManagedCheckout(mutating.checkoutId, (checkout) => ({ ...checkout, phase: 'ready', journal: null, revision: checkout.revision + 1 }))
+      }
+      return operationError(previewResult.error.code, previewResult.error.message, await inspectIsolated(binding))
+    }
+    const receipt: ManagedPreviewReceipt = previewResult.receipt
+    updateManagedCheckout(mutating.checkoutId, (current) => ({
+      ...current,
+      phase: 'ready',
+      delivery: { state: 'preview_active', review, preview: receipt },
+      journal: null,
+      revision: current.revision + 1,
+    }))
+    return { status: 'previewed', target: await inspectIsolated(binding), changedFiles: previewResult.changedFiles }
+  }
+
+  async function detachPreviewAfterLocalDrift(
+    record: ManagedCheckoutRecord,
+    binding: SessionBindingRecord,
+    reason: 'stale_local' | 'preview_modified',
+    attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard',
+  ): Promise<SessionCheckoutOperationResult> {
+    if (record.delivery.state !== 'preview_active') {
+      return operationError('preview_not_active', '当前没有可解除的 Local Preview', await inspectIsolated(binding))
+    }
+    const { review, preview } = record.delivery
+    const detached = updateManagedCheckout(record.checkoutId, (current) => {
+      if (current.delivery.state !== 'preview_active') return current
+      return {
+        ...current,
+        phase: 'ready',
+        delivery: {
+          state: 'preview_detached',
+          review: current.delivery.review,
+          preview: current.delivery.preview,
+          detachedAt: Date.now(),
+          reason,
+          attemptedAction,
+        },
+        journal: null,
+        revision: current.revision + 1,
+      }
+    })
+    if (!detached || detached.delivery.state !== 'preview_detached') {
+      return operationError('stale_target', 'Preview 状态已变化，请刷新后重试', await inspectIsolated(binding))
+    }
+    return {
+      status: 'preview_detached',
+      target: await inspectIsolated(binding),
+      changedFiles: [...preview.changedFiles],
+      reason,
+      attemptedAction,
+    }
+  }
+
+  async function operateRollbackPreview(
+    input: Extract<SessionCheckoutOperation, { action: 'rollback_preview' }>,
+    binding: SessionBindingRecord,
+  ): Promise<SessionCheckoutOperationResult> {
+    if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
+      return operationError('not_owner', '只有 owner Isolated 会话可以撤回验收')
+    }
+    const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
+    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (record.revision !== input.expectedRevision) {
+      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+    }
+    const retryingRecovery = record.phase === 'recovery_required'
+      && record.delivery.state === 'preview_active'
+      && record.journal?.operation === 'rollback_preview'
+    if (
+      (record.phase !== 'ready' && !retryingRecovery)
+      || (record.delivery.state !== 'preview_active' && record.delivery.state !== 'preview_detached')
+    ) {
+      return operationError('preview_not_active', '当前没有可撤回的 Local Preview', await inspectIsolated(binding))
+    }
+    const retryingDetached = record.delivery.state === 'preview_detached'
+    const resumeRevision = input.resumeRevision ?? (
+      retryingRecovery && record.journal?.operation === 'rollback_preview'
+        ? record.journal.resumeRevision ?? false
+        : false
+    )
+    const { preview, review } = record.delivery
+    const operationId = dependencies.createCheckoutId()
+    const startedAt = Date.now()
+    updateManagedCheckout(record.checkoutId, (current) => ({
+      ...current,
+      phase: 'mutating',
+      journal: {
+        operation: 'rollback_preview',
+        operationId,
+        step: 'planning',
+        startedAt,
+        previewId: preview.previewId,
+        reviewId: review.reviewId,
+        resumeRevision,
+      },
+      revision: current.revision + 1,
+    }))
+    const result = await dependencies.applyEngine.rollback({ localPath: record.localRoot, receipt: preview })
+    if (result.status === 'error') {
+      if (result.error.code === 'stale_local' || result.error.code === 'preview_modified') {
+        if (!retryingDetached) {
+          return detachPreviewAfterLocalDrift(record, binding, result.error.code, 'rollback_preview')
+        }
+        updateManagedCheckout(record.checkoutId, (current) => ({ ...current, phase: 'ready', journal: null, revision: current.revision + 1 }))
+      } else if (result.error.code === 'invalid_input') {
+        updateManagedCheckout(record.checkoutId, (current) => ({ ...current, phase: 'ready', journal: null, revision: current.revision + 1 }))
+      }
+      return operationError(result.error.code, result.error.message, await inspectIsolated(binding))
+    }
+    updateManagedCheckout(record.checkoutId, (current) => ({
+      ...current,
+      phase: 'ready',
+      delivery: resumeRevision
+        ? { state: 'working', iteration: review.iteration }
+        : { state: 'ready_for_review', review },
+      journal: null,
+      revision: current.revision + 1,
+    }))
+    await releasePreviewArtifactsBestEffort(record, preview.previewId)
+    return { status: 'preview_rolled_back', target: await inspectIsolated(binding), changedFiles: result.changedFiles }
+  }
 
   function retainFinalized(
     record: ManagedCheckoutRecord,
@@ -1454,6 +1885,101 @@ export function createSessionCheckoutModule(
   }
 
 
+  async function operateFinalizePreview(
+    input: Extract<SessionCheckoutOperation, { action: 'finalize_preview' }>,
+    binding: SessionBindingRecord,
+  ): Promise<SessionCheckoutOperationResult> {
+    if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
+      return operationError('not_owner', '只有 owner Isolated 会话可以完成验收提交')
+    }
+    const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
+    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (record.revision !== input.expectedRevision) {
+      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+    }
+    if (record.phase !== 'ready' || record.delivery.state !== 'preview_active') {
+      return operationError('preview_not_active', '当前没有等待验收的 Local Preview', await inspectIsolated(binding))
+    }
+    // Harness plugin does not expose Domi collaborator checkout inheritance.
+    const { preview, review } = record.delivery
+    const operationId = dependencies.createCheckoutId()
+    const startedAt = Date.now()
+    updateManagedCheckout(record.checkoutId, (current) => ({
+      ...current,
+      phase: 'mutating',
+      journal: { operation: 'finalize_preview', operationId, step: 'planning', startedAt, previewId: preview.previewId, reviewId: review.reviewId, retention: input.retention ?? 'cleanup' },
+      revision: current.revision + 1,
+    }))
+    const result = await dependencies.applyEngine.finalize({
+      localPath: record.localRoot,
+      receipt: preview,
+      commitMessage: input.commitMessage,
+      beforeCommit: async (commitOid) => {
+        updateManagedCheckout(record.checkoutId, (current) => ({
+          ...current,
+          journal: current.journal?.operation === 'finalize_preview'
+            ? { ...current.journal, step: 'updating_ref', commitOid }
+            : current.journal,
+          revision: current.revision + 1,
+        }))
+      },
+    })
+    if (result.status === 'error') {
+      if (result.error.code === 'stale_local' || result.error.code === 'preview_modified') {
+        return detachPreviewAfterLocalDrift(record, binding, result.error.code, 'finalize_preview')
+      }
+      if (result.error.code === 'commit_isolation_conflict' || result.error.code === 'operation_not_allowed' || result.error.code === 'invalid_input') {
+        updateManagedCheckout(record.checkoutId, (current) => ({ ...current, phase: 'ready', journal: null, revision: current.revision + 1 }))
+      }
+      return operationError(result.error.code, result.error.message, await inspectIsolated(binding))
+    }
+    const finalized = updateManagedCheckout(record.checkoutId, (current) => ({
+      ...current,
+      phase: 'finalized',
+      delivery: {
+        state: 'finalized',
+        review,
+        commitOid: result.commitOid,
+        proof: {
+          localBranch: preview.localHeadRef?.startsWith('refs/heads/')
+            ? preview.localHeadRef.slice('refs/heads/'.length)
+            : null,
+          localHeadBefore: preview.localHeadOid,
+          localHeadAfter: result.commitOid ?? preview.localHeadOid,
+          changedFiles: [...result.changedFiles],
+        },
+        isolatedFingerprint: preview.isolatedFingerprint,
+        finalizedAt: Date.now(),
+        cleanup: 'pending',
+      },
+      journal: null,
+      revision: current.revision + 1,
+    }))
+    if (!finalized) return operationError('checkout_missing', '提交已创建，但 Checkout 记录丢失')
+    const retention = input.retention ?? 'cleanup'
+    if (retention !== 'cleanup') {
+      const retained = retainFinalized(finalized, retention)
+      if (!retained) return operationError('checkout_missing', '提交已创建，但保留 Worktree 状态写入失败')
+      return {
+        status: 'finished',
+        target: await inspectIsolated(binding),
+        changedFiles: result.changedFiles,
+        commitOid: result.commitOid,
+        cleanup: 'retained',
+      }
+    }
+    const cleanup = await cleanupFinalized(finalized)
+    return {
+      status: 'finished',
+      target: await inspectIsolated(binding),
+      changedFiles: result.changedFiles,
+      commitOid: result.commitOid,
+      cleanup: cleanup.cleaned ? 'discarded' : 'pending',
+      ...(cleanup.message ? { cleanupMessage: cleanup.message } : {}),
+      ...(cleanup.reason ? { cleanupReason: cleanup.reason } : {}),
+    }
+  }
+
   async function operateRetryCleanup(
     input: Extract<SessionCheckoutOperation, { action: 'retry_cleanup' }>,
     binding: SessionBindingRecord,
@@ -1510,7 +2036,7 @@ export function createSessionCheckoutModule(
         await inspectIsolated(binding),
       )
     }
-    if (record.phase !== 'ready') {
+    if (record.phase !== 'ready' || record.delivery.state === 'preview_active' || record.delivery.state === 'preview_detached') {
       return operationError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能直接 Finish`, await inspectIsolated(binding))
     }
     const holder = findProjectAcceptanceHolder(record)
@@ -1530,7 +2056,6 @@ export function createSessionCheckoutModule(
     if (!record || record.phase !== 'ready') {
       return operationError('recovery_required', 'Isolated Checkout 状态已变化，需要恢复')
     }
-
     const startedAt = Date.now()
     const operationId = dependencies.createCheckoutId()
     const applyBaseOid = record.applyBaseOid ?? record.baseOid
@@ -1582,6 +2107,7 @@ export function createSessionCheckoutModule(
       }))
       return operationError(planResult.error.code, planResult.error.message, await inspectIsolated(binding))
     }
+
     if (
       input.expectedReviewId !== undefined
       && applying.delivery.state === 'ready_for_review'
@@ -1621,6 +2147,7 @@ export function createSessionCheckoutModule(
           isolatedFingerprint: planResult.plan.isolatedFingerprint,
           isolatedHeadOid: planResult.plan.isolatedHeadOid,
         }
+    const previewId = dependencies.createCheckoutId()
     updateManagedCheckout(applying.checkoutId, (current) => ({
       ...current,
       delivery: { state: 'ready_for_review', review },
@@ -1641,19 +2168,69 @@ export function createSessionCheckoutModule(
       },
       revision: current.revision + 1,
     }))
-    const finishResult = await dependencies.applyEngine.finish(planResult.plan, {
+    const previewResult = await dependencies.applyEngine.preview(planResult.plan, {
+      previewId,
+      reviewId: review.reviewId,
+      iteration: review.iteration,
+      beforeWrite: async (receipt) => {
+        await retainPreviewArtifacts(applying, receipt)
+        updateManagedCheckout(applying.checkoutId, (current) => ({
+          ...current,
+          delivery: { state: 'preview_active', review, preview: receipt },
+          journal: current.journal?.operation === 'finish'
+            ? { ...current.journal, step: 'artifacts_retained', previewId, reviewId: review.reviewId }
+            : current.journal,
+          revision: current.revision + 1,
+        }))
+      },
+    })
+    if (previewResult.status === 'error') {
+      const current = dependencies.registry.read().managedCheckouts[applying.checkoutId]
+      if (current?.journal?.step === 'writing_local') {
+        await releasePreviewArtifactsBestEffort(applying, previewId)
+        updateManagedCheckout(applying.checkoutId, (checkout) => ({ ...checkout, phase: 'ready', journal: null, revision: checkout.revision + 1 }))
+      }
+      return operationError(previewResult.error.code, previewResult.error.message, await inspectIsolated(binding))
+    }
+    const receipt = previewResult.receipt
+    updateManagedCheckout(applying.checkoutId, (current) => ({
+      ...current,
+      phase: 'mutating',
+      delivery: { state: 'preview_active', review, preview: receipt },
+      journal: {
+        operation: 'finish',
+        operationId,
+        step: 'planning',
+        startedAt,
+        previewId,
+        reviewId: review.reviewId,
+        isolatedFingerprint: receipt.isolatedFingerprint,
+        retention: input.retention ?? 'cleanup',
+        changedFiles: [...receipt.changedFiles],
+      },
+      revision: current.revision + 1,
+    }))
+    const finishResult = await dependencies.applyEngine.finalize({
+      localPath: applying.localRoot,
+      receipt,
       commitMessage: input.commitMessage,
+      beforeCommit: async (commitOid) => {
+        updateManagedCheckout(applying.checkoutId, (current) => ({
+          ...current,
+          journal: current.journal?.operation === 'finish'
+            ? { ...current.journal, step: 'updating_ref', commitOid }
+            : current.journal,
+          revision: current.revision + 1,
+        }))
+      },
     })
     if (finishResult.status === 'error') {
-      if (
-        finishResult.error.code === 'invalid_plan'
-        || finishResult.error.code === 'stale_local'
-        || finishResult.error.code === 'stale_isolated'
+      const safePreview = finishResult.error.code === 'stale_local'
+        || finishResult.error.code === 'preview_modified'
         || finishResult.error.code === 'invalid_input'
-        || finishResult.error.code === 'operation_not_allowed'
         || finishResult.error.code === 'commit_isolation_conflict'
-      ) {
-        // 这些错误码可证明未触碰 Local，恢复 ready；git_error 交由 reconcile 兜底 recovery_required。
+        || finishResult.error.code === 'operation_not_allowed'
+      if (safePreview) {
         updateManagedCheckout(applying.checkoutId, (current) => ({ ...current, phase: 'ready', journal: null, revision: current.revision + 1 }))
       }
       return operationError(finishResult.error.code, finishResult.error.message, await inspectIsolated(binding))
@@ -1661,21 +2238,20 @@ export function createSessionCheckoutModule(
 
     const finalized = updateManagedCheckout(applying.checkoutId, (current) => ({
       ...current,
-      applyBaseOid: finishResult.nextBaseOid,
       phase: 'finalized',
       delivery: {
         state: 'finalized' as const,
         review,
         commitOid: finishResult.commitOid,
         proof: {
-          localBranch: planResult.plan.localHeadRef?.startsWith('refs/heads/')
-            ? planResult.plan.localHeadRef.slice('refs/heads/'.length)
+          localBranch: receipt.localHeadRef?.startsWith('refs/heads/')
+            ? receipt.localHeadRef.slice('refs/heads/'.length)
             : null,
-          localHeadBefore: planResult.plan.localHeadOid,
-          localHeadAfter: finishResult.commitOid ?? planResult.plan.localHeadOid,
+          localHeadBefore: receipt.localHeadOid,
+          localHeadAfter: finishResult.commitOid ?? receipt.localHeadOid,
           changedFiles: [...finishResult.changedFiles],
         },
-        isolatedFingerprint: planResult.plan.isolatedFingerprint,
+        isolatedFingerprint: receipt.isolatedFingerprint,
         finalizedAt: Date.now(),
         cleanup: 'pending' as const,
       },
@@ -1735,6 +2311,13 @@ export function createSessionCheckoutModule(
     if (record.revision !== input.expectedRevision) {
       return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
     }
+    if (record.delivery.state === 'preview_detached') {
+      return operationError(
+        'preview_modified',
+        'Local Preview 已因漂移进入 detached 恢复态；为保留恢复证据，不能删除 Worktree。请先成功撤回 Preview。',
+        await inspectIsolated(binding),
+      )
+    }
     if (record.applyBaseOid && (record.delivery.state === 'working' || record.delivery.state === 'ready_for_review')) {
       return operationError(
         'operation_not_allowed',
@@ -1742,6 +2325,37 @@ export function createSessionCheckoutModule(
         await inspectIsolated(binding),
       )
     }
+    if (record.delivery.state === 'preview_active') {
+      if (!input.rollbackPreview) {
+        return operationError(
+          'preview_not_active',
+          'Local 正在验收本任务；放弃任务前必须先安全撤回 Preview',
+          await inspectIsolated(binding),
+        )
+      }
+      const rollback = await dependencies.applyEngine.rollback({
+        localPath: record.localRoot,
+        receipt: record.delivery.preview,
+      })
+      if (rollback.status === 'error') {
+        if (rollback.error.code === 'stale_local' || rollback.error.code === 'preview_modified') {
+          return detachPreviewAfterLocalDrift(record, binding, rollback.error.code, 'discard')
+        }
+        return operationError(rollback.error.code, rollback.error.message, await inspectIsolated(binding))
+      }
+      const previewId = record.delivery.preview.previewId
+      const iteration = record.delivery.review.iteration
+      const rolledBack = updateManagedCheckout(record.checkoutId, (current) => ({
+        ...current,
+        delivery: { state: 'working', iteration },
+        journal: null,
+        revision: current.revision + 1,
+      }))
+      if (!rolledBack) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+      await releasePreviewArtifactsBestEffort(record, previewId)
+      record = rolledBack
+    }
+    // Harness plugin has no inherited collaborator checkout ownership.
     if (record.phase === 'recovery_required' && !dependencies.files.exists(record.managedRoot)) {
       await releaseApplyBaseBestEffort(record)
       updateManagedCheckout(record.checkoutId, (current) => ({
@@ -1795,7 +2409,6 @@ export function createSessionCheckoutModule(
     return { status: 'discarded', target: await inspectIsolated(binding) }
   }
 
-
   async function operateRecover(
     input: Extract<SessionCheckoutOperation, { action: 'recover' }>,
     binding: SessionBindingRecord,
@@ -1846,6 +2459,9 @@ export function createSessionCheckoutModule(
       const binding = await resolveBinding(input.sessionId)
       if (input.action === 'apply') return await operateApply(input, binding)
       if (input.action === 'finish') return await operateFinish(input, binding)
+      if (input.action === 'preview') return await operatePreview(input, binding)
+      if (input.action === 'rollback_preview') return await operateRollbackPreview(input, binding)
+      if (input.action === 'finalize_preview') return await operateFinalizePreview(input, binding)
       if (input.action === 'retry_cleanup') return await operateRetryCleanup(input, binding)
       if (input.action === 'discard') return await operateDiscard(input, binding)
       if (input.action === 'recover') return await operateRecover(input, binding)
@@ -1865,6 +2481,8 @@ export function createSessionCheckoutModule(
   function managedUpdatedAt(record: ManagedCheckoutRecord): number {
     if (record.delivery.state === 'working') return record.journal?.startedAt ?? 0
     if (record.delivery.state === 'ready_for_review') return record.delivery.review.preparedAt
+    if (record.delivery.state === 'preview_active') return record.delivery.preview.previewedAt
+    if (record.delivery.state === 'preview_detached') return record.delivery.detachedAt
     if (record.delivery.state === 'finalized') return record.delivery.finalizedAt
     if (record.delivery.state === 'retained') return record.delivery.retainedAt
     return record.delivery.deliveredAt
@@ -1912,7 +2530,11 @@ export function createSessionCheckoutModule(
         ? delivery.cleanup === 'blocked' ? 'needs_attention' : 'retained'
         : delivery.state === 'finalized'
           ? delivery.cleanup === 'blocked' ? 'needs_attention' : 'cleanup_pending'
-          : delivery.state === 'ready_for_review'
+          : delivery.state === 'preview_active'
+            ? 'preview_active'
+            : delivery.state === 'preview_detached'
+              ? 'needs_attention'
+              : delivery.state === 'ready_for_review'
             ? 'ready_for_review'
             : delivery.state === 'delivered'
               ? 'delivered'
@@ -1957,6 +2579,9 @@ export function createSessionCheckoutModule(
   async function inspectCleanupForRecord(record: ManagedCheckoutRecord): Promise<ManagedWorktreeCleanupView> {
     if (record.delivery.state === 'working') return cleanupBlocked('working', '当前轮次仍在修改，尚未形成可清理的交付环境。', record.revision)
     if (record.delivery.state === 'ready_for_review') return cleanupBlocked('review_pending', '当前轮次正在等待验收，不能清理。', record.revision)
+    if (record.delivery.state === 'preview_active' || record.delivery.state === 'preview_detached') {
+      return cleanupBlocked('preview_active', 'Local Preview 尚未完成安全收口，不能清理。', record.revision)
+    }
     if (record.delivery.state === 'delivered' || record.phase === 'discarded') {
       return cleanupBlocked('unknown', 'Worktree 已交付并解除管理，无需再次清理。', record.revision)
     }
@@ -2108,6 +2733,9 @@ export function createSessionCheckoutModule(
     if (record.ownerSessionId !== sessionId && record.sourceSessionId !== sessionId) {
       throw new SessionCheckoutError('not_owner', '当前 Session 无权管理该 Worktree')
     }
+    if (record.ownerSessionId !== sessionId && dependencies.lookup.getSession(record.ownerSessionId)) {
+      throw new SessionCheckoutError('not_owner', 'Owner Session 已接管该 Worktree，只有 owner 可以管理')
+    }
     const persisted = getPersistedBinding(sessionId)
     const callerProjectId = persisted?.projectId ?? dependencies.lookup.getSession(sessionId)?.projectId
     if (callerProjectId !== record.projectId) {
@@ -2128,6 +2756,7 @@ export function createSessionCheckoutModule(
         sessionId: record.ownerSessionId,
         expectedRevision: input.expectedRevision,
         confirmDirty: input.confirmDirty === true,
+        ...(input.rollbackPreview === undefined ? {} : { rollbackPreview: input.rollbackPreview }),
       }, bindingForManagedRecord(record))
       if (result.status === 'error') throw new SessionCheckoutError(result.code, result.message)
       const updated = dependencies.registry.read().managedCheckouts[record.checkoutId]

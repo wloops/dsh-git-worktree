@@ -90,6 +90,7 @@ describe('Worktree ToolViews', () => {
       state: 'ready_for_review',
       reviewId: 'review-1',
       revision: 4,
+      iteration: 2,
       changedFiles: ['src/index.ts'],
     }
     render(<WorktreeReviewRow
@@ -104,10 +105,12 @@ describe('Worktree ToolViews', () => {
       services={client}
     />)
 
+    expect(screen.getByText('第 2 轮修改已准备验收')).toBeTruthy()
     expect(screen.getByText('真实 Session Target')).toBeTruthy()
-    expect(screen.getByText('src/index.ts')).toBeTruthy()
-    expect(screen.getByText(/连接后刷新/)).toBeTruthy()
-    expect((screen.getByRole('button', { name: 'Finalize cleanup' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('1 个文件')).toBeTruthy()
+    expect(screen.queryByText('src/index.ts')).toBeNull()
+    expect(screen.getByText(/连接后即可执行验收操作/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '同步到 Local 验收' })).toBeNull()
     expect(client.commands).toEqual([])
   })
 })

@@ -61,7 +61,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && tsdown",
+    "build": "node scripts/clean-lib.mjs && tsc && tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepare": "pnpm run build",

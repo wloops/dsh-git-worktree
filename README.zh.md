@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness 的**实验性** Git Worktree Session Target 插件。它保留 Domi 中经过生产验证的 checkout / apply engine 安全核心，并按 Harness 的权威 Workspace / Session cwd 模型重做产品闭环。
 
-> 当前范围：真实隔离 Session、Harness-native Session Target/Worktree Console、review-bound Diff 与 ToolView、用户确认后的 task-only Finish、保留策略、崩溃恢复、指纹 CAS 与保守清理。它还不是 Domi 全局 Worktree Manager 或可逆 Local Preview 的完整替代品。
+> 当前范围：真实隔离 Session、Harness-native Session Target/Worktree Console、可撤回的 Local Preview、验收提交/撤回/跳过验收直接提交、项目级验收槽位、持久恢复凭据、保留策略、崩溃恢复、指纹 CAS 与保守清理。它还不是 Domi 的跨项目全局 Worktree Manager。
 
 ## 工作流程
 
@@ -11,8 +11,9 @@
 3. 插件在仓库同级容器中创建唯一 detached Worktree（不可用时回退到插件 stateDir），并预留一个独立 target Session ID；源 Session 始终保持 Local。
 4. Harness 把 Worktree 路径注册为 Workspace，使用 Host 预留的精确 ID 创建并打开 Session。持久化 Session header 的 cwd 才是权威 Session Target。
 5. Agent 只在该 isolated cwd 中修改和验证，完成后把 `worktree_ready_for_review` 作为最后一个模型操作。
-6. Worktree Console 与可回放的 Review ToolView 展示 review-bound Diff、changed files、验证证据和建议 Commit Message；用户显式选择**提交并清理**或保留 24 小时 / 3 天 / 手动保留。
-7. `/worktree finalize ...` 在 Local 上创建一个只含任务增量的 commit，同时保留用户原有 staged、unstaged 与 untracked 工作。
+6. Worktree Ready 后，target composer 上方常驻 Domi 式中文状态条；紧凑验收卡默认只展示摘要、验证状态、文件数量和折叠的测试证据，不再展示 Diff/Inspect 或平铺多个保留按钮。
+7. Ready 主操作是**同步到 Local 验收**：Host 先执行只读 preflight，再把精确 review 增量同步成不提交、可撤回的 Local Preview。Preview active 后主操作变为**验收通过并提交**；更多菜单可撤回本次预览并让 Worktree 回到继续修改状态。Ready 更多菜单还提供**跳过验收，直接提交**与放弃任务。
+8. Preview、rollback 和 finalize 都绑定 revision、review ID、HEAD 与 fingerprint CAS。同一 Local 项目同时只允许一个活动 Preview；放弃 active Preview 时必须先安全 rollback。Local 漂移时 fail closed，保留 Worktree 与恢复凭据并进入恢复状态，绝不覆盖用户修改。
 
 ## 能力面
 
@@ -28,7 +29,7 @@ Apply、Finish、Discard、Remove **不再作为模型工具**暴露。模型参
 
 ### Harness-native Worktree Console
 
-Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribution。blank Local Session 会在 Harness 官方 `conversation.input.left` composer 工具栏 Slot 中显示紧凑的 **Worktree** 开关；点击只打开确认弹窗，确认后才准备 Host 分配的 target，并在导航前迁移尚未发送的文本/图片草稿，标准 Harness Send 仍是唯一 prompt 路径。每个持久 Session 还可看到 target 状态胶囊和项目级 **Worktree** 视图，用于 Create/Open/Inspect/Review/Discard/Cleanup。列表行不包含路径；只有通过身份验证的 `current`、`create` 或 `inspect` 才返回 managed root。Remote 不可用时开关 fail closed，历史 ToolView 证据仍可阅读，mutation 保持禁用。
+Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribution。blank Local Session 会在 Harness 官方 `conversation.input.left` composer 工具栏 Slot 中显示紧凑的 **Worktree** 开关；点击只打开确认弹窗，确认后才准备 Host 分配的 target，并在导航前迁移尚未发送的文本/图片草稿，标准 Harness Send 仍是唯一 prompt 路径。每个持久 Session 还可看到 target 状态胶囊和项目级 **Worktree** 高级管理视图；Ready 后则由 `conversation.input.dock` 显示一个始终可见的紧凑验收条，只保留一个主操作和“更多”菜单。列表行不包含路径；只有通过身份验证的 `current`、`create` 或 `inspect` 才返回 managed root。
 
 ### 用户命令
 
@@ -41,7 +42,7 @@ Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribut
 /worktree remove <checkoutId>
 ```
 
-Client ToolView 以用户身份调用 `finalize`，并携带该卡片精确的 review ID 与 revision。Finish 在触碰 Local 前会再次核对已审阅 fingerprint/head；历史卡片或 Ready 后新增修改必须重新生成 Ready 快照。命令还会验证 owner/source 作用域、原始 project 身份和 managed cwd 身份。
+Client 通过 strict Remote 调用 `preflight`、`preview`、`rollbackPreview`、`finalizePreview`，或在用户明确选择跳过验收时调用 `finalize`。所有路径携带精确 review ID/revision；提交路径还携带用户确认的 1–500 字符 Commit Message 与 retention。Host 会再次校验 caller、project、managed cwd、review、HEAD/fingerprint 和 Local CAS；历史卡片、Ready 后新增修改或 Local 漂移都 fail closed。
 
 ## 安全不变量
 
@@ -51,7 +52,9 @@ Client ToolView 以用户身份调用 `finalize`，并携带该卡片精确的 r
 - 新 Worktree 使用 `<repo>--worktrees/<repo>--<checkout-short>--worktree`；短 ID 冲突时扩展 identity，不覆盖未知目录。不安全 sibling 回退到 `<stateDir>/worktrees/<repository-key>/`，旧 registry 路径仍可管理。
 - 已走过旧版不可逆 Apply 的历史记录禁止自动 Finish / Discard，必须先人工核对 Local。
 - list 与 manage 都按真实 caller 作用域过滤；持久化 `ownerSessionId` 本身不是授权。
-- Finish 保留 Local 无关 staged/working 状态，并拒绝 stale Local / stale Isolated。
+- Preview receipt 在触碰 Local 前持久化并保留 Local working tree、index、Preview tree 与 Isolated snapshot；rollback/finalize 可在 Host 重启后恢复。
+- 同一 canonical Local root 只有一个活动验收槽位；Preview detached 会释放槽位，但保留恢复证据。
+- Finish 保留 Local 无关 staged/working 状态，并拒绝 stale Local / stale Isolated；active Preview 的 Discard 必须先安全 rollback。
 - 清理前验证路径、Git common-dir、git-dir、目录身份和最终指纹；不确定残余会保留或 quarantine。
 
 ## 安装
@@ -98,7 +101,7 @@ pnpm run dev:dsh:remove
 
 ## 当前限制
 
-- 尚无可逆 Local Preview / Finalize / Rollback 层；旧 `worktree_apply` 入口已禁用。
+- 旧 `worktree_apply` 入口仍禁用；公开交付路径只允许用户触发的 Preview/rollback/finalize/direct finish。
 - 尚无跨项目全局侧栏 Manager；当前管理面刻意限定在项目与 Session 作用域内。
 - Harness 仍未开放 Workflow `agent({ isolation })`。
 - 子 Agent 继承父 Session cwd；只有父 Session 已真实进入 Worktree 后才形成隔离。

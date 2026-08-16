@@ -200,20 +200,32 @@ describe('Worktree Console Host control plane', () => {
     expect(inspected).toMatchObject({ ok: true, value: { target: { managedRoot: '/managed' } } })
   })
 
-  it('finalizes only the persisted review identity and persisted commit message', async () => {
+  it('finalizes only the persisted review identity with the bounded user-confirmed commit message', async () => {
     const { module, control } = plane()
     vi.mocked(module.operate).mockResolvedValue({
       status: 'finished', target: local(), changedFiles: ['src/index.ts'], commitOid: B, cleanup: 'discarded',
     })
     const result = await control.finalize({
       sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7,
-      expectedReviewId: 'review-1', retention: 'cleanup',
+      expectedReviewId: 'review-1', commitMessage: 'feat(review): user confirmed', retention: 'cleanup',
     })
     expect(result.ok).toBe(true)
     expect(module.operate).toHaveBeenCalledWith({
       sessionId: 'target-session', expectedRevision: 7, action: 'finish', expectedReviewId: 'review-1',
-      commitMessage: 'fix: persisted review', retention: 'cleanup',
+      commitMessage: 'feat(review): user confirmed', retention: 'cleanup',
     })
+  })
+
+  it('rejects an empty or oversized user Commit Message before any Local operation', async () => {
+    const { module, control } = plane()
+    for (const commitMessage of ['   ', 'x'.repeat(501)]) {
+      const result = await control.finalize({
+        sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7,
+        expectedReviewId: 'review-1', commitMessage, retention: 'cleanup',
+      })
+      expect(result).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
+    }
+    expect(module.operate).not.toHaveBeenCalled()
   })
 
   it('rejects source-side Discard after the owner Session is live', async () => {
@@ -243,18 +255,19 @@ describe('Worktree Console Host control plane', () => {
     })
   })
 
-  it('forwards owner Discard and caller-scoped retention/cleanup mutations through CAS APIs', async () => {
+  it('routes owner Discard through the Preview-aware operation and keeps retention/cleanup caller-scoped', async () => {
     const { module, control } = plane()
+    vi.mocked(module.operate).mockResolvedValueOnce({ status: 'discarded', checkoutId: 'checkout-1', changedFiles: [] })
     await control.discard({ sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, confirmDirty: true })
     await control.setRetention({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 8, retention: 'retain_manual' })
     await control.retryCleanup({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 9 })
-    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(1, 'target-session', {
-      checkoutId: 'checkout-1', expectedRevision: 7, action: 'discard', confirmDirty: true,
+    expect(module.operate).toHaveBeenCalledWith({
+      action: 'discard', sessionId: 'target-session', expectedRevision: 7, confirmDirty: true,
     })
-    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(2, 'source-session', {
+    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(1, 'source-session', {
       checkoutId: 'checkout-1', expectedRevision: 8, action: 'set_retention', retention: 'retain_manual',
     })
-    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(3, 'source-session', {
+    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(2, 'source-session', {
       checkoutId: 'checkout-1', expectedRevision: 9, action: 'retry_cleanup',
     })
   })

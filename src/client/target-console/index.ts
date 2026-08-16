@@ -3,13 +3,14 @@ import type { WorktreeConsoleAdapter } from '../../console-contract.js'
 import type { WorktreeClientServices } from '../actions.js'
 import { TargetStatusAction } from './TargetStatusAction.js'
 import { WorktreeConsoleView } from './WorktreeConsoleView.js'
+import { WorktreeReviewStatus } from './WorktreeReviewStatus.js'
 
 export interface TargetConsoleContextLike {
   slots: {
-    inject(name: 'conversation.session.header.actions' | 'conversation.view', callback: () => unknown): void
+    inject(name: 'conversation.session.header.actions' | 'conversation.view' | 'conversation.input.dock', callback: () => unknown): void
     register(
       descriptor: Record<string, unknown>,
-      component: ComponentType<{ sessionId: string }>,
+      component: ComponentType<any>,
     ): unknown
   }
 }
@@ -24,6 +25,8 @@ export function registerTargetConsole(
     createElement(TargetStatusAction, { sessionId, adapter })
   const ConsoleView = ({ sessionId }: { sessionId: string }) =>
     createElement(WorktreeConsoleView, { sessionId, adapter, services: _services })
+  const ReviewStatus = ({ session }: { session: { sessionId: string } }) =>
+    createElement(WorktreeReviewStatus, { session, adapter })
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions',
     id: 'worktree-target',
@@ -36,7 +39,13 @@ export function registerTargetConsole(
     order: 20,
     label: 'Worktree',
   }, ConsoleView))
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+    name: 'conversation.input.dock',
+    id: 'worktree-review-status',
+    order: 10,
+  }, ReviewStatus))
 }
 
 export { TargetStatusAction } from './TargetStatusAction.js'
 export { WorktreeConsoleView } from './WorktreeConsoleView.js'
+export { WorktreeReviewStatus } from './WorktreeReviewStatus.js'

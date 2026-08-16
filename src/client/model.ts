@@ -42,6 +42,7 @@ export interface WorktreeReviewPayload {
   state: 'ready_for_review'
   reviewId: string
   revision: number
+  iteration: number
   changedFiles: string[]
 }
 
@@ -165,7 +166,14 @@ export function parseReviewTool(block: ToolCallBlockLike): ParsedTool<WorktreeRe
   }
   return {
     lifecycle: state,
-    payload: parsed as unknown as WorktreeReviewPayload,
+    payload: {
+      kind: 'worktree_ready_for_review',
+      state: 'ready_for_review',
+      reviewId: parsed.reviewId as string,
+      revision: parsed.revision,
+      iteration: typeof parsed.iteration === 'number' && Number.isInteger(parsed.iteration) && parsed.iteration >= 0 ? parsed.iteration : 0,
+      changedFiles: [...parsed.changedFiles] as string[],
+    },
     args: parsedArgs,
     error: null,
   }

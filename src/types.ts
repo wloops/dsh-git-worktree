@@ -1,11 +1,9 @@
 /**
  * Type surface for dsh-git-worktree, ported from Domi's session-checkout
- * domain (`@proma/shared` types/session-target.ts) with the Domi-specific
- * surface removed: Local preview (preview/rollback_preview/finalize_preview),
- * collaborator delegation, and Electron reveal IPC. The remaining lifecycle
- * is: bind → working → ready_for_review → apply/finish/discard → delivered
- * (or retained/finalized), with journal-based crash recovery and fingerprint
- * CAS throughout.
+ * domain (`@proma/shared` types/session-target.ts). The plugin keeps Domi's
+ * Local preview/rollback/finalize lifecycle while omitting collaborator and
+ * Electron-only surfaces. Harness transport and Session separation live above
+ * this host-agnostic state machine.
  * @module dsh-git-worktree/types
  */
 
@@ -73,6 +71,15 @@ export interface WorktreeDeliveryProofView {
 export type WorktreeDeliveryView =
   | { state: 'working'; iteration: number }
   | { state: 'ready_for_review'; review: WorktreeReviewView }
+  | { state: 'preview_active'; review: WorktreeReviewView; previewedAt: number }
+  | {
+      state: 'preview_detached'
+      review: WorktreeReviewView
+      previewedAt: number
+      detachedAt: number
+      reason: 'stale_local' | 'preview_modified'
+      attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard'
+    }
   | {
       state: 'finalized'
       review: WorktreeReviewView
@@ -163,6 +170,10 @@ export interface SessionTargetView {
   revision: number
   /** Delivery state for isolated checkouts; Local targets do not carry it. */
   delivery?: WorktreeDeliveryView
+  /** Current project Local Preview slot state; does not expose another checkout identity. */
+  reviewSlot?: 'available' | 'waiting'
+  /** Owner Session holding the slot, used only for navigation/status. */
+  reviewSlotOwnerSessionId?: string
 }
 
 export type SessionTargetBindChoice =
@@ -186,6 +197,22 @@ export interface SessionCheckoutFinishOperation extends SessionCheckoutOperation
   expectedReviewId?: string
 }
 
+export interface SessionCheckoutPreviewOperation extends SessionCheckoutOperationBase {
+  action: 'preview'
+}
+
+export interface SessionCheckoutRollbackPreviewOperation extends SessionCheckoutOperationBase {
+  action: 'rollback_preview'
+  /** Structured withdraw-and-continue flow returns to working instead of preserving the review. */
+  resumeRevision?: boolean
+}
+
+export interface SessionCheckoutFinalizePreviewOperation extends SessionCheckoutOperationBase {
+  action: 'finalize_preview'
+  commitMessage: string
+  retention?: WorktreeRetentionMode
+}
+
 export interface SessionCheckoutRetryCleanupOperation extends SessionCheckoutOperationBase {
   action: 'retry_cleanup'
 }
@@ -193,6 +220,7 @@ export interface SessionCheckoutRetryCleanupOperation extends SessionCheckoutOpe
 export interface SessionCheckoutDiscardOperation extends SessionCheckoutOperationBase {
   action: 'discard'
   confirmDirty: boolean
+  rollbackPreview?: boolean
 }
 
 export interface SessionCheckoutRecoverOperation extends SessionCheckoutOperationBase {
@@ -202,6 +230,9 @@ export interface SessionCheckoutRecoverOperation extends SessionCheckoutOperatio
 export type SessionCheckoutOperation =
   | SessionCheckoutApplyOperation
   | SessionCheckoutFinishOperation
+  | SessionCheckoutPreviewOperation
+  | SessionCheckoutRollbackPreviewOperation
+  | SessionCheckoutFinalizePreviewOperation
   | SessionCheckoutRetryCleanupOperation
   | SessionCheckoutDiscardOperation
   | SessionCheckoutRecoverOperation
@@ -210,6 +241,26 @@ export interface SessionCheckoutAppliedResult {
   status: 'applied'
   target: SessionTargetView
   changedFiles: string[]
+}
+
+export interface SessionCheckoutPreviewedResult {
+  status: 'previewed'
+  target: SessionTargetView
+  changedFiles: string[]
+}
+
+export interface SessionCheckoutPreviewRolledBackResult {
+  status: 'preview_rolled_back'
+  target: SessionTargetView
+  changedFiles: string[]
+}
+
+export interface SessionCheckoutPreviewDetachedResult {
+  status: 'preview_detached'
+  target: SessionTargetView
+  changedFiles: string[]
+  reason: 'stale_local' | 'preview_modified'
+  attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard'
 }
 
 export interface SessionCheckoutFinishedResult {
@@ -229,6 +280,7 @@ export type ManagedWorktreeCleanupEligibility = 'safe' | 'retained' | 'blocked'
 export type ManagedWorktreeCleanupBlockReason =
   | 'working'
   | 'review_pending'
+  | 'preview_active'
   | 'retention_active'
   | 'uncommitted_changes'
   | 'identity_mismatch'
@@ -256,6 +308,7 @@ export interface BulkCleanupManagedWorktreesResult {
 export type ManagedWorktreeSummaryState =
   | 'working'
   | 'ready_for_review'
+  | 'preview_active'
   | 'retained'
   | 'cleanup_pending'
   | 'needs_attention'
@@ -325,6 +378,9 @@ export interface SessionCheckoutOperationErrorResult {
 
 export type SessionCheckoutOperationResult =
   | SessionCheckoutAppliedResult
+  | SessionCheckoutPreviewedResult
+  | SessionCheckoutPreviewRolledBackResult
+  | SessionCheckoutPreviewDetachedResult
   | SessionCheckoutFinishedResult
   | SessionCheckoutConflictResult
   | SessionCheckoutDiscardedResult
@@ -358,6 +414,8 @@ export const SESSION_CHECKOUT_ERROR_CODES = [
   'checkout_limit_reached',
   'project_acceptance_busy',
   'operation_not_allowed',
+  'preview_not_active',
+  'preview_modified',
   'recovery_unsafe',
 ] as const
 

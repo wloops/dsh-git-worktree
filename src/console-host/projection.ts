@@ -42,14 +42,23 @@ export function capabilities(
   const sourceReservation = callerSessionId === record.sourceSessionId && !ownerSessionAvailable
   const authorized = owner || callerSessionId === record.sourceSessionId
   const ready = record.phase === 'ready' && record.delivery.state === 'ready_for_review'
+  const previewActive = record.phase === 'ready' && record.delivery.state === 'preview_active'
+  const previewDetached = record.phase === 'ready' && record.delivery.state === 'preview_detached'
+  const previewRecovery = record.phase === 'recovery_required'
+    && record.delivery.state === 'preview_active'
+    && record.journal?.operation === 'rollback_preview'
   const cleanup = record.delivery.state === 'finalized' || record.delivery.state === 'retained'
   const active = record.phase !== 'discarded'
   return {
     create: false,
     open: authorized && active,
     inspect: authorized,
-    discard: (owner || sourceReservation) && active && !cleanup,
+    discard: (owner || sourceReservation) && active && !cleanup && !previewDetached,
+    preflight: owner && ready,
+    preview: owner && ready,
+    rollbackPreview: owner && (previewActive || previewDetached || previewRecovery),
     finalize: owner && ready,
+    finalizePreview: owner && previewActive,
     setRetention: authorized && record.delivery.state === 'retained',
     retryCleanup: authorized && cleanup,
   }
@@ -94,6 +103,7 @@ export function projectRecord(
       ? { cleanupMessage: delivery.cleanupMessage }
       : {}),
     ...(projectedReview === undefined ? {} : { review: projectedReview }),
+    ...(delivery.state === 'ready_for_review' ? { reviewSlot: 'available' as const } : {}),
     capabilities: capabilities(record, callerSessionId, observed?.ownerSessionAvailable),
   }
 }
@@ -133,7 +143,11 @@ export function projectLocal(target: SessionTargetView, sessionId: string): Work
       open: true,
       inspect: true,
       discard: false,
+      preflight: false,
+      preview: false,
+      rollbackPreview: false,
       finalize: false,
+      finalizePreview: false,
       setRetention: false,
       retryCleanup: false,
     },

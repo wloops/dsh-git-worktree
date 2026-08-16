@@ -51,6 +51,7 @@ export interface ManageManagedWorktreeInput {
   action: 'cleanup_retained' | 'retry_cleanup' | 'set_retention' | 'discard'
   retention?: Exclude<WorktreeRetentionMode, 'cleanup'>
   confirmDirty?: boolean
+  rollbackPreview?: boolean
 }
 
 export interface ListManagedWorktreesInput {

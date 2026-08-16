@@ -66,6 +66,14 @@ for (const [subpath, value] of Object.entries(exportsMap)) {
 }
 ok(`${exportCount} export targets exist and are publishable`)
 
+for (const stale of [
+  'lib/client/review-console/DiffViewer.js',
+  'lib/client/review-console/useReviewDiff.js',
+]) {
+  if (existsSync(resolve(root, stale))) fail(`removed acceptance UI survived as stale build output: ${stale}`)
+}
+ok('removed Diff UI has no stale publish artifact')
+
 // 3. Manual strict Typert artifacts: one descriptor identity feeds Host Loader and Client mount.
 if (manifest.dependencies?.['@deepseek-ai/dsh-typert-generator'] || manifest.devDependencies?.['@deepseek-ai/dsh-typert-generator']) {
   fail('manual contribution package must not depend on @deepseek-ai/dsh-typert-generator')
@@ -86,7 +94,7 @@ try {
 if (hostContribution?.package !== manifest.name || hostContribution.face !== 'host') fail('./typert has invalid package/face identity')
 if (remoteContribution?.package !== manifest.name) fail('./remote has invalid package identity')
 if (hostContribution.invocations !== remoteContribution.descriptors) fail('./typert and ./remote must share one descriptor array instance')
-const expectedRemoteMethods = ['current', 'list', 'create', 'inspect', 'reviewDiff', 'discard', 'finalize', 'setRetention', 'retryCleanup']
+const expectedRemoteMethods = ['current', 'list', 'create', 'inspect', 'reviewDiff', 'preflight', 'preview', 'rollbackPreview', 'discard', 'finalize', 'finalizePreview', 'setRetention', 'retryCleanup']
 if (JSON.stringify(hostContribution.invocations.map(value => value.method)) !== JSON.stringify(expectedRemoteMethods)) {
   fail(`manual Remote methods differ from the required surface: ${hostContribution.invocations.map(value => value.method).join(', ')}`)
 }

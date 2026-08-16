@@ -38,20 +38,27 @@ Domi's non-polluting policy is restored:
 
 Both locations are outside the Local checkout. The Host derives the repository label from the canonical Git root and the suffix from the trusted checkout identity. An existing short-ID path is never reused or deleted: the identity expands from 8 to 12 and then the full UUID form. Session and iteration remain registry/UI metadata rather than leaking into the Workspace basename. The target path becomes its own registered Harness Workspace, so the new Session's `workspace-write` boundary is correct without nesting the Worktree in Local.
 
-### Human acceptance instead of direct Apply
+### Human acceptance with reversible Local Preview
 
-Domi's Electron product has a reversible Local Preview / Finalize / Rollback layer. Harness does not currently expose an equivalent transaction. The old plugin flow wrote directly to Local on `worktree_apply`, advanced `applyBaseOid`, and could then make Finish return a zero delta while Local remained modified.
-
-The public flow is therefore intentionally narrower:
+The old plugin flow wrote directly to Local on `worktree_apply`, advanced `applyBaseOid`, and could make a later Finish observe zero delta while Local remained modified. That surface stays disabled. The plugin now ports Domi's receipt-first Preview / Rollback / Finalize invariants behind Harness's official strict Typert Remote and public Client slots:
 
 ```text
-Working → Ready for Review → user /worktree finalize → task-only commit → cleanup or retention
+Working
+  → Ready for Review
+  → read-only preflight
+  → Local Preview active (no commit)
+  → accept and commit / rollback
+  → cleanup or retention
 ```
 
-- `worktree_apply` is not registered as a model tool or command.
-- Finish/Discard/Remove are not model tools.
-- The Review ToolView submits a user command carrying the exact `reviewId` and registry revision shown by that card.
-- Strict Finish rechecks the reviewed isolated fingerprint/head before any Local write; stale cards or post-review edits return `stale_target`/`stale_isolated` and require a new Ready snapshot.
+A low-frequency Ready shortcut can skip interactive Local review and directly finish, but internally still uses receipt-first Preview → Finalize under one Host mutation lock.
+
+- `worktree_apply` is not registered as a model tool or command; Finish/Discard/Remove are not model tools.
+- Ready primary action calls `preflight` then `preview`; Preview primary action calls `finalizePreview`; rollback is in the More menu; direct `finalize` is only the explicit “skip review” shortcut.
+- The Host allocates one acceptance slot per canonical `localRoot`. A second task receives `project_acceptance_busy` until rollback/finalize releases the slot.
+- Preview receipt persistence and internal refs precede Local writes. The receipt binds Local branch/HEAD/fingerprint, prior working/index trees, Preview tree, Isolated HEAD/fingerprint/snapshot, review ID, iteration, and changed files.
+- Rollback and finalize revalidate receipt/HEAD/ref/fingerprint CAS. Local drift or edits inside Preview fail closed into `preview_detached`, release the slot, and preserve Worktree/recovery evidence.
+- Crash reconciliation distinguishes pre-write interruption, retained Preview artifacts, rollback recovery, and branch-CAS interruption after commit creation.
 - Historical records containing `applyBaseOid` fail closed for automatic Finish/Discard and tell the user to inspect Local.
 
 ### Caller scope
@@ -65,7 +72,8 @@ A replay-stable dynamic context reports only the current registry state:
 - Local with no target;
 - Local handoff pending (stop modifications and open the target card);
 - Isolated Working (authoritative cwd and Local boundary);
-- Ready for Review (model stops; user accepts);
+- Ready for Review (model stops; user previews, directly finishes, or discards);
+- Local Preview active/detached (model and Local Session remain read-only);
 - Recovery required.
 
 Git/filesystem validation still runs at operation boundaries; prompt context is guidance, not authorization.
@@ -83,7 +91,7 @@ The ToolViews derive display state from durable logged call/result slices. They 
 
 | Domi capability | Current status |
 | --- | --- |
-| Reversible Local Preview / Finalize / Rollback | Deferred; direct Apply disabled |
+| Reversible Local Preview / Finalize / Rollback | Implemented through strict Remote with durable receipts, single-project slot, CAS and recovery |
 | Global Worktree Manager sheet | Deferred until a stable Host Remote/Projection management seam is added |
 | Electron reveal/close-session choreography | Replaced only by Web Workspace/Session navigation; immediate cleanup makes the isolated Session terminal |
 | Collaborator release/handoff UI | Partial domain remnants only; no complete Host lifecycle integration |
@@ -95,7 +103,7 @@ Subagents inherit their parent's persisted cwd. They are therefore isolated when
 
 ## Verification map
 
-- `tests/session-checkout-module.test.ts`: real Worktree creation, unique target reservations, source/target identity, caller scope, runtime context, recovery, and legacy Apply fail-closed.
-- `tests/session-checkout-apply.test.ts`: real Git merge/Finish/fingerprint behavior.
-- `tests/client-toolview.test.tsx`: exact Session handoff and explicit user finalize actions.
+- `tests/session-checkout-module.test.ts`: real Worktree creation plus Preview→rollback, Preview→finalize, direct finish, Preview-aware discard, Local drift, slot contention, crash recovery, caller scope, and legacy Apply fail-closed.
+- `tests/session-checkout-apply.test.ts`: real Git preflight/Preview/rollback/finalize/Finish/fingerprint behavior, including fresh-engine receipt recovery.
+- `tests/client-review-console.test.tsx` and `tests/client-target-console.test.tsx`: Ready/Preview/recovery actions, revision refresh, modal confirmation, dock projection and Preview-aware Discard.
 - `scripts/check-publish.mjs`: every package export, Host patch, Host metadata, `dsh.client`, and executable browser ModuleLoader closure.

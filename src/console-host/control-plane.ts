@@ -3,16 +3,22 @@ import type {
   WorktreeConsoleCreateResponse,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleDiscardRequest,
+  WorktreeConsoleFinalizePreviewRequest,
   WorktreeConsoleFinalizeRequest,
   WorktreeConsoleInspectResponse,
   WorktreeConsoleListRequest,
   WorktreeConsoleListResponse,
   WorktreeConsoleMutationResponse,
   WorktreeConsoleOutcome,
+  WorktreeConsolePreflightRequest,
+  WorktreeConsolePreflightResponse,
+  WorktreeConsolePreviewRequest,
+  WorktreeConsoleRollbackPreviewRequest,
   WorktreeConsoleRetryCleanupRequest,
   WorktreeConsoleReviewDiffRequest,
   WorktreeConsoleReviewDiffResponse,
   WorktreeConsoleSetRetentionRequest,
+  WorktreeConsoleTargetSummary,
 } from '../console-contract.js'
 import type {
   GitCheckoutSnapshot,
@@ -44,8 +50,12 @@ export interface WorktreeConsoleControlPlane {
   create(sourceSessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
   inspect(sessionId: string, checkoutId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>>
   reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
+  preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
+  preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  finalizePreview(request: WorktreeConsoleFinalizePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   setRetention(request: WorktreeConsoleSetRetentionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   retryCleanup(request: WorktreeConsoleRetryCleanupRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
 }
@@ -59,6 +69,13 @@ function recordOf(registry: SessionCheckoutRegistryPort, checkoutId: string): Ma
 function readyReview(record: ManagedCheckoutRecord) {
   if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
     throw domainError('operation_not_allowed', '当前 Worktree 尚未处于可验收状态')
+  }
+  return record.delivery.review
+}
+
+function previewReview(record: ManagedCheckoutRecord) {
+  if (record.phase !== 'ready' || record.delivery.state !== 'preview_active') {
+    throw domainError('preview_not_active', '当前没有等待验收的 Local Preview')
   }
   return record.delivery.review
 }
@@ -158,26 +175,58 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     return options.lookup.getSession(record.ownerSessionId) !== undefined
   }
 
+  function sameLocalRoot(left: string, right: string): boolean {
+    return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+  }
+
+  function acceptanceHolder(record: ManagedCheckoutRecord): ManagedCheckoutRecord | undefined {
+    return Object.values(options.registry.read().managedCheckouts).find(candidate => (
+      candidate.checkoutId !== record.checkoutId
+      && candidate.phase !== 'discarded'
+      && sameLocalRoot(candidate.localRoot, record.localRoot)
+      && (
+        candidate.delivery.state === 'preview_active'
+        || candidate.journal?.operation === 'preview'
+        || candidate.journal?.operation === 'rollback_preview'
+        || candidate.journal?.operation === 'finalize_preview'
+        || candidate.journal?.operation === 'finish'
+      )
+    ))
+  }
+
+  function projectReviewSlot<T extends WorktreeConsoleTargetSummary>(record: ManagedCheckoutRecord, target: T): T {
+    if (record.delivery.state !== 'ready_for_review') return target
+    const holder = acceptanceHolder(record)
+    return {
+      ...target,
+      reviewSlot: holder ? 'waiting' : 'available',
+      ...(holder ? {
+        reviewSlotOwnerSessionId: holder.ownerSessionId,
+        capabilities: { ...target.capabilities, preflight: false, preview: false },
+      } : {}),
+    } as T
+  }
+
   async function details(sessionId: string, checkoutId: string) {
     const record = await authorize(sessionId, checkoutId)
     const observed = await observe(record)
-    return projectDetails(
+    return projectReviewSlot(record, projectDetails(
       record,
       sessionId,
       observed.managedRoot,
       observed.snapshot,
       observed.dirty,
       ownerSessionAvailable(record),
-    )
+    ))
   }
 
   async function mutationResponse(sessionId: string, checkoutId: string): Promise<WorktreeConsoleMutationResponse> {
     const record = recordOf(options.registry, checkoutId)
     if (record.phase === 'discarded') {
-      return { target: projectRecord(record, sessionId, { ownerSessionAvailable: ownerSessionAvailable(record) }) }
+      return { target: projectReviewSlot(record, projectRecord(record, sessionId, { ownerSessionAvailable: ownerSessionAvailable(record) })) }
     }
     const observed = await observe(record)
-    return { target: projectRecord(record, sessionId, { ...observed, ownerSessionAvailable: ownerSessionAvailable(record) }) }
+    return { target: projectReviewSlot(record, projectRecord(record, sessionId, { ...observed, ownerSessionAvailable: ownerSessionAvailable(record) })) }
   }
 
   return {
@@ -201,11 +250,11 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       const worktrees = []
       for (const record of records) {
         const observed = record.phase === 'discarded' ? undefined : await observe(record)
-        const projected = projectRecord(record, request.sessionId, {
+        const projected = projectReviewSlot(record, projectRecord(record, request.sessionId, {
           ...observed,
           summary: activeById.get(record.checkoutId),
           ownerSessionAvailable: ownerSessionAvailable(record),
-        })
+        }))
         if (request.needsAttention !== true || projected.state === 'cleanup_pending' || projected.state === 'recovery_required') {
           worktrees.push(projected)
         }
@@ -279,17 +328,80 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       }
     },
 
+    preflight: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以执行同步预检')
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      const review = readyReview(record)
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      const preflight = await options.module.preflight?.(request.sessionId, request.expectedRevision)
+      if (preflight === undefined) throw domainError('git_error', '当前 SessionCheckoutModule 不支持验收预检')
+      return { preflight }
+    }),
+
+    preview: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以同步到 Local 验收')
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      const review = readyReview(record)
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      const result = await options.module.operate({
+        action: 'preview', sessionId: request.sessionId, expectedRevision: request.expectedRevision,
+      })
+      if (result.status === 'error') throw domainError(result.code, result.message)
+      if (result.status === 'conflict') throw domainError('apply_conflict', 'Local Preview 预检发现内容冲突')
+      if (result.status !== 'previewed') throw domainError('operation_not_allowed', 'Preview 返回了非预期状态')
+      return {
+        ...(await mutationResponse(request.sessionId, request.checkoutId)),
+        changedFiles: [...result.changedFiles],
+      }
+    }),
+
+    rollbackPreview: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以撤回 Local Preview')
+      const result = await options.module.operate({
+        action: 'rollback_preview',
+        sessionId: request.sessionId,
+        expectedRevision: request.expectedRevision,
+        ...(request.resumeRevision === undefined ? {} : { resumeRevision: request.resumeRevision }),
+      })
+      if (result.status === 'error') throw domainError(result.code, result.message)
+      if (result.status !== 'preview_rolled_back' && result.status !== 'preview_detached') {
+        throw domainError('operation_not_allowed', 'Rollback Preview 返回了非预期状态')
+      }
+      return {
+        ...(await mutationResponse(request.sessionId, request.checkoutId)),
+        changedFiles: [...result.changedFiles],
+      }
+    }),
+
     discard: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
       if (record.ownerSessionId !== request.sessionId && ownerSessionAvailable(record)) {
         throw domainError('not_owner', 'Owner Session 已接管该 Worktree，只有 owner 可以 Discard')
       }
-      await options.module.manageManagedWorktreeForSession(request.sessionId, {
-        checkoutId: request.checkoutId,
-        expectedRevision: request.expectedRevision,
-        action: 'discard',
-        confirmDirty: request.confirmDirty,
-      })
+      if (record.ownerSessionId === request.sessionId) {
+        const result = await options.module.operate({
+          action: 'discard',
+          sessionId: request.sessionId,
+          expectedRevision: request.expectedRevision,
+          confirmDirty: request.confirmDirty,
+          ...(request.rollbackPreview === undefined ? {} : { rollbackPreview: request.rollbackPreview }),
+        })
+        if (result.status === 'error') throw domainError(result.code, result.message)
+        if (result.status === 'preview_detached') {
+          return { ...(await mutationResponse(request.sessionId, request.checkoutId)), changedFiles: [...result.changedFiles] }
+        }
+        if (result.status !== 'discarded') throw domainError('operation_not_allowed', 'Discard 返回了非预期状态')
+      } else {
+        await options.module.manageManagedWorktreeForSession(request.sessionId, {
+          checkoutId: request.checkoutId,
+          expectedRevision: request.expectedRevision,
+          action: 'discard',
+          confirmDirty: request.confirmDirty,
+        })
+      }
       return mutationResponse(request.sessionId, request.checkoutId)
     }),
 
@@ -300,17 +412,59 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         if (record.revision !== request.expectedRevision) return failure('stale_target', 'Session Target 已变化，请刷新')
         const review = readyReview(record)
         if (review.reviewId !== request.expectedReviewId) return failure('stale_target', 'Review 身份已变化，请刷新')
+        const commitMessage = request.commitMessage.trim()
+        if (!commitMessage || commitMessage.length > 500) return failure('invalid_input', 'Commit Message 必须为 1–500 个字符')
         const result = await options.module.operate({
           sessionId: request.sessionId,
           expectedRevision: request.expectedRevision,
           action: 'finish',
           expectedReviewId: request.expectedReviewId,
-          commitMessage: review.suggestedCommitMessage,
+          commitMessage,
           retention: request.retention,
         })
         if (result.status === 'error') return failure(result.code, result.message)
         if (result.status === 'conflict') return failure('apply_conflict', 'Local 应用发生冲突')
         if (result.status !== 'finished') return failure('operation_not_allowed', 'Finalize 返回了非预期状态')
+        return {
+          ok: true,
+          value: {
+            ...(await mutationResponse(request.sessionId, request.checkoutId)),
+            changedFiles: [...result.changedFiles],
+            commitOid: result.commitOid,
+          },
+        }
+      } catch (error) {
+        return consoleFailure(error)
+      }
+    },
+
+    finalizePreview: async request => {
+      try {
+        const record = await authorize(request.sessionId, request.checkoutId)
+        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', '只有 owner Isolated Session 可以完成 Local Preview 验收')
+        if (record.revision !== request.expectedRevision) return failure('stale_target', 'Session Target 已变化，请刷新')
+        const review = previewReview(record)
+        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', 'Review 身份已变化，请刷新')
+        const commitMessage = request.commitMessage.trim()
+        if (!commitMessage || commitMessage.length > 500) return failure('invalid_input', 'Commit Message 必须为 1–500 个字符')
+        const result = await options.module.operate({
+          action: 'finalize_preview',
+          sessionId: request.sessionId,
+          expectedRevision: request.expectedRevision,
+          commitMessage,
+          retention: request.retention,
+        })
+        if (result.status === 'error') return failure(result.code, result.message)
+        if (result.status === 'preview_detached') {
+          return {
+            ok: true,
+            value: {
+              ...(await mutationResponse(request.sessionId, request.checkoutId)),
+              changedFiles: [...result.changedFiles],
+            },
+          }
+        }
+        if (result.status !== 'finished') return failure('operation_not_allowed', 'Finalize Preview 返回了非预期状态')
         return {
           ok: true,
           value: {

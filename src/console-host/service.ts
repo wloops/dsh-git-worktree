@@ -8,6 +8,7 @@ import type {
   WorktreeConsoleListResponse,
   WorktreeConsoleMutationResponse,
   WorktreeConsoleOutcome,
+  WorktreeConsolePreflightResponse,
   WorktreeConsoleReviewDiffResponse,
 } from '../console-contract.js'
 import type { WorktreeRetentionMode } from '../types.js'
@@ -45,8 +46,23 @@ export class WorktreeConsoleService extends TypertRemoteService {
   }
 
   @Remote
-  discard(agent: Agent, checkoutId: string, expectedRevision: number, confirmDirty: boolean): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.discard({ sessionId: agent.id, checkoutId, expectedRevision, confirmDirty })
+  preflight(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>> {
+    return this.controlPlane.preflight({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  }
+
+  @Remote
+  preview(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.preview({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  }
+
+  @Remote
+  rollbackPreview(agent: Agent, checkoutId: string, expectedRevision: number, resumeRevision?: boolean): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.rollbackPreview({ sessionId: agent.id, checkoutId, expectedRevision, resumeRevision })
+  }
+
+  @Remote
+  discard(agent: Agent, checkoutId: string, expectedRevision: number, confirmDirty: boolean, rollbackPreview?: boolean): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.discard({ sessionId: agent.id, checkoutId, expectedRevision, confirmDirty, rollbackPreview })
   }
 
   @Remote
@@ -55,9 +71,22 @@ export class WorktreeConsoleService extends TypertRemoteService {
     checkoutId: string,
     expectedRevision: number,
     expectedReviewId: string,
+    commitMessage: string,
     retention: WorktreeRetentionMode,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.finalize({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, retention })
+    return this.controlPlane.finalize({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, commitMessage, retention })
+  }
+
+  @Remote
+  finalizePreview(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    commitMessage: string,
+    retention: WorktreeRetentionMode,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.finalizePreview({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, commitMessage, retention })
   }
 
   @Remote

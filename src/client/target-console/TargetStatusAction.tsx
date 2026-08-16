@@ -12,13 +12,15 @@ export interface TargetStatusActionProps {
 
 const STATE_LABELS: Record<WorktreeConsoleTargetState, string> = {
   local: 'Local',
-  creating: 'Creating…',
+  creating: '创建中…',
   working: 'Worktree',
-  ready_for_review: 'Ready',
-  retained: 'Retained',
-  cleanup_pending: 'Cleanup',
-  recovery_required: 'Recovery',
-  delivered: 'Delivered',
+  ready_for_review: '待验收',
+  preview_active: 'Local 验收中',
+  preview_detached: '预览待恢复',
+  retained: '已保留',
+  cleanup_pending: '清理中',
+  recovery_required: '需要恢复',
+  delivered: '已交付',
 }
 
 /** Read-only Session Target capsule. The Harness header slot exposes no public view-switch action. */
@@ -44,11 +46,11 @@ export function TargetStatusAction({ sessionId, adapter }: TargetStatusActionPro
     return () => { active = false }
   }, [adapter, sessionId])
 
-  const label = state === 'loading' ? 'Loading…' : state === 'error' ? 'Unavailable' : STATE_LABELS[state]
+  const label = state === 'loading' ? '加载中…' : state === 'error' ? '不可用' : STATE_LABELS[state]
   const expiry = state === 'retained' && target?.expiresAt
     ? new Date(target.expiresAt).toLocaleDateString()
     : null
-  const accessibleLabel = expiry === null ? `Session Target: ${label}` : `Session Target: ${label}, expires ${expiry}`
+  const accessibleLabel = expiry === null ? `Session Target：${label}` : `Session Target：${label}，到期 ${expiry}`
   return (
     <span
       className="dsh-wtc-target-chip"
@@ -56,7 +58,7 @@ export function TargetStatusAction({ sessionId, adapter }: TargetStatusActionPro
       role="status"
       aria-live="polite"
       aria-label={accessibleLabel}
-      title="Session Target status. Open the Worktree tab for project controls."
+      title="Session Target 状态；高级管理请打开 Worktree 标签页。"
     >
       <span className="dsh-wtc-target-dot" aria-hidden />
       {label}

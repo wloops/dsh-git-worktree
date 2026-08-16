@@ -1,18 +1,3 @@
-/**
- * dsh-git-worktree apply engine, ported from Domi's session-checkout-apply
- * with the Local preview surface removed (preview/rollback/finalize). The
- * remaining surface is the deterministic merge pipeline: plan (conflict
- * detection with ancestry-aware base selection), apply (patch Local with a
- * verified plan), and finish (commit the task delta onto Local HEAD while
- * preserving the user's own staged and working state). All merge computation
- * runs in temporary checkouts over shared object stores; only the final
- * verified patch touches the real Local worktree, and ref/index updates use
- * CAS so a crash leaves a recoverable journal.
- *
- * Ports note: `runGit` still spawns git directly (plugin code is trusted host
- * code, not sandboxed agent code); tests inject a real git in temp repos.
- * @module dsh-git-worktree/session-checkout-apply
- */
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -99,6 +84,42 @@ export interface FinishSuccessResult {
 
 export type FinishResult = FinishSuccessResult | ApplyErrorResult
 
+export interface PreviewReceipt {
+  previewId: string
+  reviewId: string
+  iteration: number
+  previewedAt: number
+  configuredBaseOid: string
+  effectiveBaseOid: string
+  baseStrategy: ApplyBaseStrategy
+  localHeadOid: string
+  localHeadRef: string | null
+  localFingerprintBefore: string
+  localFingerprintPreview: string
+  localWorkingTreeOid: string
+  localIndexTreeOid: string
+  previewWorkingTreeOid: string
+  isolatedHeadOid: string
+  isolatedFingerprint: string
+  isolatedSnapshotOid: string
+  changedFiles: string[]
+}
+
+export interface PreviewSuccessResult {
+  status: 'previewed'
+  receipt: PreviewReceipt
+  changedFiles: string[]
+}
+
+export type PreviewResult = PreviewSuccessResult | ApplyErrorResult
+
+export interface RollbackSuccessResult {
+  status: 'preview_rolled_back'
+  changedFiles: string[]
+}
+
+export type RollbackResult = RollbackSuccessResult | ApplyErrorResult
+
 export interface InvalidInputApplyError {
   code: 'invalid_input'
   message: string
@@ -134,6 +155,11 @@ export interface OperationNotAllowedApplyError {
   message: string
 }
 
+export interface PreviewModifiedApplyError {
+  code: 'preview_modified'
+  message: string
+}
+
 export type ApplyError =
   | InvalidInputApplyError
   | InvalidPlanApplyError
@@ -142,6 +168,7 @@ export type ApplyError =
   | GitApplyError
   | CommitIsolationApplyError
   | OperationNotAllowedApplyError
+  | PreviewModifiedApplyError
 
 export interface SessionCheckoutApplyEngine {
   inspectReview(input: ApplyPlanInput): Promise<InspectReviewResult>
@@ -150,6 +177,21 @@ export interface SessionCheckoutApplyEngine {
   plan(input: ApplyPlanInput): Promise<ApplyPlanResult>
   apply(plan: ApplyPlan): Promise<ApplyResult>
   finish(plan: ApplyPlan, options: { commitMessage: string }): Promise<FinishResult>
+  preview(plan: ApplyPlan, options: {
+    previewId: string
+    reviewId: string
+    iteration: number
+    /** Local 写入前持久化 receipt artifacts/journal；失败时不得触碰 Local。 */
+    beforeWrite?(receipt: PreviewReceipt): Promise<void>
+  }): Promise<PreviewResult>
+  rollback(input: { localPath: string; receipt: PreviewReceipt }): Promise<RollbackResult>
+  finalize(input: {
+    localPath: string
+    receipt: PreviewReceipt
+    commitMessage: string
+    /** Commit object 已创建但 branch ref 尚未更新时持久化恢复信息。 */
+    beforeCommit?(commitOid: string): Promise<void>
+  }): Promise<FinishResult>
 }
 
 export interface SessionCheckoutApplyEngineOptions {
@@ -441,10 +483,10 @@ async function createSnapshotCommit(
   const result = await runGit(checkoutPath, args, {
     env: {
       ...(objectDirectory && sourceObjects ? gitObjectEnvironment(objectDirectory, sourceObjects) : {}),
-      GIT_AUTHOR_NAME: 'dsh-git-worktree Apply',
-      GIT_AUTHOR_EMAIL: 'dsh-worktree-apply@localhost',
-      GIT_COMMITTER_NAME: 'dsh-git-worktree Apply',
-      GIT_COMMITTER_EMAIL: 'dsh-worktree-apply@localhost',
+      GIT_AUTHOR_NAME: 'Domi Apply',
+      GIT_AUTHOR_EMAIL: 'domi-apply@localhost',
+      GIT_COMMITTER_NAME: 'Domi Apply',
+      GIT_COMMITTER_EMAIL: 'domi-apply@localhost',
     },
     input: `${label}\n`,
   })
@@ -484,8 +526,8 @@ async function computeMerge(
   await runGit(mergePath, ['init', '--template='])
   await runGit(mergePath, ['config', 'core.autocrlf', 'false'])
   await runGit(mergePath, ['config', 'core.hooksPath', hooksPath])
-  await runGit(mergePath, ['config', 'user.name', 'dsh-git-worktree Apply'])
-  await runGit(mergePath, ['config', 'user.email', 'dsh-worktree-apply@localhost'])
+  await runGit(mergePath, ['config', 'user.name', 'Domi Apply'])
+  await runGit(mergePath, ['config', 'user.email', 'domi-apply@localhost'])
 
   const mergeEnv: NodeJS.ProcessEnv = {
     GIT_ALTERNATE_OBJECT_DIRECTORIES: [objectDirectory, sourceObjects].join(delimiter),
@@ -590,8 +632,8 @@ async function computeTreeMerge(
   await runGit(mergePath, ['init', '--template='])
   await runGit(mergePath, ['config', 'core.autocrlf', 'false'])
   await runGit(mergePath, ['config', 'core.hooksPath', hooksPath])
-  await runGit(mergePath, ['config', 'user.name', 'dsh-git-worktree Apply'])
-  await runGit(mergePath, ['config', 'user.email', 'dsh-worktree-apply@localhost'])
+  await runGit(mergePath, ['config', 'user.name', 'Domi Apply'])
+  await runGit(mergePath, ['config', 'user.email', 'domi-apply@localhost'])
 
   const env: NodeJS.ProcessEnv = {
     GIT_ALTERNATE_OBJECT_DIRECTORIES: [objectDirectory, sourceObjects].join(delimiter),
@@ -741,7 +783,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
     }
     let tempRoot: string | null = null
     try {
-      tempRoot = await mkdtemp(join(tmpdir(), 'dsh-wt-review-'))
+      tempRoot = await mkdtemp(join(tmpdir(), 'domi-review-snapshot-'))
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
       const localGitRoot = await resolveGitRoot(input.localPath)
@@ -801,7 +843,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
     let tempRoot: string | null = null
     try {
-      tempRoot = await mkdtemp(join(tmpdir(), 'dsh-wt-plan-'))
+      tempRoot = await mkdtemp(join(tmpdir(), 'domi-apply-plan-'))
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
       const localGitRoot = await resolveGitRoot(input.localPath)
@@ -914,7 +956,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
     let tempRoot: string | null = null
     try {
-      tempRoot = await mkdtemp(join(tmpdir(), 'dsh-wt-apply-'))
+      tempRoot = await mkdtemp(join(tmpdir(), 'domi-apply-check-'))
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(stored.scope.localGitRoot)
@@ -987,6 +1029,396 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
     }
   }
 
+  async preview(
+    plan: ApplyPlan,
+    options: {
+      previewId: string
+      reviewId: string
+      iteration: number
+      beforeWrite?(receipt: PreviewReceipt): Promise<void>
+    },
+  ): Promise<PreviewResult> {
+    const stored = this.plans.get(plan.revision)
+    if (!stored || !planMatches(stored.plan, plan)) {
+      return { status: 'error', error: { code: 'invalid_plan', message: 'Preview plan 不存在、已使用或已被修改' } }
+    }
+    if (!options.previewId.trim() || !options.reviewId.trim() || !Number.isSafeInteger(options.iteration) || options.iteration < 1) {
+      return { status: 'error', error: { code: 'invalid_input', message: 'Preview identity 无效' } }
+    }
+
+    let tempRoot: string | null = null
+    try {
+      tempRoot = await mkdtemp(join(tmpdir(), 'domi-preview-'))
+      const objectDirectory = join(tempRoot, 'objects')
+      await mkdir(objectDirectory, { recursive: true })
+      const sourceObjects = await sourceObjectDirectory(stored.scope.localGitRoot)
+      if (!pathsMatch(sourceObjects, stored.scope.sourceObjects)) {
+        return { status: 'error', error: { code: 'invalid_plan', message: 'Preview plan 的 Git 仓库身份已变化' } }
+      }
+      const local = await captureSnapshot(
+        stored.scope.localGitRoot,
+        join(tempRoot, 'local.index'),
+        objectDirectory,
+        sourceObjects,
+      )
+      if (
+        local.headOid !== stored.plan.localHeadOid
+        || local.headRef !== stored.plan.localHeadRef
+        || local.fingerprint !== stored.plan.localFingerprint
+      ) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 plan 后发生变化，请重新计算' } }
+      }
+      const isolated = await captureSnapshot(
+        stored.scope.isolatedGitRoot,
+        join(tempRoot, 'isolated.index'),
+        objectDirectory,
+        sourceObjects,
+      )
+      if (isolated.headOid !== stored.plan.isolatedHeadOid || isolated.fingerprint !== stored.plan.isolatedFingerprint) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Isolated 在 plan 后发生变化，请重新计算' } }
+      }
+
+      const persistentLocal = await captureSnapshot(
+        stored.scope.localGitRoot,
+        join(tempRoot, 'persistent-local.index'),
+        null,
+        null,
+      )
+      const persistentIsolated = await captureSnapshot(
+        stored.scope.isolatedGitRoot,
+        join(tempRoot, 'persistent-isolated.index'),
+        null,
+        null,
+      )
+      if (
+        persistentLocal.fingerprint !== stored.plan.localFingerprint
+        || persistentIsolated.fingerprint !== stored.plan.isolatedFingerprint
+      ) {
+        return { status: 'error', error: { code: 'invalid_plan', message: 'Preview 持久快照与审核 plan 不一致' } }
+      }
+      const previewWorkingTreeOid = await prepareIndexFromPatch(
+        stored.scope.localGitRoot,
+        join(tempRoot, 'preview-working.index'),
+        persistentLocal.treeOid,
+        stored.patch,
+      )
+      const isolatedSnapshotOid = await createSnapshotCommit(
+        stored.scope.isolatedGitRoot,
+        persistentIsolated.treeOid,
+        stored.plan.effectiveBaseOid,
+        null,
+        null,
+        'Previewed Isolated snapshot',
+      )
+      const preparedReceipt: PreviewReceipt = {
+        previewId: options.previewId,
+        reviewId: options.reviewId,
+        iteration: options.iteration,
+        previewedAt: Date.now(),
+        configuredBaseOid: stored.input.baseOid,
+        effectiveBaseOid: stored.plan.effectiveBaseOid,
+        baseStrategy: stored.plan.baseStrategy,
+        localHeadOid: persistentLocal.headOid,
+        localHeadRef: persistentLocal.headRef,
+        localFingerprintBefore: persistentLocal.fingerprint,
+        localFingerprintPreview: '',
+        localWorkingTreeOid: persistentLocal.treeOid,
+        localIndexTreeOid: persistentLocal.indexTreeOid,
+        previewWorkingTreeOid,
+        isolatedHeadOid: persistentIsolated.headOid,
+        isolatedFingerprint: persistentIsolated.fingerprint,
+        isolatedSnapshotOid,
+        changedFiles: [...stored.plan.changedFiles],
+      }
+
+      await this.options.beforeFinalLocalValidation?.()
+      const finalLocal = await captureSnapshot(
+        stored.scope.localGitRoot,
+        join(tempRoot, 'final-local.index'),
+        objectDirectory,
+        sourceObjects,
+      )
+      if (finalLocal.headOid !== stored.plan.localHeadOid || finalLocal.fingerprint !== stored.plan.localFingerprint) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 Preview 写入前发生变化，请重新计算' } }
+      }
+      await options.beforeWrite?.(preparedReceipt)
+      if (stored.patch.length > 0) {
+        await runGit(stored.scope.localGitRoot, ['apply', '--binary', '--whitespace=nowarn'], { input: stored.patch })
+      }
+      const previewedLocal = await captureSnapshot(
+        stored.scope.localGitRoot,
+        join(tempRoot, 'previewed-local.index'),
+        null,
+        null,
+      )
+      if (previewedLocal.treeOid !== previewWorkingTreeOid) {
+        return {
+          status: 'error',
+          error: { code: 'git_error', message: 'Preview 写入后的 Local snapshot 与准备结果不一致，需要恢复确认' },
+        }
+      }
+
+      this.plans.delete(plan.revision)
+      const receipt: PreviewReceipt = {
+        ...preparedReceipt,
+        localFingerprintPreview: previewedLocal.fingerprint,
+      }
+      return { status: 'previewed', receipt, changedFiles: [...receipt.changedFiles] }
+    } catch (error) {
+      return { status: 'error', error: { code: 'git_error', message: this.errorMessage(error) } }
+    } finally {
+      if (tempRoot) await this.cleanup(tempRoot)
+    }
+  }
+
+  async rollback(input: { localPath: string; receipt: PreviewReceipt }): Promise<RollbackResult> {
+    let tempRoot: string | null = null
+    try {
+      tempRoot = await mkdtemp(join(tmpdir(), 'domi-preview-rollback-'))
+      const localGitRoot = await resolveGitRoot(input.localPath)
+      const objectDirectory = join(tempRoot, 'objects')
+      await mkdir(objectDirectory, { recursive: true })
+      const sourceObjects = await sourceObjectDirectory(localGitRoot)
+      const current = await captureSnapshot(
+        localGitRoot,
+        join(tempRoot, 'current.index'),
+        objectDirectory,
+        sourceObjects,
+      )
+      if (current.headOid !== input.receipt.localHeadOid || current.headRef !== input.receipt.localHeadRef) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local branch/HEAD 已变化，不能自动撤回 Preview' } }
+      }
+      const rollbackTree = await computeTreeMerge(
+        tempRoot,
+        sourceObjects,
+        objectDirectory,
+        localGitRoot,
+        'preview-rollback',
+        input.receipt.previewWorkingTreeOid,
+        current.treeOid,
+        input.receipt.localWorkingTreeOid,
+      )
+      if (rollbackTree.status === 'conflict') {
+        return {
+          status: 'error',
+          error: {
+            code: 'preview_modified',
+            message: `Local 在 Preview 区域出现额外修改，无法安全撤回：${rollbackTree.conflictingFiles.join('、')}`,
+          },
+        }
+      }
+      const rollbackPatch = await treePatch(
+        localGitRoot,
+        current.treeOid,
+        rollbackTree.treeOid,
+        objectDirectory,
+        sourceObjects,
+      )
+      await this.options.beforeFinalLocalValidation?.()
+      const finalLocal = await captureSnapshot(
+        localGitRoot,
+        join(tempRoot, 'final-local.index'),
+        objectDirectory,
+        sourceObjects,
+      )
+      if (finalLocal.fingerprint !== current.fingerprint || finalLocal.headOid !== current.headOid) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local 在撤回 Preview 前发生变化，请重试' } }
+      }
+      if (rollbackPatch.length > 0) {
+        await runGit(localGitRoot, ['apply', '--binary', '--whitespace=nowarn'], { input: rollbackPatch })
+      }
+      return { status: 'preview_rolled_back', changedFiles: [...input.receipt.changedFiles] }
+    } catch (error) {
+      return { status: 'error', error: { code: 'git_error', message: this.errorMessage(error) } }
+    } finally {
+      if (tempRoot) await this.cleanup(tempRoot)
+    }
+  }
+
+  async finalize(input: {
+    localPath: string
+    receipt: PreviewReceipt
+    commitMessage: string
+    beforeCommit?(commitOid: string): Promise<void>
+  }): Promise<FinishResult> {
+    const commitMessage = input.commitMessage.trim()
+    if (!commitMessage) {
+      return { status: 'error', error: { code: 'invalid_input', message: '提交信息不能为空' } }
+    }
+    if (!input.receipt.localHeadRef?.startsWith('refs/heads/')) {
+      return { status: 'error', error: { code: 'operation_not_allowed', message: 'Local 当前不是普通分支，不能自动创建任务提交' } }
+    }
+
+    let tempRoot: string | null = null
+    let adjacentIndex: string | null = null
+    try {
+      tempRoot = await mkdtemp(join(tmpdir(), 'domi-preview-finalize-'))
+      const localGitRoot = await resolveGitRoot(input.localPath)
+      const objectDirectory = join(tempRoot, 'objects')
+      await mkdir(objectDirectory, { recursive: true })
+      const sourceObjects = await sourceObjectDirectory(localGitRoot)
+      const current = await captureSnapshot(
+        localGitRoot,
+        join(tempRoot, 'current.index'),
+        objectDirectory,
+        sourceObjects,
+      )
+      if (current.headOid !== input.receipt.localHeadOid || current.headRef !== input.receipt.localHeadRef) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local branch/HEAD 已变化，不能完成 Preview 提交' } }
+      }
+
+      const previewRemoval = await computeTreeMerge(
+        tempRoot,
+        sourceObjects,
+        objectDirectory,
+        localGitRoot,
+        'preview-finalize-separation',
+        input.receipt.previewWorkingTreeOid,
+        current.treeOid,
+        input.receipt.localWorkingTreeOid,
+      )
+      if (previewRemoval.status === 'conflict') {
+        return {
+          status: 'error',
+          error: {
+            code: 'preview_modified',
+            message: `Local 在 Preview 区域出现额外修改，无法可靠提交：${previewRemoval.conflictingFiles.join('、')}`,
+          },
+        }
+      }
+
+      if (input.receipt.changedFiles.length === 0) {
+        await this.options.beforeFinalLocalValidation?.()
+        const finalLocal = await captureSnapshot(
+          localGitRoot,
+          join(tempRoot, 'final-empty.index'),
+          objectDirectory,
+          sourceObjects,
+        )
+        if (finalLocal.fingerprint !== current.fingerprint) {
+          return { status: 'error', error: { code: 'stale_local', message: 'Local 在完成 Preview 前发生变化，请重试' } }
+        }
+        return {
+          status: 'finished',
+          changedFiles: [],
+          commitOid: null,
+          nextBaseOid: input.receipt.isolatedSnapshotOid,
+        }
+      }
+
+      const taskTree = await computeTreeMerge(
+        tempRoot,
+        sourceObjects,
+        objectDirectory,
+        localGitRoot,
+        'preview-task-isolation',
+        input.receipt.localWorkingTreeOid,
+        current.headTreeOid,
+        input.receipt.previewWorkingTreeOid,
+      )
+      if (taskTree.status === 'conflict') {
+        return {
+          status: 'error',
+          error: {
+            code: 'commit_isolation_conflict',
+            message: `Preview 任务增量无法与 Local HEAD 可靠拆分：${taskTree.conflictingFiles.join('、')}`,
+          },
+        }
+      }
+      const finalIndexTree = await computeTreeMerge(
+        tempRoot,
+        sourceObjects,
+        objectDirectory,
+        localGitRoot,
+        'preview-index-preservation',
+        current.headTreeOid,
+        taskTree.treeOid,
+        current.indexTreeOid,
+      )
+      if (finalIndexTree.status === 'conflict') {
+        return {
+          status: 'error',
+          error: {
+            code: 'commit_isolation_conflict',
+            message: `Preview 提交与 Local staged 修改无法可靠分离：${finalIndexTree.conflictingFiles.join('、')}`,
+          },
+        }
+      }
+      const taskPatch = await treePatch(
+        localGitRoot,
+        current.headTreeOid,
+        taskTree.treeOid,
+        objectDirectory,
+        sourceObjects,
+      )
+      const finalIndexPatch = await treePatch(
+        localGitRoot,
+        taskTree.treeOid,
+        finalIndexTree.treeOid,
+        objectDirectory,
+        sourceObjects,
+      )
+      const actualTaskTreeOid = await prepareIndexFromPatch(
+        localGitRoot,
+        join(tempRoot, 'task.index'),
+        current.headOid,
+        taskPatch,
+      )
+      const commitOid = await createUserCommit(localGitRoot, actualTaskTreeOid, current.headOid, commitMessage)
+      const finalIndexPath = join(tempRoot, 'final.index')
+      await prepareIndexFromPatch(localGitRoot, finalIndexPath, commitOid, finalIndexPatch)
+      await input.beforeCommit?.(commitOid)
+
+      await this.options.beforeFinalLocalValidation?.()
+      const finalLocal = await captureSnapshot(
+        localGitRoot,
+        join(tempRoot, 'final-local.index'),
+        objectDirectory,
+        sourceObjects,
+      )
+      if (finalLocal.fingerprint !== current.fingerprint || finalLocal.headOid !== current.headOid) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 Preview 提交写入前发生变化，请重试' } }
+      }
+
+      const realIndexPath = await resolveIndexPath(localGitRoot)
+      adjacentIndex = `${realIndexPath}.domi-${randomUUID()}`
+      await copyFile(finalIndexPath, adjacentIndex)
+      let refUpdated = false
+      try {
+        await runGit(localGitRoot, ['update-ref', input.receipt.localHeadRef, commitOid, current.headOid])
+        refUpdated = true
+        await rename(adjacentIndex, realIndexPath)
+        adjacentIndex = null
+      } catch (error) {
+        if (refUpdated) {
+          try {
+            await runGit(localGitRoot, ['update-ref', input.receipt.localHeadRef, current.headOid, commitOid])
+          } catch (rollbackError) {
+            return {
+              status: 'error',
+              error: {
+                code: 'git_error',
+                message: `Preview 提交写入失败且 ref 无法回滚：${this.errorMessage(error)}；${this.errorMessage(rollbackError)}`,
+              },
+            }
+          }
+        }
+        return { status: 'error', error: { code: 'git_error', message: `Preview 提交写入失败，已回滚：${this.errorMessage(error)}` } }
+      }
+      return {
+        status: 'finished',
+        changedFiles: [...input.receipt.changedFiles],
+        commitOid,
+        nextBaseOid: input.receipt.isolatedSnapshotOid,
+      }
+    } catch (error) {
+      return { status: 'error', error: { code: 'git_error', message: this.errorMessage(error) } }
+    } finally {
+      await removeBestEffort(adjacentIndex)
+      if (tempRoot) await this.cleanup(tempRoot)
+    }
+  }
+
   async finish(plan: ApplyPlan, options: { commitMessage: string }): Promise<FinishResult> {
     const stored = this.plans.get(plan.revision)
     if (!stored || !planMatches(stored.plan, plan)) {
@@ -1006,7 +1438,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
     let tempRoot: string | null = null
     let adjacentIndex: string | null = null
     try {
-      tempRoot = await mkdtemp(join(tmpdir(), 'dsh-wt-finish-'))
+      tempRoot = await mkdtemp(join(tmpdir(), 'domi-finish-'))
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(stored.scope.localGitRoot)
@@ -1186,7 +1618,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       }
 
       const realIndexPath = await resolveIndexPath(stored.scope.localGitRoot)
-      adjacentIndex = `${realIndexPath}.dsh-wt-${randomUUID()}`
+      adjacentIndex = `${realIndexPath}.domi-${randomUUID()}`
       await copyFile(finalIndexPath, adjacentIndex)
 
       let worktreePatched = false

@@ -2,6 +2,7 @@ import type { InvocationDescriptor, InvocationParameterDescriptor, TypertRemoteC
 import {
   booleanSchema,
   checkoutIdSchema,
+  commitMessageSchema,
   createResponseSchema,
   currentResponseSchema,
   inspectResponseSchema,
@@ -9,6 +10,7 @@ import {
   mutationResponseSchema,
   optionalBooleanSchema,
   outcomeSchema,
+  preflightResponseSchema,
   retainedModeSchema,
   retentionSchema,
   reviewDiffResponseSchema,
@@ -71,15 +73,39 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleReviewDiffRequest.expectedRevision`),
     json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleReviewDiffRequest.expectedReviewId`),
   ], outcomeSchema(reviewDiffResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>'),
+  descriptor('preflight', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreflightRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreflightRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreflightRequest.expectedReviewId`),
+  ], outcomeSchema(preflightResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>'),
+  descriptor('preview', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.expectedReviewId`),
+  ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
+  descriptor('rollbackPreview', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.expectedRevision`),
+    json('resumeRevision', optionalBooleanSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.resumeRevision`, true),
+  ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('discard', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleDiscardRequest.checkoutId`),
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleDiscardRequest.expectedRevision`),
     json('confirmDirty', booleanSchema, 'boolean'),
+    json('rollbackPreview', optionalBooleanSchema, `${PACKAGE}/console-contract#WorktreeConsoleDiscardRequest.rollbackPreview`, true),
   ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('finalize', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizeRequest.checkoutId`),
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizeRequest.expectedRevision`),
     json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizeRequest.expectedReviewId`),
+    json('commitMessage', commitMessageSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizeRequest.commitMessage`),
+    json('retention', retentionSchema, `${PACKAGE}/types#WorktreeRetentionMode`),
+  ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
+  descriptor('finalizePreview', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizePreviewRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizePreviewRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizePreviewRequest.expectedReviewId`),
+    json('commitMessage', commitMessageSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizePreviewRequest.commitMessage`),
     json('retention', retentionSchema, `${PACKAGE}/types#WorktreeRetentionMode`),
   ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('setRetention', [

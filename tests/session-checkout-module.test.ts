@@ -461,6 +461,7 @@ describe('SessionCheckoutModule', () => {
     context.addSession('target-session-1', 'target-workspace-1')
     expect(context.module.runtimeContext('target-session-1')).toContain(`Authoritative cwd: ${launch.managedRoot}`)
     expect(context.module.runtimeContext('target-session-1')).toContain('worktree_ready_for_review')
+    expect(context.module.runtimeContext('target-session-1')).toContain('Do not duplicate that report in ordinary assistant prose')
 
     writeFileSync(join(launch.managedRoot, 'tracked.txt'), 'ready\n')
     await context.module.markReadyForReview('target-session-1', {
@@ -470,7 +471,7 @@ describe('SessionCheckoutModule', () => {
       suggestedCommitMessage: 'test: ready context',
     })
     expect(context.module.runtimeContext('target-session-1')).toContain('Ready for Review')
-    expect(context.module.runtimeContext('target-session-1')).toContain('only the user may Finish')
+    expect(context.module.runtimeContext('target-session-1')).toContain('only the user may preview, directly finish')
   })
 
   test('Given a source owns an unopened reservation When it removes the checkout Then no Host target Session is required', async () => {
@@ -488,6 +489,21 @@ describe('SessionCheckoutModule', () => {
     expect(removed.phase).toBe('discarded')
     expect(existsSync(launch.managedRoot)).toBe(false)
     expect(context.module.runtimeContext('session-1')).toContain('No isolated target is active')
+  })
+
+  test('Given the reserved owner Session is live When Local source tries management Then owner takeover fails closed', async () => {
+    const context = createContext()
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    context.addSession('target-session-1', 'project-1', 'Live owner')
+    const [summary] = await context.module.listManagedWorktreesForSession('session-1')
+
+    await expect(context.module.manageManagedWorktreeForSession('session-1', {
+      checkoutId: launch.target.checkout.id,
+      expectedRevision: summary.revision,
+      action: 'discard',
+      confirmDirty: true,
+    })).rejects.toMatchObject({ code: 'not_owner' })
+    expect(existsSync(launch.managedRoot)).toBe(true)
   })
 
   test('Given another session in the same project When it lists or manages a checkout Then persisted owner ids do not authorize it', async () => {
@@ -531,6 +547,178 @@ describe('SessionCheckoutModule', () => {
     expect(result).toMatchObject({ status: 'error', code: 'stale_isolated' })
     expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe('base\n')
     expect((await context.module.inspect('session-1')).delivery).toMatchObject({ state: 'working' })
+  })
+
+  test('Given a Ready Worktree When the user skips Local review Then receipt-first direct Finish creates exactly one task Commit', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'direct finish task\n')
+    writeFileSync(join(context.projectRoot, 'local-note.txt'), 'keep local note\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'direct finish', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: direct finish',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+    const before = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId, commitMessage: 'test: direct finish', retention: 'retain_manual',
+    })
+
+    expect(finished).toMatchObject({ status: 'finished', cleanup: 'retained', target: { delivery: { state: 'retained' } } })
+    expect(git(context.projectRoot, 'rev-list', '--count', `${before}..HEAD`)).toBe('1')
+    expect(git(context.projectRoot, 'show', '-s', '--format=%s', 'HEAD')).toBe('test: direct finish')
+    expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
+    expect(readFileSync(join(context.projectRoot, 'local-note.txt'), 'utf8')).toBe('keep local note\n')
+  })
+
+  test('Given a Ready Worktree When the owner withdraws Preview Then Local is restored and the Worktree resumes editing', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'preview task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'preview review', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: preview review',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+    const localHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+
+    expect(preview).toMatchObject({ status: 'previewed', target: { delivery: { state: 'preview_active' } } })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('preview task\n')
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHead)
+    expect(context.module.runtimeContext('session-1')).toContain('Local Preview active')
+
+    const rolledBack = await context.module.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: preview.target.revision, resumeRevision: true,
+    })
+
+    expect(rolledBack).toMatchObject({
+      status: 'preview_rolled_back',
+      target: { delivery: { state: 'working', iteration: ready.delivery.review.iteration } },
+    })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+    expect(existsSync(managedRoot)).toBe(true)
+  })
+
+  test('Given a Local Preview is accepted When the owner finalizes Then only the task becomes one retained Commit', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'accepted preview\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'accepted preview', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: accepted preview',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    writeFileSync(join(context.projectRoot, 'review-note.txt'), 'keep local review work\n')
+
+    const finalized = await context.module.operate({
+      action: 'finalize_preview',
+      sessionId: 'session-1',
+      expectedRevision: preview.target.revision,
+      commitMessage: 'test: accepted preview',
+      retention: 'retain_manual',
+    })
+
+    expect(finalized).toMatchObject({ status: 'finished', cleanup: 'retained', target: { delivery: { state: 'retained' } } })
+    expect(git(context.projectRoot, 'show', '-s', '--format=%s', 'HEAD')).toBe('test: accepted preview')
+    expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
+    expect(readFileSync(join(context.projectRoot, 'review-note.txt'), 'utf8')).toBe('keep local review work\n')
+  })
+
+  test('Given Preview is active When the user abandons the task Then Discard rolls Local back before removing the Worktree', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'abandoned preview\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'abandon preview', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: abandon preview',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('abandoned preview\n')
+
+    const discarded = await context.module.operate({
+      action: 'discard', sessionId: 'session-1', expectedRevision: preview.target.revision,
+      confirmDirty: true, rollbackPreview: true,
+    })
+
+    expect(discarded.status).toBe('discarded')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+    expect(existsSync(managedRoot)).toBe(false)
+  })
+
+  test('Given Local advances during Preview When rollback is requested Then it fails closed, preserves Local and releases the acceptance slot', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'preview becomes stale\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'stale preview', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: stale preview',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    git(context.projectRoot, 'add', 'tracked.txt')
+    git(context.projectRoot, 'commit', '-m', 'local advanced during preview')
+    const localHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const localBytes = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+
+    const detached = await context.module.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: preview.target.revision,
+    })
+
+    expect(detached).toMatchObject({
+      status: 'preview_detached', reason: 'stale_local', attemptedAction: 'rollback_preview',
+      target: { delivery: { state: 'preview_detached' } },
+    })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHead)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBytes)
+    if (detached.status !== 'preview_detached') throw new Error(`expected detached, got ${detached.status}`)
+    const discard = await context.module.operate({
+      action: 'discard', sessionId: 'session-1', expectedRevision: detached.target.revision,
+      confirmDirty: true, rollbackPreview: true,
+    })
+    expect(discard).toMatchObject({ status: 'error', code: 'preview_modified' })
+    expect(existsSync(managedRoot)).toBe(true)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBytes)
+  })
+
+  test('Given one Worktree owns the Local Preview When another target requests acceptance Then it waits until rollback releases the project slot', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', 'Second owner')
+    context.addSession('local-observer', 'project-1', 'Local observer')
+    await context.module.bind('local-observer', { kind: 'local' })
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const second = await context.module.bind('session-2', { kind: 'isolated' })
+    const firstRoot = await context.module.resolveManagedRoot(first.checkout.id)
+    const secondRoot = await context.module.resolveManagedRoot(second.checkout.id)
+    writeFileSync(join(firstRoot, 'tracked.txt'), 'first preview\n')
+    writeFileSync(join(secondRoot, 'tracked.txt'), 'second preview\n')
+    const ready1 = await context.module.markReadyForReview('session-1', {
+      summary: 'first', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: first',
+    })
+    const ready2 = await context.module.markReadyForReview('session-2', {
+      summary: 'second', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: second',
+    })
+    const preview1 = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready1.revision })
+    if (preview1.status !== 'previewed') throw new Error(`expected previewed, got ${preview1.status}`)
+    expect(context.module.runtimeContext('local-observer')).toContain('Worktree Preview active')
+
+    const waiting = await context.module.inspect('session-2')
+    expect(waiting).toMatchObject({ reviewSlot: 'waiting', reviewSlotOwnerSessionId: 'session-1' })
+    expect(await context.module.preflight?.('session-2', waiting.revision)).toMatchObject({ status: 'blocked', reason: 'project_acceptance_busy' })
+    expect(await context.module.operate({ action: 'preview', sessionId: 'session-2', expectedRevision: waiting.revision })).toMatchObject({
+      status: 'error', code: 'project_acceptance_busy',
+    })
+
+    await context.module.operate({ action: 'rollback_preview', sessionId: 'session-1', expectedRevision: preview1.target.revision })
+    const available = await context.module.inspect('session-2')
+    expect(available.reviewSlot).toBe('available')
+    expect((await context.module.operate({ action: 'preview', sessionId: 'session-2', expectedRevision: available.revision })).status).toBe('previewed')
   })
 
   test('Given a legacy Apply already wrote Local When Finish or Discard is requested Then the module fails closed', async () => {
@@ -760,6 +948,69 @@ describe('SessionCheckoutModule', () => {
 
 
 
+
+  test('Given process restarts after Preview artifacts were retained When reconcile runs Then receipt survives and Preview remains safely withdrawable', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'crash preview\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'crash preview', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: crash preview',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[preview.target.checkout.id]
+    record.phase = 'mutating'
+    record.journal = {
+      operation: 'preview', operationId: 'crash-preview', step: 'artifacts_retained', startedAt: Date.now(),
+      previewId: record.delivery.preview.previewId, reviewId: record.delivery.review.reviewId,
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    await restarted.reconcile()
+    const recovered = await restarted.inspect('session-1')
+    expect(recovered).toMatchObject({ checkout: { phase: 'ready' }, delivery: { state: 'preview_active' } })
+    const rollback = await restarted.operate({ action: 'rollback_preview', sessionId: 'session-1', expectedRevision: recovered.revision })
+    expect(rollback.status).toBe('preview_rolled_back')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
+  })
+
+  test('Given process restarts after branch CAS but before Finalize registry update When reconcile runs Then it records the real Commit and preserves the Worktree', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'crash finalize\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'crash finalize', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: crash finalize',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    git(context.projectRoot, 'add', 'tracked.txt')
+    git(context.projectRoot, 'commit', '-m', 'test: crash finalize')
+    const commitOid = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[preview.target.checkout.id]
+    record.phase = 'mutating'
+    record.journal = {
+      operation: 'finalize_preview', operationId: 'crash-finalize', step: 'updating_ref', startedAt: Date.now(),
+      previewId: record.delivery.preview.previewId, reviewId: record.delivery.review.reviewId, commitOid,
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    await restarted.reconcile()
+    const recovered = await restarted.inspect('session-1')
+    expect(recovered).toMatchObject({ checkout: { phase: 'finalized' }, delivery: { state: 'finalized', commitOid, cleanup: 'blocked' } })
+    expect(existsSync(managedRoot)).toBe(true)
+  })
 
   test('Given Apply engine detects stale Local When module returns operation result Then stale_local remains stable for renderer recompute guidance', async () => {
     const staleEngine: SessionCheckoutApplyEngine = {

@@ -13,6 +13,7 @@ import {
   type SessionCheckoutErrorCode,
   type SessionCheckoutPhase,
   type WorktreeRetentionMode,
+  type WorktreeApplyPreflightView,
   type WorktreeValidationItem,
   type WorktreeValidationStatus,
 } from './types.js'
@@ -22,6 +23,8 @@ export const WORKTREE_CONSOLE_TARGET_STATES = [
   'creating',
   'working',
   'ready_for_review',
+  'preview_active',
+  'preview_detached',
   'retained',
   'cleanup_pending',
   'recovery_required',
@@ -33,6 +36,8 @@ export type WorktreeConsoleTargetState = typeof WORKTREE_CONSOLE_TARGET_STATES[n
 export type WorktreeConsoleDeliveryState =
   | 'working'
   | 'ready_for_review'
+  | 'preview_active'
+  | 'preview_detached'
   | 'finalized'
   | 'retained'
   | 'delivered'
@@ -52,6 +57,8 @@ export function consoleStateFromDomain(source: WorktreeConsoleProjectionSource):
   if (source.deliveryState === 'retained' || source.phase === 'retained') return 'retained'
   if (source.deliveryState === 'finalized' || source.phase === 'finalized') return 'cleanup_pending'
   if (source.deliveryState === 'delivered' || source.phase === 'discarded') return 'delivered'
+  if (source.deliveryState === 'preview_detached') return 'preview_detached'
+  if (source.deliveryState === 'preview_active') return 'preview_active'
   if (source.deliveryState === 'ready_for_review') return 'ready_for_review'
   return 'working'
 }
@@ -66,7 +73,12 @@ export interface WorktreeConsoleCapabilities {
   open: boolean
   inspect: boolean
   discard: boolean
+  preflight: boolean
+  preview: boolean
+  rollbackPreview: boolean
+  /** Direct Ready → Commit path that skips Local Preview. */
   finalize: boolean
+  finalizePreview: boolean
   setRetention: boolean
   retryCleanup: boolean
 }
@@ -103,6 +115,8 @@ export interface WorktreeConsoleTargetSummary {
   expiresAt?: number | null
   cleanupMessage?: string
   review?: WorktreeConsoleReviewSummary
+  reviewSlot?: 'available' | 'waiting'
+  reviewSlotOwnerSessionId?: string
   capabilities: WorktreeConsoleCapabilities
 }
 
@@ -157,6 +171,32 @@ export interface WorktreeConsoleDiscardRequest {
   checkoutId: string
   expectedRevision: number
   confirmDirty: boolean
+  rollbackPreview?: boolean
+}
+
+export interface WorktreeConsolePreflightRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  expectedReviewId: string
+}
+
+export interface WorktreeConsolePreflightResponse {
+  preflight: WorktreeApplyPreflightView
+}
+
+export interface WorktreeConsolePreviewRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  expectedReviewId: string
+}
+
+export interface WorktreeConsoleRollbackPreviewRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  resumeRevision?: boolean
 }
 
 export interface WorktreeConsoleFinalizeRequest {
@@ -164,6 +204,17 @@ export interface WorktreeConsoleFinalizeRequest {
   checkoutId: string
   expectedRevision: number
   expectedReviewId: string
+  /** Explicit user-confirmed message; Host revalidates the bounded value. */
+  commitMessage: string
+  retention: WorktreeRetentionMode
+}
+
+export interface WorktreeConsoleFinalizePreviewRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  expectedReviewId: string
+  commitMessage: string
   retention: WorktreeRetentionMode
 }
 
@@ -272,6 +323,8 @@ const ERROR_META = {
   checkout_limit_reached: { category: 'invalid', recovery: 'none', retryable: false },
   project_acceptance_busy: { category: 'conflict', recovery: 'retry', retryable: true },
   operation_not_allowed: { category: 'invalid', recovery: 'refresh', retryable: true },
+  preview_not_active: { category: 'invalid', recovery: 'refresh', retryable: true },
+  preview_modified: { category: 'stale', recovery: 'open_recovery', retryable: false },
   recovery_unsafe: { category: 'recovery', recovery: 'open_recovery', retryable: false },
   transport_unavailable: { category: 'unavailable', recovery: 'retry', retryable: true },
   malformed_response: { category: 'internal', recovery: 'none', retryable: false },
@@ -288,8 +341,12 @@ export interface WorktreeConsoleAdapter {
   create(request: WorktreeConsoleCreateRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
   inspect(request: WorktreeConsoleInspectRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>>
   reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
+  preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
+  preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  finalizePreview(request: WorktreeConsoleFinalizePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   setRetention(request: WorktreeConsoleSetRetentionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   retryCleanup(request: WorktreeConsoleRetryCleanupRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
 }

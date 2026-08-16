@@ -4,7 +4,7 @@
 
 本文是 Backend Control Plane、Session Target UI、Review UI 三条并行 Worktree 的共同基线。共享 JSON 契约位于 [`src/console-contract.ts`](../src/console-contract.ts)，测试 fixture 位于 [`tests/support/worktree-console.ts`](../tests/support/worktree-console.ts)。
 
-本轮只锁定可并行实施所需的状态、DTO、安全规则、Harness 扩展缝和文件所有权。它不实现完整 Manager，不恢复旧 `worktree_apply`，也不引入 Local Preview/Rollback。
+本文现已升级为 Worktree Console 与 Domi 式验收生命周期的共同基线。它不实现跨项目全局 Manager，也不恢复旧 `worktree_apply`；Local Preview/Rollback/Finalize 只通过 Host 权威状态机和 strict Typert Remote 暴露给用户操作。
 
 ## 2. 已核验的 Harness 扩展缝
 
@@ -72,6 +72,8 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 | `creating` | Isolated `phase=preparing` |
 | `working` | Isolated ready + working/default delivery |
 | `ready_for_review` | delivery `ready_for_review` |
+| `preview_active` | delivery `preview_active`，Local 有未提交、可撤回 Preview |
+| `preview_detached` | delivery `preview_detached`，Local 漂移且恢复证据已保留 |
 | `retained` | phase/delivery retained |
 | `cleanup_pending` | phase/delivery finalized、清理尚未完成 |
 | `recovery_required` | phase `recovery_required`，优先于旧 delivery 标签 |
@@ -88,8 +90,12 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 - `create`
 - `inspect`
 - `reviewDiff`
+- `preflight`
+- `preview`
+- `rollbackPreview`
 - `discard`
-- `finalize`
+- `finalize`（Ready 跳过验收直接提交）
+- `finalizePreview`
 - `setRetention`
 - `retryCleanup`
 
@@ -98,9 +104,12 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 - `list` 返回 path-free summary；
 - `managedRoot` 只在 caller 已通过身份验证的 create/current/inspect detail 中出现；
 - create request 只带 source Session ID，target Session ID 必须由 Host 分配；
-- discard 必须带 checkout ID、expected revision 和显式 `confirmDirty`；
-- finalize 必须带 checkout ID、expected revision、expected review ID 和 retention；Commit Message 从持久化 review 读取，Client 不重新提交任意文本；
-- reviewDiff 绑定 expected revision + expected review ID，若 fingerprint/head 已变则返回 stale，不展示未审阅 bytes；
+- preflight 是严格只读操作，绑定 checkout ID、expected revision 和 expected review ID；不得创建可执行 plan、slot 或 Local 写入；
+- preview 必须在同一 Host mutation lock 下重新 plan/CAS，先持久化 receipt 和 internal refs，再写 Local；同一 canonical localRoot 只能有一个 active slot；
+- rollbackPreview/finalizePreview 必须绑定最新 revision，并复验 receipt 中的 Local HEAD/ref/fingerprint 与 Preview tree；Local 漂移 fail closed；
+- discard 必须带 checkout ID、expected revision 和显式 `confirmDirty`；active Preview 还必须带 `rollbackPreview: true`，且 Host 只在 rollback 成功后删除 Worktree；
+- finalize/finalizePreview 必须带 checkout ID、expected revision、expected review ID、1–500 字符用户确认 Commit Message 和 retention；Commit Message 不是授权材料，Host 必须重新做长度/空白校验并继续执行完整 review/CAS 校验；
+- reviewDiff 绑定 expected revision + expected review ID，若 fingerprint/head 已变则返回 stale，不展示未审阅 bytes；该能力保留在高级控制面，不进入普通验收卡；
 - 所有 mutation response 返回新的 summary/revision，Client 不乐观伪造 durable 状态。
 
 ## 5. 权限与 CAS 矩阵
@@ -112,11 +121,14 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 | create | source Session | canonical Git project | source 必须 Local | Host 分配 target ID；幂等/并发锁 |
 | inspect | caller Session | checkout 属于 caller 项目；root identity 匹配 | owner 或 source | 返回当次 revision |
 | reviewDiff | owner/source 规则由 Backend 明确；默认 owner | 同上 | review 必须仍为当前 | revision + reviewId + fingerprint/head |
-| discard | owner；未打开 reservation 可允许 source | 同上 | 不信任 persisted owner ID 作为 caller 证明 | expectedRevision + confirmDirty |
-| finalize | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner | revision + reviewId + fingerprint/head + Local CAS |
+| preflight/preview | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；项目单槽位 | revision + reviewId + isolated fingerprint/head + Local CAS |
+| rollbackPreview | isolated owner | receipt 的 canonical Local boundary | 仅 owner | revision + Preview receipt + Local HEAD/ref/fingerprint |
+| discard | owner；未打开 reservation 可允许 source | 同上 | 不信任 persisted owner ID 作为 caller 证明；active Preview 先 rollback | expectedRevision + confirmDirty + rollback intent |
+| finalize | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；Ready direct finish | revision + reviewId + fingerprint/head + Local CAS |
+| finalizePreview | isolated owner | receipt 的 canonical Local boundary | 仅 owner | revision + reviewId + receipt + Local/ref CAS |
 | setRetention/retryCleanup | caller-scoped manage | 同上 | owner/source 按现有管理语义 | expectedRevision |
 
-Remote 的 wire `sessionId` 必须先解析为 live/recoverable Agent/Session，再把其 ID传给现有 `*ForSession()` 方法。浏览器传入的 `projectId`、`ownerSessionId`、`managedRoot`、Commit Message 都不是授权材料。
+Remote 的 wire `sessionId` 必须先解析为 live/recoverable Agent/Session，再把其 ID传给现有 `*ForSession()` 方法。浏览器传入的 `projectId`、`ownerSessionId`、`managedRoot`、Commit Message 都不是授权材料；Commit Message 仅作为显式用户确认的提交内容，不能改变 caller/project/review/CAS 权限判断。
 
 ## 6. 错误契约
 
@@ -138,7 +150,7 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 - binary file 返回 `patch: null`；
 - Backend 应设置文件数、单文件 patch、总 payload 上限，并用 `truncated` 明示；
 - patch 内容不得成为 mutation input；
-- 第一版不支持 hunk acceptance、Preview 或 rollback。
+- 不支持 hunk acceptance；Preview/rollback 使用 Host 内部 tree/receipt，不使用浏览器提供的 patch bytes。
 
 建议初始预算：最多 200 files、单文件 100 KiB、总响应 1 MiB；Backend Track 可根据 Harness Gateway 限制下调，但必须记录并测试。
 
@@ -189,7 +201,7 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 
 - 不修改 DeepSeek Harness；
 - 不恢复模型侧 Apply/Finish/Discard；
-- 不实现 Local Preview/Rollback；
+- 不把 Local Preview/Rollback 暴露为模型工具，也不允许浏览器选择 Local 路径、slot owner 或 receipt；
 - 不实现 hunk acceptance；
 - 不实现跨项目全局 Manager；
 - 不实现 workflow `agent({ isolation })`；

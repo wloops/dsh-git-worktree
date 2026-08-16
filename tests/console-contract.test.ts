@@ -61,6 +61,7 @@ describe('Worktree Console shared contract', () => {
       checkoutId: 'checkout-1',
       expectedRevision: 7,
       expectedReviewId: 'review-1',
+      commitMessage: 'fix: exact reviewed message',
       retention: 'cleanup',
     }
 

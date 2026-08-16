@@ -222,9 +222,9 @@ pnpm run check:publish
 
 - Host Remote 实现；
 - Review diff 内容；
-- Local Preview/Rollback；
+- 浏览器自行生成 Preview receipt 或修改 Local；
 - 全局跨项目 Manager；
-- 自动 Finalize；
+- 模型自动触发 Finalize；
 - workflow/subagent isolation。
 
 ## Ready for Review 要求

@@ -8,7 +8,7 @@ export type {
   WorktreeReviewPanelProps,
 } from './WorktreeReviewPanel.js'
 
-/** Integration seam for the future Worktree Console target view. */
+/** Project one persisted review into the shared compact card/dock evidence shape. */
 export function reviewEvidenceFromTarget(
   target: WorktreeConsoleTargetSummary,
   detailsMarkdown?: string,
@@ -20,7 +20,7 @@ export function reviewEvidenceFromTarget(
   }
 }
 
-/** Build the exact CAS identity required by reviewDiff and Finalize. */
+/** Build the exact CAS identity required by Finalize and advanced review reads. */
 export function reviewIdentityFromTarget(
   sessionId: string,
   target: WorktreeConsoleTargetSummary,

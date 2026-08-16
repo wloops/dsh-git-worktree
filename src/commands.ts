@@ -113,6 +113,7 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
               sessionId,
               expectedRevision: target.revision,
               confirmDirty: true,
+              ...(target.delivery?.state === 'preview_active' ? { rollbackPreview: true } : {}),
             })
             return result.status === 'discarded'
               ? { kind: 'success', text: 'Worktree discarded. This Session target is no longer available.' }
@@ -131,6 +132,7 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
               expectedRevision: summary.revision,
               action: 'discard',
               confirmDirty: true,
+              ...(summary.state === 'preview_active' ? { rollbackPreview: true } : {}),
             })
             return { kind: 'success', text: `Removed worktree ${checkoutId}.` }
           }

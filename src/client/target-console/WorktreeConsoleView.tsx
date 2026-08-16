@@ -25,13 +25,15 @@ export interface WorktreeConsoleViewProps {
 
 const STATE_LABELS: Record<WorktreeConsoleTargetState, string> = {
   local: 'Local',
-  creating: 'Creating…',
-  working: 'Working',
-  ready_for_review: 'Ready',
-  retained: 'Retained',
-  cleanup_pending: 'Cleanup',
-  recovery_required: 'Recovery',
-  delivered: 'Delivered',
+  creating: '创建中…',
+  working: '修改中',
+  ready_for_review: '待验收',
+  preview_active: 'Local 验收中',
+  preview_detached: '预览待恢复',
+  retained: '已保留',
+  cleanup_pending: '清理中',
+  recovery_required: '需要恢复',
+  delivered: '已交付',
 }
 
 interface ConsoleSnapshot {
@@ -43,13 +45,19 @@ interface ConsoleSnapshot {
 function errorText(error: WorktreeConsoleError): string {
   const meta = worktreeConsoleErrorMeta(error.code)
   const next = {
-    refresh: 'Refresh to read the latest server state.',
-    confirm_dirty: 'Confirm the dirty target before retrying.',
-    open_recovery: 'Open the recovery diagnostics before another mutation.',
-    retry: 'Retry after the transient failure.',
-    none: 'This action cannot be completed from the current Session.',
+    refresh: '请刷新以读取最新 Host 状态。',
+    confirm_dirty: '请明确确认脏 Worktree 后重试。',
+    open_recovery: '再次操作前请先查看恢复信息。',
+    retry: '临时故障消失后可以重试。',
+    none: '当前 Session 无权完成此操作。',
   }[meta.recovery]
-  return `[${meta.category}] ${error.code}: ${error.message} ${next}`
+  return `${error.code}: ${error.message} ${next}`
+}
+
+function retentionLabel(retention: NonNullable<WorktreeConsoleTargetSummary['retention']>): string {
+  if (retention === 'retain_24h') return '保留 24 小时'
+  if (retention === 'retain_3d') return '保留 3 天'
+  return '手动清理'
 }
 
 function TargetState({ target }: { target: WorktreeConsoleTargetSummary }) {
@@ -172,10 +180,10 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
       }
       const { target, targetSessionId, managedRoot } = outcome.value
       if (target.sourceSessionId !== sessionId) {
-        throw new Error('Host returned a target for a different source Session.')
+        throw new Error('Host 返回了属于其他 source Session 的目标。')
       }
       if (targetSessionId === sessionId) {
-        throw new Error('Host returned the source Session as the isolated target Session.')
+        throw new Error('Host 错误地把 source Session 作为 isolated target Session 返回。')
       }
       if (
         target.checkoutId === null
@@ -185,7 +193,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
         || target.project.id !== sourceProjectId
         || !target.capabilities.open
       ) {
-        throw new Error('Host returned inconsistent target Session identity.')
+        throw new Error('Host 返回的 target Session 身份不一致。')
       }
       await openIsolatedTarget(services, { targetSessionId, managedRoot }, () => isActive(generation))
       if (!isActive(generation)) return
@@ -226,6 +234,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
         checkoutId: target.checkoutId,
         expectedRevision: target.revision,
         confirmDirty,
+        ...(target.state === 'preview_active' || target.capabilities.rollbackPreview ? { rollbackPreview: true } : {}),
       })
       if (!isActive(generation)) return
       if (!outcome.ok) {
@@ -279,7 +288,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
         return
       }
       if (outcome.value.target.checkoutId !== target.checkoutId) {
-        throw new Error('Inspect returned a different checkout identity.')
+        throw new Error('检查结果返回了不同的 Checkout 身份。')
       }
       setInspected(current => ({ ...current, [target.checkoutId!]: outcome.value.target }))
     } catch (reason) {
@@ -308,7 +317,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
       }
       const detail = outcome.value.target
       if (!detail.capabilities.open) {
-        throw new Error('The latest server state no longer allows Open.')
+        throw new Error('最新 Host 状态已不允许打开该 Worktree。')
       }
       if (
         detail.checkoutId !== target.checkoutId
@@ -318,10 +327,10 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
         || detail.targetSessionId !== target.targetSessionId
         || detail.targetSessionId !== detail.ownerSessionId
       ) {
-        throw new Error('Inspect returned inconsistent target identity.')
+        throw new Error('检查结果中的 target 身份不一致。')
       }
       if (detail.managedRoot === null || detail.targetSessionId === null) {
-        throw new Error('Authorized target path or Session identity is unavailable.')
+        throw new Error('已授权的 target 路径或 Session 身份不可用。')
       }
       await openIsolatedTarget(services, {
         managedRoot: detail.managedRoot,
@@ -348,26 +357,26 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
     : reviewIdentityFromTarget(sessionId, selectedReviewTarget)
 
   if (loading && visibleSnapshot === null) {
-    return <div className="dsh-wtc-loading" role="status" aria-live="polite">Loading Worktree Console…</div>
+    return <div className="dsh-wtc-loading" role="status" aria-live="polite">正在加载 Worktree 控制台…</div>
   }
 
   return (
-    <section className="dsh-wtc-console" aria-label="Worktree Console">
+    <section className="dsh-wtc-console" aria-label="Worktree 控制台">
       <header className="dsh-wtc-console-head">
         <div>
           <span className="dsh-wtc-kicker">SESSION TARGET</span>
-          <h2>Worktree Console</h2>
+          <h2>Worktree 控制台</h2>
         </div>
         <button type="button" className="dsh-wtc-button" disabled={loading} onClick={() => { void refresh() }}>
-          {loading ? 'Refreshing…' : 'Refresh'}
+          {loading ? '刷新中…' : '刷新'}
         </button>
       </header>
       {error ? <div className="dsh-wtc-error" role="alert">{error}</div> : null}
       {visibleSnapshot ? (
         <>
-          <section className="dsh-wtc-current" aria-label="Current target">
+          <section className="dsh-wtc-current" aria-label="当前目标">
             <div>
-              <span className="dsh-wtc-label">Current target</span>
+              <span className="dsh-wtc-label">当前目标</span>
               <strong>{visibleSnapshot.current.project.name}</strong>
             </div>
             <div className="dsh-wtc-current-actions">
@@ -379,21 +388,21 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
                   disabled={pendingAction !== null}
                   onClick={() => { void createTarget() }}
                 >
-                  {pendingAction === 'create' ? 'Creating…' : 'Create Worktree'}
+                  {pendingAction === 'create' ? '创建中…' : '创建 Worktree'}
                 </button>
               ) : null}
             </div>
           </section>
-          <section className="dsh-wtc-list-section" aria-label="Project worktrees">
+          <section className="dsh-wtc-list-section" aria-label="项目 Worktree">
             <div className="dsh-wtc-section-head">
               <div>
-                <span className="dsh-wtc-label">Project</span>
+                <span className="dsh-wtc-label">项目</span>
                 <h3>{visibleSnapshot.list.project.name}</h3>
               </div>
               <span className="dsh-wtc-count">{visibleSnapshot.list.worktrees.length}</span>
             </div>
             {visibleSnapshot.list.worktrees.length === 0 ? (
-              <div className="dsh-wtc-empty">No managed Worktrees in this project.</div>
+              <div className="dsh-wtc-empty">这个项目还没有受管 Worktree。</div>
             ) : (
               <ul className="dsh-wtc-list">
                 {visibleSnapshot.list.worktrees.map(target => (
@@ -404,10 +413,10 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
                         <span className="dsh-wtc-row-id">{target.checkoutId ?? 'Local source'}</span>
                       </div>
                       <div className="dsh-wtc-facts">
-                        <span>Iteration {target.iteration}</span>
-                        {target.dirty ? <span>Dirty changes</span> : <span>Clean</span>}
-                        {target.retention ? <span>Retention: {target.retention}</span> : null}
-                        {target.expiresAt ? <span>Expires: {new Date(target.expiresAt).toLocaleString()}</span> : null}
+                        <span>第 {target.iteration} 轮</span>
+                        {target.dirty ? <span>有未提交修改</span> : <span>干净</span>}
+                        {target.retention ? <span>保留方式：{retentionLabel(target.retention)}</span> : null}
+                        {target.expiresAt ? <span>到期时间：{new Date(target.expiresAt).toLocaleString()}</span> : null}
                         {target.cleanupMessage ? <span className="dsh-wtc-recovery-message">{target.cleanupMessage}</span> : null}
                       </div>
                     </div>
@@ -417,67 +426,67 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
                         <button
                           type="button"
                           className="dsh-wtc-button"
-                          aria-label={`Review ${target.checkoutId}`}
+                          aria-label={`验收 ${target.checkoutId}`}
                           aria-pressed={selectedReviewCheckoutId === target.checkoutId}
                           disabled={pendingAction !== null}
                           onClick={() => setSelectedReviewCheckoutId(current => current === target.checkoutId ? null : target.checkoutId)}
                         >
-                          Review
+                          验收
                         </button>
                       ) : null}
                       {target.capabilities.inspect && target.checkoutId !== null ? (
                         <button
                           type="button"
                           className="dsh-wtc-button"
-                          aria-label={`Inspect ${target.checkoutId}`}
+                          aria-label={`检查 ${target.checkoutId}`}
                           disabled={pendingAction !== null}
                           onClick={() => { void inspectTarget(target) }}
                         >
-                          {pendingAction === `inspect:${target.checkoutId}` ? 'Inspecting…' : 'Inspect'}
+                          {pendingAction === `inspect:${target.checkoutId}` ? '检查中…' : '检查'}
                         </button>
                       ) : null}
                       {target.capabilities.open && target.capabilities.inspect && target.checkoutId !== null ? (
                         <button
                           type="button"
                           className="dsh-wtc-button"
-                          aria-label={`Open ${target.checkoutId}`}
+                          aria-label={`打开 ${target.checkoutId}`}
                           disabled={pendingAction !== null}
                           onClick={() => { void openListedTarget(target) }}
                         >
-                          {pendingAction === `open:${target.checkoutId}` ? 'Opening…' : 'Open'}
+                          {pendingAction === `open:${target.checkoutId}` ? '打开中…' : '打开'}
                         </button>
                       ) : null}
                       {target.capabilities.discard && target.checkoutId !== null ? (
                         <button
                           type="button"
                           className="dsh-wtc-button dsh-wtc-danger"
-                          aria-label={`Discard ${target.checkoutId}`}
+                          aria-label={`放弃 ${target.checkoutId}`}
                           disabled={pendingAction !== null}
                           onClick={() => {
                             if (target.dirty) setConfirmTarget(target)
                             else void discardTarget(target, false)
                           }}
                         >
-                          {pendingAction === `discard:${target.checkoutId}` ? 'Discarding…' : 'Discard'}
+                          {pendingAction === `discard:${target.checkoutId}` ? '放弃中…' : '放弃'}
                         </button>
                       ) : null}
                       {target.capabilities.retryCleanup && target.checkoutId !== null ? (
                         <button
                           type="button"
                           className="dsh-wtc-button"
-                          aria-label={`Retry cleanup ${target.checkoutId}`}
+                          aria-label={`重试清理 ${target.checkoutId}`}
                           disabled={pendingAction !== null}
                           onClick={() => { void retryCleanup(target) }}
                         >
-                          {pendingAction === `cleanup:${target.checkoutId}` ? 'Retrying…' : 'Retry cleanup'}
+                          {pendingAction === `cleanup:${target.checkoutId}` ? '重试中…' : '重试清理'}
                         </button>
                       ) : null}
                     </div>
                     {target.checkoutId !== null && inspected[target.checkoutId] ? (
-                      <div className="dsh-wtc-inspect" aria-label={`Inspection ${target.checkoutId}`}>
-                        <span className="dsh-wtc-label">Authorized managed root</span>
+                      <div className="dsh-wtc-inspect" aria-label={`检查结果 ${target.checkoutId}`}>
+                        <span className="dsh-wtc-label">已授权工作目录</span>
                         <code>{inspected[target.checkoutId]!.managedRoot ?? 'Unavailable'}</code>
-                        <span className="dsh-wtc-label">Branch</span>
+                        <span className="dsh-wtc-label">分支</span>
                         <code>{inspected[target.checkoutId]!.currentBranch ?? 'detached'}</code>
                       </div>
                     ) : null}
@@ -487,15 +496,16 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
             )}
           </section>
           {selectedReviewTarget && selectedReviewEvidence && selectedReviewIdentity ? (
-            <WorktreeReviewPanel
-              review={selectedReviewEvidence}
-              identity={selectedReviewIdentity}
-              adapter={adapter}
-              target={selectedReviewTarget}
-              inspect={() => { void inspectTarget(selectedReviewTarget) }}
-              onRefresh={() => refresh(false)}
-              onTargetChange={target => applyMutation({ target }, sessionGeneration.current)}
-            />
+            <div className="dsh-wt-card">
+              <WorktreeReviewPanel
+                review={selectedReviewEvidence}
+                identity={selectedReviewIdentity}
+                adapter={adapter}
+                target={selectedReviewTarget}
+                onRefresh={() => refresh(false)}
+                onTargetChange={target => applyMutation({ target }, sessionGeneration.current)}
+              />
+            </div>
           ) : null}
         </>
       ) : null}
@@ -504,28 +514,30 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
           className="dsh-wtc-confirm"
           role="alertdialog"
           aria-modal="true"
-          aria-label="Discard dirty Worktree?"
+          aria-label="放弃有修改的 Worktree？"
           onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
             if (event.key !== 'Escape') return
             event.preventDefault()
             setConfirmTarget(null)
           }}
         >
-          <strong>Discard dirty Worktree?</strong>
+          <strong>放弃有修改的 Worktree？</strong>
           <p>
             {sessionId === confirmTarget.sourceSessionId && sessionId !== confirmTarget.ownerSessionId
-              ? `The Local source is discarding reserved target ${confirmTarget.checkoutId} and all uncommitted changes.`
-              : `This Session is discarding its Worktree ${confirmTarget.checkoutId} and all uncommitted changes.`}
+              ? `Local source 将放弃预留目标 ${confirmTarget.checkoutId} 及其全部未提交修改。`
+              : confirmTarget.state === 'preview_active' || confirmTarget.capabilities.rollbackPreview
+                ? `将先安全撤回 ${confirmTarget.checkoutId} 的 Local Preview；只有撤回成功后才会删除 Worktree。`
+                : `当前 Session 将放弃 Worktree ${confirmTarget.checkoutId} 及其全部未提交修改。`}
           </p>
           <div className="dsh-wtc-confirm-actions">
-            <button type="button" className="dsh-wtc-button" onClick={() => { setConfirmTarget(null) }}>Cancel discard</button>
+            <button type="button" className="dsh-wtc-button" onClick={() => { setConfirmTarget(null) }}>取消</button>
             <button
               ref={confirmButton}
               type="button"
               className="dsh-wtc-button dsh-wtc-danger"
               onClick={() => { void discardTarget(confirmTarget, true) }}
             >
-              Confirm dirty discard
+              确认放弃修改
             </button>
           </div>
         </div>

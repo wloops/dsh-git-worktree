@@ -68,6 +68,28 @@ function isReview(value: unknown): boolean {
     && typeof value.isolatedHeadOid === 'string'
 }
 
+function isPreviewReceipt(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.previewId === 'string'
+    && typeof value.reviewId === 'string'
+    && typeof value.iteration === 'number'
+    && typeof value.previewedAt === 'number'
+    && typeof value.configuredBaseOid === 'string'
+    && typeof value.effectiveBaseOid === 'string'
+    && (value.baseStrategy === 'recorded_base' || value.baseStrategy === 'isolated_contains_local_head' || value.baseStrategy === 'local_contains_isolated_head')
+    && typeof value.localHeadOid === 'string'
+    && (value.localHeadRef === null || typeof value.localHeadRef === 'string')
+    && typeof value.localFingerprintBefore === 'string'
+    && typeof value.localFingerprintPreview === 'string'
+    && typeof value.localWorkingTreeOid === 'string'
+    && typeof value.localIndexTreeOid === 'string'
+    && typeof value.previewWorkingTreeOid === 'string'
+    && typeof value.isolatedHeadOid === 'string'
+    && typeof value.isolatedFingerprint === 'string'
+    && typeof value.isolatedSnapshotOid === 'string'
+    && isStringArray(value.changedFiles)
+}
+
 function isDeliveryProof(value: unknown): boolean {
   return isRecord(value)
     && (value.localBranch === null || typeof value.localBranch === 'string')
@@ -80,6 +102,14 @@ function isDelivery(value: unknown): boolean {
   if (!isRecord(value) || typeof value.state !== 'string') return false
   if (value.state === 'working') return typeof value.iteration === 'number'
   if (value.state === 'ready_for_review') return isReview(value.review)
+  if (value.state === 'preview_active') return isReview(value.review) && isPreviewReceipt(value.preview)
+  if (value.state === 'preview_detached') {
+    return isReview(value.review)
+      && isPreviewReceipt(value.preview)
+      && typeof value.detachedAt === 'number'
+      && (value.reason === 'stale_local' || value.reason === 'preview_modified')
+      && (value.attemptedAction === 'rollback_preview' || value.attemptedAction === 'finalize_preview' || value.attemptedAction === 'discard')
+  }
   if (value.state === 'finalized') {
     return isReview(value.review)
       && (value.commitOid === null || typeof value.commitOid === 'string')
@@ -119,15 +149,23 @@ function isJournal(value: unknown): boolean {
   ) return false
   if (value.operation === 'create') return value.step === 'creating_worktree'
   const validOperation = value.operation === 'apply'
+    || value.operation === 'preview'
+    || value.operation === 'rollback_preview'
     || value.operation === 'finish'
+    || value.operation === 'finalize_preview'
     || value.operation === 'cleanup'
   const validStep = value.step === 'planning'
+    || value.step === 'artifacts_retained'
     || value.step === 'writing_local'
+    || value.step === 'updating_ref'
+    || value.step === 'replacing_index'
     || value.step === 'removing_worktree'
   return validOperation
     && validStep
     && (value.baseOid === undefined || typeof value.baseOid === 'string')
     && (value.planRevision === undefined || typeof value.planRevision === 'string')
+    && (value.previewId === undefined || typeof value.previewId === 'string')
+    && (value.reviewId === undefined || typeof value.reviewId === 'string')
     && (value.localFingerprint === undefined || typeof value.localFingerprint === 'string')
     && (value.isolatedFingerprint === undefined || typeof value.isolatedFingerprint === 'string')
     && (value.effectiveBaseOid === undefined || typeof value.effectiveBaseOid === 'string')
@@ -136,6 +174,7 @@ function isJournal(value: unknown): boolean {
     && (value.isolatedHeadOid === undefined || typeof value.isolatedHeadOid === 'string')
     && (value.commitOid === undefined || typeof value.commitOid === 'string')
     && (value.retention === undefined || value.retention === 'cleanup' || value.retention === 'retain_24h' || value.retention === 'retain_3d' || value.retention === 'retain_manual')
+    && (value.resumeRevision === undefined || typeof value.resumeRevision === 'boolean')
     && (value.changedFiles === undefined || isStringArray(value.changedFiles))
 }
 
@@ -145,6 +184,7 @@ function isManagedCheckout(value: unknown): boolean {
     && typeof value.projectId === 'string'
     && typeof value.projectName === 'string'
     && typeof value.ownerSessionId === 'string'
+    && (value.sourceSessionId === undefined || typeof value.sourceSessionId === 'string')
     && typeof value.localRoot === 'string'
     && typeof value.managedRoot === 'string'
     && typeof value.managedGitRoot === 'string'
