@@ -73,24 +73,31 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
     setTarget(current => current ? { ...current, ...nextTarget } : current)
   }
 
+  const detachedFromHeadDrift = target.state === 'preview_detached'
+    && target.previewRecovery?.reason === 'stale_local'
   const label = target.state === 'ready_for_review'
     ? target.reviewSlot === 'waiting' ? '另一个任务正在占用 Local 验收槽位' : 'Worktree 已准备好同步到 Local 验收'
     : target.state === 'preview_active'
       ? '本轮修改正在 Local 等待验收'
       : target.state === 'preview_detached'
-        ? '撤回未完成，Preview 仍在 Local'
+        ? detachedFromHeadDrift ? 'Local branch/HEAD 已变化，Preview 等待安全撤回' : 'Preview 与 Local 发生冲突，已保留恢复现场'
         : target.state === 'recovery_required'
           ? '验收操作中断，需要恢复 Preview'
           : target.state === 'cleanup_pending'
           ? 'Commit 已创建，Worktree 清理待重试'
           : '本轮已提交，运行环境暂时保留'
+  const detail = target.state === 'preview_detached'
+    ? detachedFromHeadDrift
+      ? '同分支快进可安全重试；切分支或改写历史时不会写入。'
+      : '自动撤回会重新检查冲突；无法证明安全时不会写入。'
+    : `${review.changedFiles.length} 个文件 · ${review.validationStatus === 'passed' ? '自动验证通过' : '请检查验证结果'}`
 
   return (
     <section className="dsh-wt-review-dock" aria-label="Worktree 待验收" data-review-state={target.state}>
       <span className="dsh-wt-review-dock-icon" aria-hidden>{target.state === 'preview_detached' || target.state === 'recovery_required' ? '!' : '✓'}</span>
       <span className="dsh-wt-review-dock-copy">
         <strong>{label}</strong>
-        <span>{review.changedFiles.length} 个文件 · {review.validationStatus === 'passed' ? '自动验证通过' : '请检查验证结果'}</span>
+        <span>{detail}</span>
       </span>
       {error ? <span className="dsh-wt-error">{error}</span> : null}
       <ReviewActions

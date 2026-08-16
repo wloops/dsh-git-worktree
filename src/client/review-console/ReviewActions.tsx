@@ -60,6 +60,7 @@ export function ReviewActions({
   const [error, setError] = useState<WorktreeConsoleError | null>(null)
   const [preflight, setPreflight] = useState<WorktreeApplyPreflightView | null>(null)
   const mutationLock = useRef(false)
+  const observedTargetRevision = useRef(target?.revision)
 
   useEffect(() => {
     setCommitMessage(review.suggestedCommitMessage)
@@ -67,6 +68,16 @@ export function ReviewActions({
     setRetention('retain_24h')
     setPreflight(null)
   }, [review.reviewId, review.suggestedCommitMessage])
+
+  useEffect(() => {
+    const revision = target?.revision
+    if (revision === undefined || revision === observedTargetRevision.current) return
+    observedTargetRevision.current = revision
+    if (submitting !== null) return
+    setMessage(null)
+    setError(null)
+    setPreflight(null)
+  }, [submitting, target?.revision])
 
   const begin = (mutation: Mutation): boolean => {
     if (disabled || !adapter || !identity || !target || mutationLock.current) return false
@@ -89,6 +100,7 @@ export function ReviewActions({
   }
 
   const applyTarget = (nextTarget: WorktreeConsoleTargetSummary): void => {
+    observedTargetRevision.current = nextTarget.revision
     onTargetChange(nextTarget)
     if (identity) requestWorktreeReviewRefresh(identity.sessionId)
   }
@@ -125,7 +137,9 @@ export function ReviewActions({
     }
     applyTarget(outcome.value.target)
     setMessage(outcome.value.target.state === 'preview_detached'
-      ? 'Local 已变化，无法无损撤回；恢复证据和 Worktree 已保留。'
+      ? outcome.value.target.previewRecovery?.reason === 'stale_local'
+        ? 'Local branch/HEAD 已变化；同分支安全快进可重试撤回，其他历史变化不会被覆盖。'
+        : 'Preview 与 Local 存在冲突；恢复证据和 Worktree 已保留。'
       : resumeRevision ? '已撤回 Local Preview，可以继续修改 Worktree。' : '已撤回 Local Preview，验收卡仍可再次同步。')
     finish()
   }
@@ -196,6 +210,8 @@ export function ReviewActions({
   const previewActive = target?.state === 'preview_active'
   const previewRecovery = target?.state === 'preview_detached'
     || target?.state === 'recovery_required' && target.capabilities.rollbackPreview
+  const safeFastForwardRecovery = target?.state === 'preview_detached'
+    && target.previewRecovery?.reason === 'stale_local'
   const cleanupPending = target?.state === 'cleanup_pending'
   const terminal = target?.state === 'retained' || target?.state === 'delivered'
   const canDiscard = Boolean(target?.capabilities.discard)
@@ -217,7 +233,7 @@ export function ReviewActions({
     </button>
   ) : previewRecovery ? (
     <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview(true) }}>
-      {submitting === 'rollback' ? '处理中…' : '重新尝试撤回'}
+      {submitting === 'rollback' ? '处理中…' : safeFastForwardRecovery ? '安全重试撤回' : target?.state === 'preview_detached' ? '重新检查撤回' : '重新尝试撤回'}
     </button>
   ) : cleanupPending ? (
     <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.retryCleanup} onClick={() => { void retryCleanup() }}>

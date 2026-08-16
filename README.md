@@ -13,7 +13,7 @@ An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It 
 5. The agent changes and validates code only in that isolated cwd, then calls `worktree_ready_for_review` as its final model action.
 6. A Domi-style status strip stays visible above the target composer when the Worktree is ready. Its compact Chinese Review card shows only the summary, validation state, file count, and collapsed test evidence—no Diff/Inspect controls or expanded retention buttons.
 7. The Ready primary action is **同步到 Local 验收**. The Host runs a read-only preflight and then creates an uncommitted, reversible Local Preview of the exact review. While Preview is active, the primary action becomes **验收通过并提交** and the More menu can roll the Preview back and resume Worktree editing. Ready's More menu also offers **跳过验收，直接提交** and Discard.
-8. Preview, rollback, and finalize are bound to revision/review/HEAD/fingerprint CAS. One canonical Local project can hold only one active Preview. Discard must roll an active Preview back first; Local drift fails closed into a preserved recovery state instead of overwriting user work.
+8. Preview, rollback, and finalize are bound to revision/review/HEAD/fingerprint CAS. One canonical Local project can hold only one active Preview. Discard must roll an active Preview back first. Rollback may cross a same-branch fast-forward only when tree proofs show that it can remove Preview alone while preserving the new commit and prior Local layers; branch changes, rewritten history, committed Preview bytes, and content conflicts still fail closed with the Worktree and receipt preserved.
 
 ## Surface
 
@@ -52,7 +52,7 @@ The Client uses strict Remote `preflight`, `preview`, `rollbackPreview`, and `fi
 - New paths use `<repo>--worktrees/<repo>--<checkout-short>--worktree`; identity expands on collision instead of overwriting unknown paths. Unsafe siblings fall back to `<stateDir>/worktrees/<repository-key>/`, while legacy registry paths remain manageable.
 - Legacy records that already used the old irreversible Apply path cannot automatically Finish or Discard; the user must first inspect Local.
 - Lists and management actions are caller-scoped. A recorded `ownerSessionId` is never used as authorization by itself.
-- A Preview receipt is persisted before Local writes and retains the prior working tree/index, Preview tree, and Isolated snapshot, so rollback/finalize can recover after Host restart.
+- A Preview receipt is persisted before Local writes and retains the prior working tree/index, Preview tree, and Isolated snapshot, so rollback/finalize can recover after Host restart. Same-branch fast-forward rollback first proves that the new HEAD does not contain Preview, then replays prior Local layers with pre-write and post-write CAS.
 - A canonical Local root has one acceptance slot. Detached Previews release the slot while retaining recovery evidence.
 - Finish preserves unrelated Local staged/working state and refuses stale Local or stale Isolated fingerprints. Discard of an active Preview must first roll it back safely.
 - Cleanup validates path, Git common-dir, git-dir, directory identity, and final fingerprint; uncertain residue is retained or quarantined.

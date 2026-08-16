@@ -13,7 +13,7 @@
 5. Agent 只在该 isolated cwd 中修改和验证，完成后把 `worktree_ready_for_review` 作为最后一个模型操作。
 6. Worktree Ready 后，target composer 上方常驻 Domi 式中文状态条；紧凑验收卡默认只展示摘要、验证状态、文件数量和折叠的测试证据，不再展示 Diff/Inspect 或平铺多个保留按钮。
 7. Ready 主操作是**同步到 Local 验收**：Host 先执行只读 preflight，再把精确 review 增量同步成不提交、可撤回的 Local Preview。Preview active 后主操作变为**验收通过并提交**；更多菜单可撤回本次预览并让 Worktree 回到继续修改状态。Ready 更多菜单还提供**跳过验收，直接提交**与放弃任务。
-8. Preview、rollback 和 finalize 都绑定 revision、review ID、HEAD 与 fingerprint CAS。同一 Local 项目同时只允许一个活动 Preview；放弃 active Preview 时必须先安全 rollback。Local 漂移时 fail closed，保留 Worktree 与恢复凭据并进入恢复状态，绝不覆盖用户修改。
+8. Preview、rollback 和 finalize 都绑定 revision、review ID、HEAD 与 fingerprint CAS。同一 Local 项目同时只允许一个活动 Preview；放弃 active Preview 时必须先安全 rollback。rollback 可在分支未变且 HEAD 仅安全快进时，通过三方树证明只移除 Preview、保留新 Commit 与原 Local 层；切分支、改写历史、Preview 已进入 Commit 或内容冲突仍 fail closed，保留 Worktree 与恢复凭据，绝不覆盖用户修改。
 
 ## 能力面
 
@@ -52,7 +52,7 @@ Client 通过 strict Remote 调用 `preflight`、`preview`、`rollbackPreview`�
 - 新 Worktree 使用 `<repo>--worktrees/<repo>--<checkout-short>--worktree`；短 ID 冲突时扩展 identity，不覆盖未知目录。不安全 sibling 回退到 `<stateDir>/worktrees/<repository-key>/`，旧 registry 路径仍可管理。
 - 已走过旧版不可逆 Apply 的历史记录禁止自动 Finish / Discard，必须先人工核对 Local。
 - list 与 manage 都按真实 caller 作用域过滤；持久化 `ownerSessionId` 本身不是授权。
-- Preview receipt 在触碰 Local 前持久化并保留 Local working tree、index、Preview tree 与 Isolated snapshot；rollback/finalize 可在 Host 重启后恢复。
+- Preview receipt 在触碰 Local 前持久化并保留 Local working tree、index、Preview tree 与 Isolated snapshot；rollback/finalize 可在 Host 重启后恢复；同分支 fast-forward rollback 会先证明新 HEAD 未包含 Preview，再重放原 Local 层并做写前/写后 CAS。
 - 同一 canonical Local root 只有一个活动验收槽位；Preview detached 会释放槽位，但保留恢复证据。
 - Finish 保留 Local 无关 staged/working 状态，并拒绝 stale Local / stale Isolated；active Preview 的 Discard 必须先安全 rollback。
 - 清理前验证路径、Git common-dir、git-dir、目录身份和最终指纹；不确定残余会保留或 quarantine。

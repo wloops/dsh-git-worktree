@@ -652,7 +652,52 @@ describe('SessionCheckoutModule', () => {
     expect(existsSync(managedRoot)).toBe(false)
   })
 
-  test('Given Local advances during Preview When rollback is requested Then it fails closed, preserves Local and releases the acceptance slot', async () => {
+  test('Given a detached Preview and Local only fast-forwarded with disjoint content When rollback is retried Then it preserves the new commit and resumes the Worktree', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'preview after fast-forward\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'fast-forward recovery', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: fast-forward recovery',
+    })
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    writeFileSync(join(context.projectRoot, 'external-commit.txt'), 'new Local commit\n')
+    git(context.projectRoot, 'add', 'external-commit.txt')
+    git(context.projectRoot, 'commit', '--only', 'external-commit.txt', '-m', 'external fast-forward')
+    const advancedHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[target.checkout.id]
+    const previewId = record.delivery.preview.previewId as string
+    record.delivery = {
+      ...record.delivery,
+      state: 'preview_detached',
+      detachedAt: Date.now(),
+      reason: 'stale_local',
+      attemptedAction: 'rollback_preview',
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    const detached = await restarted.inspect('session-1')
+    expect(detached.delivery).toMatchObject({ state: 'preview_detached', reason: 'stale_local' })
+    const rolledBack = await restarted.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision, resumeRevision: true,
+    })
+
+    expect(rolledBack).toMatchObject({ status: 'preview_rolled_back', target: { delivery: { state: 'working' } } })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(advancedHead)
+    expect(git(context.projectRoot, 'show', 'HEAD:external-commit.txt')).toBe('new Local commit')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+    expect(git(context.projectRoot, 'for-each-ref', '--format=%(refname)', 'refs/dsh-worktree/session-checkouts')).not.toContain(previewId)
+    expect(existsSync(managedRoot)).toBe(true)
+  })
+
+  test('Given Local commits the Preview bytes When rollback is requested Then it fails closed, preserves committed history and releases the acceptance slot', async () => {
     const context = createContext()
     const target = await context.module.bind('session-1', { kind: 'isolated' })
     const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
@@ -672,7 +717,7 @@ describe('SessionCheckoutModule', () => {
     })
 
     expect(detached).toMatchObject({
-      status: 'preview_detached', reason: 'stale_local', attemptedAction: 'rollback_preview',
+      status: 'preview_detached', reason: 'preview_modified', attemptedAction: 'rollback_preview',
       target: { delivery: { state: 'preview_detached' } },
     })
     expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHead)

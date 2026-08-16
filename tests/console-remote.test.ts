@@ -83,6 +83,25 @@ describe('manual strict Worktree Console Remote contribution', () => {
     expect(() => commitMessage.codec.mode === 'strict' && commitMessage.codec.schema.parse('x'.repeat(501))).toThrow()
   })
 
+  it('roundtrips detached recovery reason through the strict target response schema', () => {
+    const current = WORKTREE_CONSOLE_DESCRIPTORS.find((descriptor) => descriptor.method === 'current')!
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const response = {
+      ok: true as const,
+      value: {
+        target: {
+          ...fixture.target,
+          state: 'preview_detached' as const,
+          previewRecovery: { reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
+        },
+      },
+    }
+
+    expect(current.result.mode).toBe('strict')
+    if (current.result.mode !== 'strict') throw new Error('expected strict current result')
+    expect(current.result.schema.parse(response)).toEqual(response)
+  })
+
   it('is automatically discovered from the package ./typert export by the official Loader', async () => {
     const ctx = new Context()
     ctx.baseUrl = pathToFileURL(resolve('package.json')).href

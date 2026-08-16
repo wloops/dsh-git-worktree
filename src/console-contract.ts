@@ -83,6 +83,11 @@ export interface WorktreeConsoleCapabilities {
   retryCleanup: boolean
 }
 
+export interface WorktreeConsolePreviewRecovery {
+  reason: 'stale_local' | 'preview_modified'
+  attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard'
+}
+
 export interface WorktreeConsoleReviewSummary {
   reviewId: string
   revision: number
@@ -117,6 +122,7 @@ export interface WorktreeConsoleTargetSummary {
   review?: WorktreeConsoleReviewSummary
   reviewSlot?: 'available' | 'waiting'
   reviewSlotOwnerSessionId?: string
+  previewRecovery?: WorktreeConsolePreviewRecovery
   capabilities: WorktreeConsoleCapabilities
 }
 

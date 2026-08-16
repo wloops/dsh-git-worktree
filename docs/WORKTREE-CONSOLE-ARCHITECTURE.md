@@ -106,7 +106,7 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 - create request 只带 source Session ID，target Session ID 必须由 Host 分配；
 - preflight 是严格只读操作，绑定 checkout ID、expected revision 和 expected review ID；不得创建可执行 plan、slot 或 Local 写入；
 - preview 必须在同一 Host mutation lock 下重新 plan/CAS，先持久化 receipt 和 internal refs，再写 Local；同一 canonical localRoot 只能有一个 active slot；
-- rollbackPreview/finalizePreview 必须绑定最新 revision，并复验 receipt 中的 Local HEAD/ref/fingerprint 与 Preview tree；Local 漂移 fail closed；
+- rollbackPreview/finalizePreview 必须绑定最新 revision，并复验 receipt 中的 Local HEAD/ref/fingerprint 与 Preview tree；rollback 只可跨越同一 ref 的可证明 fast-forward：先将 Preview 前 Local 层三方重放到新 HEAD，再证明新 HEAD 未包含 Preview 增量，最后反向移除 Preview并执行写前/写后 CAS；切分支、non-fast-forward、Preview 已入历史或 hunk 冲突继续 fail closed；
 - discard 必须带 checkout ID、expected revision 和显式 `confirmDirty`；active Preview 还必须带 `rollbackPreview: true`，且 Host 只在 rollback 成功后删除 Worktree；
 - finalize/finalizePreview 必须带 checkout ID、expected revision、expected review ID、1–500 字符用户确认 Commit Message 和 retention；Commit Message 不是授权材料，Host 必须重新做长度/空白校验并继续执行完整 review/CAS 校验；
 - reviewDiff 绑定 expected revision + expected review ID，若 fingerprint/head 已变则返回 stale，不展示未审阅 bytes；该能力保留在高级控制面，不进入普通验收卡；
@@ -122,7 +122,7 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 | inspect | caller Session | checkout 属于 caller 项目；root identity 匹配 | owner 或 source | 返回当次 revision |
 | reviewDiff | owner/source 规则由 Backend 明确；默认 owner | 同上 | review 必须仍为当前 | revision + reviewId + fingerprint/head |
 | preflight/preview | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；项目单槽位 | revision + reviewId + isolated fingerprint/head + Local CAS |
-| rollbackPreview | isolated owner | receipt 的 canonical Local boundary | 仅 owner | revision + Preview receipt + Local HEAD/ref/fingerprint |
+| rollbackPreview | isolated owner | receipt 的 canonical Local boundary | 仅 owner | revision + Preview receipt + same-ref ancestry + Local HEAD/ref/fingerprint + post-write tree/index |
 | discard | owner；未打开 reservation 可允许 source | 同上 | 不信任 persisted owner ID 作为 caller 证明；active Preview 先 rollback | expectedRevision + confirmDirty + rollback intent |
 | finalize | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；Ready direct finish | revision + reviewId + fingerprint/head + Local CAS |
 | finalizePreview | isolated owner | receipt 的 canonical Local boundary | 仅 owner | revision + reviewId + receipt + Local/ref CAS |

@@ -104,6 +104,12 @@ export function projectRecord(
       : {}),
     ...(projectedReview === undefined ? {} : { review: projectedReview }),
     ...(delivery.state === 'ready_for_review' ? { reviewSlot: 'available' as const } : {}),
+    ...(delivery.state === 'preview_detached' ? {
+      previewRecovery: {
+        reason: delivery.reason,
+        attemptedAction: delivery.attemptedAction,
+      },
+    } : {}),
     capabilities: capabilities(record, callerSessionId, observed?.ownerSessionAvailable),
   }
 }

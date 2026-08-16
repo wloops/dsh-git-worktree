@@ -57,7 +57,7 @@ A low-frequency Ready shortcut can skip interactive Local review and directly fi
 - Ready primary action calls `preflight` then `preview`; Preview primary action calls `finalizePreview`; rollback is in the More menu; direct `finalize` is only the explicit “skip review” shortcut.
 - The Host allocates one acceptance slot per canonical `localRoot`. A second task receives `project_acceptance_busy` until rollback/finalize releases the slot.
 - Preview receipt persistence and internal refs precede Local writes. The receipt binds Local branch/HEAD/fingerprint, prior working/index trees, Preview tree, Isolated HEAD/fingerprint/snapshot, review ID, iteration, and changed files.
-- Rollback and finalize revalidate receipt/HEAD/ref/fingerprint CAS. Local drift or edits inside Preview fail closed into `preview_detached`, release the slot, and preserve Worktree/recovery evidence.
+- Rollback and finalize revalidate receipt/HEAD/ref/fingerprint CAS. Rollback additionally supports a same-ref fast-forward: it proves ancestry, rebases the pre-Preview Local working/index tree onto the new HEAD, proves the new commit does not already contain Preview bytes, and then removes only Preview with final CAS and post-write tree/index verification. Branch switches, non-fast-forward history, committed Preview bytes, overlapping hunks, or concurrent drift remain `preview_detached` and preserve all recovery evidence.
 - Crash reconciliation distinguishes pre-write interruption, retained Preview artifacts, rollback recovery, and branch-CAS interruption after commit creation.
 - Historical records containing `applyBaseOid` fail closed for automatic Finish/Discard and tell the user to inspect Local.
 
@@ -104,6 +104,6 @@ Subagents inherit their parent's persisted cwd. They are therefore isolated when
 ## Verification map
 
 - `tests/session-checkout-module.test.ts`: real Worktree creation plus Preview→rollback, Preview→finalize, direct finish, Preview-aware discard, Local drift, slot contention, crash recovery, caller scope, and legacy Apply fail-closed.
-- `tests/session-checkout-apply.test.ts`: real Git preflight/Preview/rollback/finalize/Finish/fingerprint behavior, including fresh-engine receipt recovery.
+- `tests/session-checkout-apply.test.ts`: real Git preflight/Preview/rollback/finalize/Finish/fingerprint behavior, including fresh-engine receipt recovery, same-branch fast-forward rollback, overlap conflicts, branch switches, rewritten history, Local layer preservation, and final CAS.
 - `tests/client-review-console.test.tsx` and `tests/client-target-console.test.tsx`: Ready/Preview/recovery actions, revision refresh, modal confirmation, dock projection and Preview-aware Discard.
 - `scripts/check-publish.mjs`: every package export, Host patch, Host metadata, `dsh.client`, and executable browser ModuleLoader closure.

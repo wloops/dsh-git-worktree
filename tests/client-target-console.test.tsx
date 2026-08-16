@@ -12,6 +12,7 @@ import type { WorktreeClientServices } from '../src/client/actions.js'
 import { apply as applyClient, WORKTREE_CONSOLE_ADAPTER_SERVICE } from '../src/client/index.js'
 import { apply as applyRemoteClient } from '../src/client/console-remote/index.js'
 import { registerTargetConsole, type TargetConsoleContextLike } from '../src/client/target-console/index.js'
+import { WORKTREE_REVIEW_REFRESH_EVENT } from '../src/client/review-console/status-events.js'
 import { TargetStatusAction } from '../src/client/target-console/TargetStatusAction.js'
 import { WorktreeConsoleView } from '../src/client/target-console/WorktreeConsoleView.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
@@ -187,6 +188,77 @@ describe('Harness-native Session Target slots', () => {
     expect(fixture.calls).toContainEqual({ method: 'preview', request: {
       sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
     } })
+  })
+
+  test('Host revision 在 Preview 操作外部变化时清除旧操作提示，避免 recovery 状态继续显示过期 preflight 文案', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const slots = new SlotsDouble()
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+    const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+    render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    await waitFor(() => expect(screen.getByText('已同步为可撤回的 Local Preview；请在 Local 中验收。')).toBeTruthy())
+    const detached = {
+      ...fixture.target,
+      state: 'preview_detached' as const,
+      phase: 'ready' as const,
+      revision: 9,
+      previewRecovery: { reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
+      capabilities: { ...fixture.target.capabilities, discard: false, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: false },
+    }
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: detached } }))
+
+    window.dispatchEvent(new CustomEvent(WORKTREE_REVIEW_REFRESH_EVENT, { detail: { sessionId: 'target-session' } }))
+
+    await waitFor(() => expect(screen.getByText('Local branch/HEAD 已变化，Preview 等待安全撤回')).toBeTruthy())
+    expect(screen.queryByText('已同步为可撤回的 Local Preview；请在 Local 中验收。')).toBeNull()
+    expect(screen.queryByText('同步预检通过，正在创建可撤回的 Local Preview。')).toBeNull()
+  })
+
+  test('Preview 因 Local HEAD 变化 detached 后 dock 解释同分支快进恢复并提供安全重试', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const detached = {
+      ...fixture.target,
+      state: 'preview_detached' as const,
+      phase: 'ready' as const,
+      revision: 9,
+      previewRecovery: { reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
+      capabilities: { ...fixture.target.capabilities, discard: false, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: false },
+    }
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: detached } }))
+    const slots = new SlotsDouble()
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+    const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+
+    render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
+
+    await waitFor(() => expect(screen.getByText('Local branch/HEAD 已变化，Preview 等待安全撤回')).toBeTruthy())
+    expect(screen.getByText('同分支快进可安全重试；切分支或改写历史时不会写入。')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '安全重试撤回' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  test('Preview 内容冲突 detached 后 dock 明确保留现场并只提供重新检查撤回', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const detached = {
+      ...fixture.target,
+      state: 'preview_detached' as const,
+      phase: 'ready' as const,
+      revision: 10,
+      previewRecovery: { reason: 'preview_modified' as const, attemptedAction: 'rollback_preview' as const },
+      capabilities: { ...fixture.target.capabilities, discard: false, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: false },
+    }
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: detached } }))
+    const slots = new SlotsDouble()
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+    const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+
+    render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
+
+    await waitFor(() => expect(screen.getByText('Preview 与 Local 发生冲突，已保留恢复现场')).toBeTruthy())
+    expect(screen.getByText('自动撤回会重新检查冲突；无法证明安全时不会写入。')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '重新检查撤回' })).toBeTruthy()
   })
 
   test('Preview rollback 中断后 dock 保持可见并提供恢复入口', async () => {

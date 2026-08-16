@@ -79,6 +79,10 @@ const targetSummarySchema = strict({
   review: reviewSchema.optional(),
   reviewSlot: z.enum(['available', 'waiting']).optional(),
   reviewSlotOwnerSessionId: sessionIdSchema.optional(),
+  previewRecovery: strict({
+    reason: z.enum(['stale_local', 'preview_modified']),
+    attemptedAction: z.enum(['rollback_preview', 'finalize_preview', 'discard']),
+  }).optional(),
   capabilities: capabilitiesSchema,
 })
 const targetDetailsSchema = targetSummarySchema.extend({

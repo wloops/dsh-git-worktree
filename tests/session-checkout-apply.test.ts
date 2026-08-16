@@ -199,6 +199,159 @@ describe('SessionCheckoutApplyEngine', () => {
     expect(await readFile(join(fixture.localPath, 'review-note.txt'), 'utf8')).toBe('created while reviewing\n')
   })
 
+  test('Given Local advances on the same branch while Preview remains unstaged When rollback runs Then it removes only Preview and preserves the new commit and Local layers', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')
+    await runGit(fixture.localPath, ['add', 'local-staged.txt'])
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const engine = createSessionCheckoutApplyEngine()
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-fast-forward',
+      reviewId: 'review-fast-forward',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    await writeFile(join(fixture.localPath, 'external-commit.txt'), 'committed elsewhere\n')
+    await runGit(fixture.localPath, ['add', 'external-commit.txt'])
+    await runGit(fixture.localPath, ['commit', '--only', 'external-commit.txt', '-m', 'external fast-forward'])
+    const advancedHead = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    expect(advancedHead).not.toBe(preview.receipt.localHeadOid)
+    await writeFile(join(fixture.localPath, 'review-note.txt'), 'keep review work\n')
+
+    const rollback = await createSessionCheckoutApplyEngine().rollback({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+    })
+
+    expect(rollback).toMatchObject({ status: 'preview_rolled_back', changedFiles: ['tracked.txt'] })
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(advancedHead)
+    expect(await runGit(fixture.localPath, ['show', 'HEAD:external-commit.txt'])).toBe('committed elsewhere')
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('base\n')
+    expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('local-staged.txt')
+    expect(await readFile(join(fixture.localPath, 'review-note.txt'), 'utf8')).toBe('keep review work\n')
+  })
+
+  test('Given Local changes again after fast-forward recovery planning When rollback is about to write Then final CAS leaves Preview untouched', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const previewEngine = createSessionCheckoutApplyEngine()
+    const preview = await previewEngine.preview(await readyPlan(previewEngine, fixture), {
+      previewId: 'preview-fast-forward-cas',
+      reviewId: 'review-fast-forward-cas',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    await writeFile(join(fixture.localPath, 'external-commit.txt'), 'committed elsewhere\n')
+    await runGit(fixture.localPath, ['add', 'external-commit.txt'])
+    await runGit(fixture.localPath, ['commit', '--only', 'external-commit.txt', '-m', 'external fast-forward'])
+    const rollbackEngine = createSessionCheckoutApplyEngine({
+      beforeFinalLocalValidation: async () => {
+        await writeFile(join(fixture.localPath, 'late-review-note.txt'), 'late Local change\n')
+      },
+    })
+
+    const rollback = await rollbackEngine.rollback({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+    })
+
+    expect(rollback).toEqual({
+      status: 'error',
+      error: { code: 'stale_local', message: 'Local 在撤回 Preview 前发生变化，请重试' },
+    })
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('preview task\n')
+    expect(await readFile(join(fixture.localPath, 'late-review-note.txt'), 'utf8')).toBe('late Local change\n')
+  })
+
+  test('Given a same-branch fast-forward changes the Preview hunk When rollback runs Then it reports a conflict without writing Local', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const engine = createSessionCheckoutApplyEngine()
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-fast-forward-conflict',
+      reviewId: 'review-fast-forward-conflict',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+
+    await writeFile(join(fixture.localPath, 'tracked.txt'), 'external commit\n')
+    await runGit(fixture.localPath, ['add', 'tracked.txt'])
+    await runGit(fixture.localPath, ['commit', '--only', 'tracked.txt', '-m', 'overlapping fast-forward'])
+    const advancedHead = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    await writeFile(join(fixture.localPath, 'tracked.txt'), 'preview task\n')
+    const bytesBefore = await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')
+    const statusBefore = await runGit(fixture.localPath, ['status', '--porcelain=v1'])
+
+    const rollback = await createSessionCheckoutApplyEngine().rollback({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+    })
+
+    expect(rollback).toMatchObject({
+      status: 'error',
+      error: { code: 'preview_modified' },
+    })
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(advancedHead)
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe(bytesBefore)
+    expect(await runGit(fixture.localPath, ['status', '--porcelain=v1'])).toBe(statusBefore)
+  })
+
+  test('Given Local switches branches while Preview is active When rollback runs Then it leaves the new branch and Preview bytes untouched', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const engine = createSessionCheckoutApplyEngine()
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-branch-switch',
+      reviewId: 'review-branch-switch',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    await runGit(fixture.localPath, ['switch', '-c', 'other-branch'])
+    const statusBefore = await runGit(fixture.localPath, ['status', '--porcelain=v1'])
+
+    const rollback = await createSessionCheckoutApplyEngine().rollback({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+    })
+
+    expect(rollback).toMatchObject({ status: 'error', error: { code: 'stale_local' } })
+    expect(await runGit(fixture.localPath, ['branch', '--show-current'])).toBe('other-branch')
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('preview task\n')
+    expect(await runGit(fixture.localPath, ['status', '--porcelain=v1'])).toBe(statusBefore)
+  })
+
+  test('Given Local rewrites the same branch to a non-descendant commit When rollback runs Then it leaves Local untouched', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const engine = createSessionCheckoutApplyEngine()
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-non-fast-forward',
+      reviewId: 'review-non-fast-forward',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    const baseTree = await runGit(fixture.localPath, ['rev-parse', `${fixture.baseOid}^{tree}`])
+    const unrelatedHead = await runGit(fixture.localPath, ['commit-tree', baseTree, '-m', 'unrelated root'])
+    await runGit(fixture.localPath, ['update-ref', `refs/heads/${fixture.branchName}`, unrelatedHead, fixture.baseOid])
+    const statusBefore = await runGit(fixture.localPath, ['status', '--porcelain=v1'])
+
+    const rollback = await createSessionCheckoutApplyEngine().rollback({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+    })
+
+    expect(rollback).toMatchObject({ status: 'error', error: { code: 'stale_local' } })
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(unrelatedHead)
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('preview task\n')
+    expect(await runGit(fixture.localPath, ['status', '--porcelain=v1'])).toBe(statusBefore)
+  })
+
   test('Given Preview is accepted after unrelated Local work When a fresh engine finalizes Then only the task enters one commit', async () => {
     const fixture = await createFixture()
     await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')

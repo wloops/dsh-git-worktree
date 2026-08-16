@@ -1185,8 +1185,87 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         objectDirectory,
         sourceObjects,
       )
-      if (current.headOid !== input.receipt.localHeadOid || current.headRef !== input.receipt.localHeadRef) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local branch/HEAD 已变化，不能自动撤回 Preview' } }
+      if (current.headRef !== input.receipt.localHeadRef) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local branch 已变化，不能自动撤回 Preview' } }
+      }
+      if (
+        current.headOid !== input.receipt.localHeadOid
+        && !await isAncestor(localGitRoot, input.receipt.localHeadOid, current.headOid)
+      ) {
+        return { status: 'error', error: { code: 'stale_local', message: 'Local HEAD 不是 Preview 基线的安全快进，不能自动撤回' } }
+      }
+      let rollbackBaselineTreeOid = input.receipt.localWorkingTreeOid
+      let expectedPreviewTreeOid = input.receipt.previewWorkingTreeOid
+      if (current.headOid !== input.receipt.localHeadOid) {
+        const receiptHeadTreeOid = stdoutText(await runGit(localGitRoot, ['rev-parse', `${input.receipt.localHeadOid}^{tree}`]))
+        const advancedBaseline = await computeTreeMerge(
+          tempRoot,
+          sourceObjects,
+          objectDirectory,
+          localGitRoot,
+          'preview-rollback-advanced-baseline',
+          receiptHeadTreeOid,
+          current.headTreeOid,
+          input.receipt.localWorkingTreeOid,
+        )
+        if (advancedBaseline.status === 'conflict') {
+          return {
+            status: 'error',
+            error: {
+              code: 'preview_modified',
+              message: `Local 新提交与 Preview 前的本地修改冲突，无法安全撤回：${advancedBaseline.conflictingFiles.join('、')}`,
+            },
+          }
+        }
+        const previewAbsence = await computeTreeMerge(
+          tempRoot,
+          sourceObjects,
+          objectDirectory,
+          localGitRoot,
+          'preview-rollback-preview-absence',
+          input.receipt.previewWorkingTreeOid,
+          advancedBaseline.treeOid,
+          input.receipt.localWorkingTreeOid,
+        )
+        if (previewAbsence.status === 'conflict') {
+          return {
+            status: 'error',
+            error: {
+              code: 'preview_modified',
+              message: `Local 新提交与 Preview 任务增量冲突，无法安全撤回：${previewAbsence.conflictingFiles.join('、')}`,
+            },
+          }
+        }
+        if (previewAbsence.treeOid !== advancedBaseline.treeOid) {
+          return {
+            status: 'error',
+            error: {
+              code: 'preview_modified',
+              message: 'Local 新提交已经包含部分或全部 Preview 增量，不能通过撤回工作区改动来改写已提交历史',
+            },
+          }
+        }
+        const advancedPreview = await computeTreeMerge(
+          tempRoot,
+          sourceObjects,
+          objectDirectory,
+          localGitRoot,
+          'preview-rollback-advanced-preview',
+          input.receipt.localWorkingTreeOid,
+          advancedBaseline.treeOid,
+          input.receipt.previewWorkingTreeOid,
+        )
+        if (advancedPreview.status === 'conflict') {
+          return {
+            status: 'error',
+            error: {
+              code: 'preview_modified',
+              message: `Local 新提交与 Preview 任务增量冲突，无法安全撤回：${advancedPreview.conflictingFiles.join('、')}`,
+            },
+          }
+        }
+        rollbackBaselineTreeOid = advancedBaseline.treeOid
+        expectedPreviewTreeOid = advancedPreview.treeOid
       }
       const rollbackTree = await computeTreeMerge(
         tempRoot,
@@ -1194,9 +1273,9 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         objectDirectory,
         localGitRoot,
         'preview-rollback',
-        input.receipt.previewWorkingTreeOid,
+        expectedPreviewTreeOid,
         current.treeOid,
-        input.receipt.localWorkingTreeOid,
+        rollbackBaselineTreeOid,
       )
       if (rollbackTree.status === 'conflict') {
         return {
@@ -1226,6 +1305,23 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       }
       if (rollbackPatch.length > 0) {
         await runGit(localGitRoot, ['apply', '--binary', '--whitespace=nowarn'], { input: rollbackPatch })
+      }
+      const rolledBack = await captureSnapshot(
+        localGitRoot,
+        join(tempRoot, 'rolled-back.index'),
+        null,
+        null,
+      )
+      if (
+        rolledBack.headOid !== current.headOid
+        || rolledBack.headRef !== current.headRef
+        || rolledBack.indexTreeOid !== current.indexTreeOid
+        || rolledBack.treeOid !== rollbackTree.treeOid
+      ) {
+        return {
+          status: 'error',
+          error: { code: 'git_error', message: 'Preview 撤回后的 Local snapshot 与安全恢复结果不一致，需要保留现场确认' },
+        }
       }
       return { status: 'preview_rolled_back', changedFiles: [...input.receipt.changedFiles] }
     } catch (error) {
