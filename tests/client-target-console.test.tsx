@@ -10,6 +10,7 @@ import type {
 } from '../src/console-contract.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
 import { apply as applyClient, WORKTREE_CONSOLE_ADAPTER_SERVICE } from '../src/client/index.js'
+import { apply as applyRemoteClient } from '../src/client/console-remote/index.js'
 import { registerTargetConsole, type TargetConsoleContextLike } from '../src/client/target-console/index.js'
 import { TargetStatusAction } from '../src/client/target-console/TargetStatusAction.js'
 import { WorktreeConsoleView } from '../src/client/target-console/WorktreeConsoleView.js'
@@ -457,6 +458,55 @@ describe('Worktree Console Create/Open', () => {
 })
 
 describe('Client entry integration', () => {
+  test('mounts the official Remote adapter under the same service name consumed by the Target registrar', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    const descriptors: Record<string, unknown>[] = []
+    const provided = new Map<string, unknown>()
+    const disposers: Array<() => void> = []
+    const remote = {
+      gitWorktree: fixture.adapter,
+      $mount: vi.fn(async () => () => undefined),
+    }
+    const slots = {
+      inject: (_name: string, callback: () => unknown) => {
+        const dispose = callback()
+        if (typeof dispose === 'function') disposers.push(dispose as () => void)
+      },
+      register: (descriptor: Record<string, unknown>) => {
+        descriptors.push(descriptor)
+        return () => {
+          const index = descriptors.indexOf(descriptor)
+          if (index >= 0) descriptors.splice(index, 1)
+        }
+      },
+    }
+    const context = {
+      slots,
+      remote,
+      get: (name: string) => {
+        if (name === 'workspaces') return services.workspaces
+        if (name === 'sessions') return services.sessions
+        if (name === 'remote.gitWorktree') return remote.gitWorktree
+        return provided.get(name)
+      },
+      provide: (name: string, value: unknown) => { provided.set(name, value) },
+      effect: (setup: () => void | (() => void)) => {
+        const dispose = setup()
+        if (typeof dispose === 'function') disposers.push(dispose)
+      },
+    }
+
+    await applyRemoteClient(context as never)
+
+    expect(provided.get('worktreeConsole')).toBeDefined()
+    expect(descriptors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'conversation.session.header.actions', id: 'worktree-target' }),
+      expect.objectContaining({ name: 'conversation.view', id: 'worktree' }),
+    ]))
+    for (const dispose of disposers.reverse()) dispose()
+  })
+
   test('keeps both ToolViews while registering the Target slots when the adapter service is present', () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const services = clientServices()
@@ -499,6 +549,34 @@ describe('Client entry integration', () => {
     ]))
     for (const dispose of disposers.reverse()) dispose()
     expect(descriptors).toHaveLength(0)
+  })
+})
+
+describe('Worktree Console Review integration', () => {
+  test('opens the shared Review panel from a ready project row and keeps requests review-bound', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.reviewDiff = vi.fn(async request => ({
+      ok: true,
+      value: {
+        reviewId: request.expectedReviewId,
+        revision: request.expectedRevision,
+        files: [{ path: 'src/index.ts', status: 'modified', patch: '+integrated', truncated: false }],
+        truncated: false,
+      },
+    }))
+    renderConsole(fixture.adapter, clientServices(), 'target-session')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Review checkout-1' }))
+    expect(screen.getByRole('region', { name: 'Worktree Review' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show diff' }))
+
+    await waitFor(() => expect(fixture.adapter.reviewDiff).toHaveBeenCalledWith({
+      sessionId: 'target-session',
+      checkoutId: 'checkout-1',
+      expectedRevision: 7,
+      expectedReviewId: 'review-1',
+    }))
+    expect(screen.getByText('+integrated')).toBeTruthy()
   })
 })
 

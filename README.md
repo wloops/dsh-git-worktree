@@ -2,15 +2,15 @@
 
 An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It ports Domi's hardened checkout/apply engine and adapts the product flow to Harness's authoritative Workspace/Session cwd model.
 
-> Current scope: real isolated Session creation, Ready-for-Review ToolViews, human-confirmed task-only Finish, retention, crash recovery, fingerprint CAS, and conservative cleanup. It is not yet a complete replacement for Domi's Worktree Manager or reversible Local Preview.
+> Current scope: real isolated Session creation, a Harness-native Session Target/Worktree Console, review-bound diff and ToolViews, human-confirmed task-only Finish, retention, crash recovery, fingerprint CAS, and conservative cleanup. It is not yet a complete replacement for Domi's global Worktree Manager or reversible Local Preview.
 
 ## How it works
 
-1. In a Local Session, the model calls `worktree_create`.
+1. In a Local Session, the user creates a target from the **Worktree** tab, or the model calls `worktree_create`.
 2. The plugin creates a unique detached Worktree in a sibling container (with a plugin-state fallback) and reserves a distinct target Session ID. The source Session stays Local.
 3. The Create ToolView's **Open isolated session** action registers the Worktree path as a Harness Workspace, creates the exact reserved Session, and opens it. Its persisted Session header cwd is the authoritative Session Target.
 4. The agent changes and validates code only in that isolated cwd, then calls `worktree_ready_for_review` as its final model action.
-5. The Review ToolView shows changed files, validation evidence, and the suggested commit message. The user chooses **Commit and clean up** or a retention option.
+5. The Worktree Console and replay-stable Review ToolView show the review-bound diff, validation evidence, changed files, and suggested commit message. The user explicitly chooses **Finalize cleanup** or a retention option.
 6. `/worktree finalize ...` creates one task-only commit on Local while preserving unrelated Local staged, unstaged, and untracked work.
 
 ## Surface
@@ -24,6 +24,10 @@ An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It 
 | `worktree_ready_for_review` | Persist the delivery report and stop for explicit human acceptance |
 
 Apply, Finish, Discard, and Remove are intentionally **not model tools**. A model parameter is not trusted user authorization.
+
+### Harness-native Worktree Console
+
+The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. Every Session gets a target status capsule and a project-scoped **Worktree** view for Create/Open/Inspect/Review/Discard/Cleanup. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`. If the Remote is unavailable, historical ToolViews remain readable while all mutations stay disabled.
 
 ### Human command
 
@@ -93,7 +97,7 @@ The default fixture is `dsh-git-worktree-dev/fixture` under the OS temporary dir
 ## Current limitations
 
 - No reversible Local Preview / Finalize / Rollback layer. The old direct `worktree_apply` surface is disabled.
-- No global sidebar Worktree Manager yet; this release provides session-scoped Create and Review ToolViews.
+- No cross-project global sidebar Manager yet; management is intentionally project- and Session-scoped in the Worktree Console.
 - No automatic Workflow `agent({ isolation })`; Harness still defers that option.
 - Subagents inherit the parent Session cwd, so they are isolated only after the parent is a real Worktree Session.
 - Dependency snapshot/restore and complete collaborator handoff UI are deferred.

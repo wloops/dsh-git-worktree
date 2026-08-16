@@ -115,6 +115,12 @@ if (!client || client.platform !== 'web' || !Array.isArray(client.inject) || cli
 const clientRel = exportsMap['./client']?.default
 if (typeof clientRel !== 'string') fail('exports["./client"].default is required for dsh.client')
 const clientSource = readFileSync(resolve(root, clientRel), 'utf8')
+const browserRequires = [...clientSource.matchAll(/require\(["']([^"']+)["']\)/gu)].map(match => match[1])
+const allowedBrowserRequires = new Set(['react', 'react/jsx-runtime'])
+const unsupportedBrowserRequires = browserRequires.filter(specifier => !allowedBrowserRequires.has(specifier))
+if (unsupportedBrowserRequires.length > 0) {
+  fail(`${clientRel} requires modules absent from the browser ModuleLoader table: ${[...new Set(unsupportedBrowserRequires)].join(', ')}`)
+}
 const sandbox = {}
 sandbox.window = sandbox
 sandbox.globalThis = sandbox

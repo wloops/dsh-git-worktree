@@ -11,6 +11,11 @@ import {
   type WorktreeConsoleTargetSummary,
 } from '../../console-contract.js'
 import { openIsolatedTarget, type WorktreeClientServices } from '../actions.js'
+import {
+  reviewEvidenceFromTarget,
+  reviewIdentityFromTarget,
+  WorktreeReviewPanel,
+} from '../review-console/index.js'
 
 export interface WorktreeConsoleViewProps {
   sessionId: string
@@ -67,6 +72,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [confirmTarget, setConfirmTarget] = useState<WorktreeConsoleTargetSummary | null>(null)
   const [inspected, setInspected] = useState<Record<string, WorktreeConsoleTargetDetails>>({})
+  const [selectedReviewCheckoutId, setSelectedReviewCheckoutId] = useState<string | null>(null)
   const confirmButton = useRef<HTMLButtonElement>(null)
   const visibleSnapshot = snapshot?.sessionId === sessionId ? snapshot : null
 
@@ -81,6 +87,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
     setSnapshot(null)
     setInspected({})
     setConfirmTarget(null)
+    setSelectedReviewCheckoutId(null)
     setPendingAction(null)
     setError(null)
     setLoading(true)
@@ -330,6 +337,16 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
     }
   }
 
+  const selectedReviewTarget = selectedReviewCheckoutId === null
+    ? null
+    : visibleSnapshot?.list.worktrees.find(target => target.checkoutId === selectedReviewCheckoutId) ?? null
+  const selectedReviewEvidence = selectedReviewTarget === null
+    ? null
+    : reviewEvidenceFromTarget(selectedReviewTarget)
+  const selectedReviewIdentity = selectedReviewTarget === null
+    ? null
+    : reviewIdentityFromTarget(sessionId, selectedReviewTarget)
+
   if (loading && visibleSnapshot === null) {
     return <div className="dsh-wtc-loading" role="status" aria-live="polite">Loading Worktree Console…</div>
   }
@@ -396,6 +413,18 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
                     </div>
                     <div className="dsh-wtc-row-actions">
                       <span className="dsh-wtc-revision">r{target.revision}</span>
+                      {target.review && target.checkoutId !== null ? (
+                        <button
+                          type="button"
+                          className="dsh-wtc-button"
+                          aria-label={`Review ${target.checkoutId}`}
+                          aria-pressed={selectedReviewCheckoutId === target.checkoutId}
+                          disabled={pendingAction !== null}
+                          onClick={() => setSelectedReviewCheckoutId(current => current === target.checkoutId ? null : target.checkoutId)}
+                        >
+                          Review
+                        </button>
+                      ) : null}
                       {target.capabilities.inspect && target.checkoutId !== null ? (
                         <button
                           type="button"
@@ -457,6 +486,17 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
               </ul>
             )}
           </section>
+          {selectedReviewTarget && selectedReviewEvidence && selectedReviewIdentity ? (
+            <WorktreeReviewPanel
+              review={selectedReviewEvidence}
+              identity={selectedReviewIdentity}
+              adapter={adapter}
+              target={selectedReviewTarget}
+              inspect={() => { void inspectTarget(selectedReviewTarget) }}
+              onRefresh={() => refresh(false)}
+              onTargetChange={target => applyMutation({ target }, sessionGeneration.current)}
+            />
+          ) : null}
         </>
       ) : null}
       {confirmTarget !== null ? (

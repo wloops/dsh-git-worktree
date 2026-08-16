@@ -33,8 +33,13 @@ function iteration(record: ManagedCheckoutRecord): number {
   return 'review' in record.delivery ? record.delivery.review.iteration : record.delivery.iteration
 }
 
-export function capabilities(record: ManagedCheckoutRecord, callerSessionId: string): WorktreeConsoleCapabilities {
+export function capabilities(
+  record: ManagedCheckoutRecord,
+  callerSessionId: string,
+  ownerSessionAvailable = true,
+): WorktreeConsoleCapabilities {
   const owner = callerSessionId === record.ownerSessionId
+  const sourceReservation = callerSessionId === record.sourceSessionId && !ownerSessionAvailable
   const authorized = owner || callerSessionId === record.sourceSessionId
   const ready = record.phase === 'ready' && record.delivery.state === 'ready_for_review'
   const cleanup = record.delivery.state === 'finalized' || record.delivery.state === 'retained'
@@ -43,7 +48,7 @@ export function capabilities(record: ManagedCheckoutRecord, callerSessionId: str
     create: false,
     open: authorized && active,
     inspect: authorized,
-    discard: authorized && active && !cleanup,
+    discard: (owner || sourceReservation) && active && !cleanup,
     finalize: owner && ready,
     setRetention: authorized && record.delivery.state === 'retained',
     retryCleanup: authorized && cleanup,
@@ -58,7 +63,12 @@ function fallbackOid(record: ManagedCheckoutRecord): string {
 export function projectRecord(
   record: ManagedCheckoutRecord,
   callerSessionId: string,
-  observed?: { snapshot?: GitCheckoutSnapshot; dirty?: boolean; summary?: ManagedWorktreeSummaryView },
+  observed?: {
+    snapshot?: GitCheckoutSnapshot
+    dirty?: boolean
+    summary?: ManagedWorktreeSummaryView
+    ownerSessionAvailable?: boolean
+  },
 ): WorktreeConsoleTargetSummary {
   const projectedReview = review(record)
   const delivery = record.delivery
@@ -84,7 +94,7 @@ export function projectRecord(
       ? { cleanupMessage: delivery.cleanupMessage }
       : {}),
     ...(projectedReview === undefined ? {} : { review: projectedReview }),
-    capabilities: capabilities(record, callerSessionId),
+    capabilities: capabilities(record, callerSessionId, observed?.ownerSessionAvailable),
   }
 }
 
@@ -94,9 +104,10 @@ export function projectDetails(
   managedRoot: string | null,
   snapshot?: GitCheckoutSnapshot,
   dirty?: boolean,
+  ownerSessionAvailable?: boolean,
 ): WorktreeConsoleTargetDetails {
   return {
-    ...projectRecord(record, callerSessionId, { snapshot, dirty }),
+    ...projectRecord(record, callerSessionId, { snapshot, dirty, ownerSessionAvailable }),
     managedRoot,
     sourceOid: record.baseOid,
     currentBranch: snapshot?.branch ?? null,

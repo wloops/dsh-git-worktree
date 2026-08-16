@@ -18,6 +18,8 @@ export interface ToolCallBlockLike {
 
 export interface ToolCallViewPropsLike {
   callId: string
+  /** Supplied by Harness for every session-scoped ToolView. */
+  sessionId?: string
   toolName: string
   block: ToolCallBlockLike
   cwd?: string

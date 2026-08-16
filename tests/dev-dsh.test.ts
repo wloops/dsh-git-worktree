@@ -185,6 +185,99 @@ describe('local DSH development workflow', () => {
     expect(calls.flatMap(({ args }) => args)).not.toContain('publish')
   })
 
+  test('Given another profile references an older local archive When installing a new snapshot Then that profile archive is preserved', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-dev-multi-profile-'))
+    mkdirSync(join(root, 'node_modules'))
+    mkdirSync(join(root, 'lib'))
+    writeFileSync(join(root, 'lib', 'index.js'), 'export {}')
+    writeFileSync(join(root, 'cordis.patch.yml'), '[]\n')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'dsh-git-worktree', version: '0.1.2', scripts: {}, files: ['lib', 'cordis.patch.yml'],
+    }))
+    const cacheRoot = join(root, 'cache')
+    mkdirSync(cacheRoot)
+    const dshHome = join(root, '.dsh')
+    const webProfile = join(dshHome, 'profiles', 'web', 'package.json')
+    const otherProfile = join(dshHome, 'profiles', 'other', 'package.json')
+    mkdirSync(join(dshHome, 'profiles', 'web'), { recursive: true })
+    mkdirSync(join(dshHome, 'profiles', 'other'), { recursive: true })
+    const oldWebArchive = join(cacheRoot, 'dsh-git-worktree-1000.tgz')
+    const otherArchive = join(cacheRoot, 'dsh-git-worktree-1100.tgz')
+    writeFileSync(oldWebArchive, 'old-web')
+    writeFileSync(otherArchive, 'other-profile')
+    writeFileSync(webProfile, JSON.stringify({ dependencies: { 'dsh-git-worktree': `file:${oldWebArchive}` } }))
+    writeFileSync(otherProfile, JSON.stringify({ dependencies: { 'dsh-git-worktree': `file:${otherArchive}` } }))
+    const runner = (command: string, args: string[], options?: { cwd?: string }) => {
+      if (command.includes('pnpm') && args[0] === 'pack') {
+        writeFileSync(args[args.indexOf('--out') + 1]!, 'new')
+      }
+      if (command.includes('dsh') && args[0] === 'plugin') {
+        writeFileSync(webProfile, JSON.stringify({ dependencies: { 'dsh-git-worktree': `file:${args.at(-1)}` } }))
+      }
+      if (command.includes('dsh') && args.includes('--dump-config')) return { stdout: '# == dsh-git-worktree\n' }
+      return { stdout: '' }
+    }
+
+    installLocalSnapshot({
+      projectRoot: root,
+      profile: 'web',
+      cacheRoot,
+      now: () => 2000,
+      environment: { DSH_HOME: dshHome },
+      run: runner,
+    })
+
+    expect(existsSync(otherArchive)).toBe(true)
+    expect(existsSync(oldWebArchive)).toBe(false)
+    expect(existsSync(join(cacheRoot, 'dsh-git-worktree-2000.tgz'))).toBe(true)
+  })
+
+  test('Given the current profile references a missing managed archive When installing Then the workflow repairs the prerequisite and advances safely', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-dev-missing-profile-archive-'))
+    mkdirSync(join(root, 'node_modules'))
+    mkdirSync(join(root, 'lib'))
+    writeFileSync(join(root, 'lib', 'index.js'), 'export {}')
+    writeFileSync(join(root, 'cordis.patch.yml'), '[]\n')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'dsh-git-worktree', version: '0.1.2', scripts: {}, files: ['lib', 'cordis.patch.yml'],
+    }))
+    const cacheRoot = join(root, 'cache')
+    mkdirSync(cacheRoot)
+    const dshHome = join(root, '.dsh')
+    const profileManifestPath = join(dshHome, 'profiles', 'web', 'package.json')
+    mkdirSync(join(dshHome, 'profiles', 'web'), { recursive: true })
+    const missingArchive = join(cacheRoot, 'dsh-git-worktree-1000.tgz')
+    writeFileSync(profileManifestPath, JSON.stringify({
+      dependencies: { 'dsh-git-worktree': `file:${missingArchive}` },
+    }))
+    const runner = (command: string, args: string[]) => {
+      if (command.includes('pnpm') && args[0] === 'pack') {
+        writeFileSync(args[args.indexOf('--out') + 1]!, 'new')
+      }
+      if (command.includes('dsh') && args[0] === 'plugin') {
+        expect(readFileSync(missingArchive, 'utf8')).toBe('new')
+        writeFileSync(profileManifestPath, JSON.stringify({
+          dependencies: { 'dsh-git-worktree': `file:${args.at(-1)}` },
+        }))
+      }
+      if (command.includes('dsh') && args.includes('--dump-config')) return { stdout: '# == dsh-git-worktree\n' }
+      return { stdout: '' }
+    }
+
+    const result = installLocalSnapshot({
+      projectRoot: root,
+      profile: 'web',
+      cacheRoot,
+      now: () => 2000,
+      environment: { DSH_HOME: dshHome },
+      run: runner,
+    })
+
+    expect(result.archivePath).toBe(join(cacheRoot, 'dsh-git-worktree-2000.tgz'))
+    expect(existsSync(missingArchive)).toBe(false)
+    expect(existsSync(result.archivePath)).toBe(true)
+  })
+
   test('Given profile installation keeps referencing the previous archive When a new add returns Then old and new snapshots are preserved and the workflow fails', () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-dev-stale-profile-'))
     mkdirSync(join(root, 'node_modules'))

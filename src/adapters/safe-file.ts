@@ -8,6 +8,38 @@
 
 import { writeFileSync, renameSync, existsSync, copyFileSync, readFileSync, unlinkSync } from 'node:fs'
 
+const RETRYABLE_RENAME_CODES = new Set(
+  process.platform === 'win32'
+    ? ['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']
+    : ['EBUSY', 'ENOTEMPTY'],
+)
+
+function sleepSync(milliseconds: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+  } catch {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < milliseconds) { /* fallback for runtimes without SharedArrayBuffer */ }
+  }
+}
+
+/** Preserve atomic rename semantics while tolerating transient Windows file-handle races. */
+function renameAtomicWithRetry(source: string, target: string, maxAttempts = 5): void {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      renameSync(source, target)
+      return
+    } catch (error) {
+      lastError = error
+      const code = (error as NodeJS.ErrnoException).code
+      if (!code || !RETRYABLE_RENAME_CODES.has(code) || attempt === maxAttempts) break
+      sleepSync(20 * 2 ** (attempt - 1))
+    }
+  }
+  throw lastError
+}
+
 /**
  * 原子写入 JSON 文件：write-to-temp → rename
  * 写入前自动保留 .bak 备份
@@ -28,15 +60,15 @@ export function writeJsonFileAtomic(filePath: string, data: object, skipBackup =
   // 写入临时文件
   writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
 
-  // 原子重命名（POSIX rename 是原子操作）
-  renameSync(tmpPath, filePath)
+  // 原子重命名；Windows 短暂文件句柄占用时保持原子语义并有限重试。
+  renameAtomicWithRetry(tmpPath, filePath)
 }
 
 /** 原子重写文本文件（用于 JSONL 会话等非单个 JSON 文档）。 */
 export function writeTextFileAtomic(filePath: string, content: string): void {
   const tmpPath = filePath + '.tmp'
   writeFileSync(tmpPath, content, 'utf-8')
-  renameSync(tmpPath, filePath)
+  renameAtomicWithRetry(tmpPath, filePath)
 }
 
 /**
@@ -66,7 +98,7 @@ export function readJsonFileSafe<T>(filePath: string): T | null {
       if (raw.trim().length > 0) {
         const parsed = JSON.parse(raw) as T
         // .tmp 有效 → 提升为主文件
-        renameSync(tmpPath, filePath)
+        renameAtomicWithRetry(tmpPath, filePath)
         console.log(`[数据恢复] 从 .tmp 文件恢复: ${filePath}`)
         return parsed
       }

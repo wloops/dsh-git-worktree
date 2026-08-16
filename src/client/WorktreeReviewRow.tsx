@@ -1,17 +1,28 @@
+import { useEffect, useState } from 'react'
+import type { WorktreeConsoleAdapter, WorktreeConsoleTargetSummary } from '../console-contract.js'
 import type { WorktreeClientServices } from './actions.js'
 import { parseReviewTool, type ToolCallViewPropsLike } from './model.js'
-import { WorktreeReviewPanel, type WorktreeReviewEvidence } from './review-console/WorktreeReviewPanel.js'
+import {
+  WorktreeReviewPanel,
+  type WorktreeReviewEvidence,
+  type WorktreeReviewIdentity,
+} from './review-console/WorktreeReviewPanel.js'
 
 interface Props extends ToolCallViewPropsLike {
-  /** Kept for the current Client registrar; live Console integration supplies an adapter in the final wiring pass. */
+  /** Kept for the current Client registrar and historical ToolView compatibility. */
   services: WorktreeClientServices
+  /** Optional live Remote seam; logged evidence remains replayable without it. */
+  adapter?: WorktreeConsoleAdapter
 }
 
-export function WorktreeReviewRow({ block, inspect }: Props) {
+export function WorktreeReviewRow({ block, inspect, sessionId, adapter }: Props) {
   const model = parseReviewTool(block)
   const payload = model.payload
   const args = model.args
   const state = model.lifecycle === 'running' ? 'running' : model.lifecycle === 'ok' ? 'ok' : 'error'
+  const [liveTarget, setLiveTarget] = useState<WorktreeConsoleTargetSummary | undefined>()
+  const [liveError, setLiveError] = useState<string | null>(null)
+  const [refreshNonce, setRefreshNonce] = useState(0)
   const review: WorktreeReviewEvidence | null = payload && args ? {
     reviewId: payload.reviewId,
     revision: payload.revision,
@@ -26,10 +37,50 @@ export function WorktreeReviewRow({ block, inspect }: Props) {
     ...(args.details ? { detailsMarkdown: args.details } : {}),
   } : null
 
+  useEffect(() => {
+    setLiveTarget(undefined)
+    setLiveError(null)
+    if (!adapter || !sessionId || !payload) return
+    let active = true
+    void adapter.current({ sessionId }).then(outcome => {
+      if (!active) return
+      if (outcome.ok) setLiveTarget(outcome.value.target)
+      else setLiveError(`${outcome.error.code}: ${outcome.error.message}`)
+    }, reason => {
+      if (active) setLiveError(reason instanceof Error ? reason.message : String(reason))
+    })
+    return () => { active = false }
+  }, [adapter, payload?.reviewId, payload?.revision, refreshNonce, sessionId])
+
+  const identity: WorktreeReviewIdentity | undefined = payload
+    && sessionId
+    && liveTarget?.checkoutId
+    ? {
+        sessionId,
+        checkoutId: liveTarget.checkoutId,
+        expectedRevision: payload.revision,
+        expectedReviewId: payload.reviewId,
+      }
+    : undefined
+  const unavailableMessage = liveError
+    ? `实时 Worktree Console 不可用：${liveError}`
+    : adapter && sessionId
+      ? '正在连接实时 Worktree Console；历史验收证据仍可查看。'
+      : '实时 Worktree Console 未连接；连接后刷新即可查看 Diff 并执行操作。'
+
   return (
     <section className="dsh-wt-card" data-tool="worktree_ready_for_review" data-state={state} aria-label="Worktree Ready for Review">
       {review ? (
-        <WorktreeReviewPanel review={review} inspect={inspect} />
+        <WorktreeReviewPanel
+          review={review}
+          inspect={inspect}
+          adapter={adapter}
+          identity={identity}
+          target={liveTarget}
+          unavailableMessage={unavailableMessage}
+          onRefresh={() => setRefreshNonce(value => value + 1)}
+          onTargetChange={setLiveTarget}
+        />
       ) : (
         <header className="dsh-wt-head">
           <span className="dsh-wt-mark" aria-hidden />

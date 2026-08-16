@@ -2,15 +2,15 @@
 
 面向 DeepSeek Harness 的**实验性** Git Worktree Session Target 插件。它保留 Domi 中经过生产验证的 checkout / apply engine 安全核心，并按 Harness 的权威 Workspace / Session cwd 模型重做产品闭环。
 
-> 当前范围：真实隔离 Session、Ready-for-Review ToolView、用户确认后的 task-only Finish、保留策略、崩溃恢复、指纹 CAS 与保守清理。它还不是 Domi Worktree Manager 或可逆 Local Preview 的完整替代品。
+> 当前范围：真实隔离 Session、Harness-native Session Target/Worktree Console、review-bound Diff 与 ToolView、用户确认后的 task-only Finish、保留策略、崩溃恢复、指纹 CAS 与保守清理。它还不是 Domi 全局 Worktree Manager 或可逆 Local Preview 的完整替代品。
 
 ## 工作流程
 
-1. 在 Local Session 中，模型调用 `worktree_create`。
+1. 在 Local Session 中，用户从 **Worktree** 标签页创建 target，或由模型调用 `worktree_create`。
 2. 插件在仓库同级容器中创建唯一 detached Worktree（不可用时回退到插件 stateDir），并预留一个独立 target Session ID；源 Session 始终保持 Local。
 3. Create ToolView 的**打开隔离会话**按钮把 Worktree 路径注册为 Harness Workspace，使用预留 ID 创建 Session 并打开。持久化 Session header 的 cwd 才是权威 Session Target。
 4. Agent 只在该 isolated cwd 中修改和验证，完成后把 `worktree_ready_for_review` 作为最后一个模型操作。
-5. Review ToolView 展示 changed files、验证证据和建议 Commit Message；用户选择**提交并清理**或保留 24 小时 / 3 天 / 手动保留。
+5. Worktree Console 与可回放的 Review ToolView 展示 review-bound Diff、changed files、验证证据和建议 Commit Message；用户显式选择**提交并清理**或保留 24 小时 / 3 天 / 手动保留。
 6. `/worktree finalize ...` 在 Local 上创建一个只含任务增量的 commit，同时保留用户原有 staged、unstaged 与 untracked 工作。
 
 ## 能力面
@@ -24,6 +24,10 @@
 | `worktree_ready_for_review` | 持久化完整交付报告并停止，等待用户验收 |
 
 Apply、Finish、Discard、Remove **不再作为模型工具**暴露。模型参数不能替代可信的用户授权。
+
+### Harness-native Worktree Console
+
+Client 通过官方 Gateway 挂载本包拥有的 strict Typert Remote contribution。每个 Session 都可看到 target 状态胶囊和项目级 **Worktree** 视图，用于 Create/Open/Inspect/Review/Discard/Cleanup。列表行不包含路径；只有通过身份验证的 `current`、`create` 或 `inspect` 才返回 managed root。Remote 不可用时，历史 ToolView 证据仍可阅读，但所有 mutation 保持禁用。
 
 ### 用户命令
 
@@ -93,7 +97,7 @@ pnpm run dev:dsh:remove
 ## 当前限制
 
 - 尚无可逆 Local Preview / Finalize / Rollback 层；旧 `worktree_apply` 入口已禁用。
-- 尚无全局侧栏 Worktree Manager；本版提供 Session 内的 Create 与 Review ToolView。
+- 尚无跨项目全局侧栏 Manager；当前管理面刻意限定在项目与 Session 作用域内。
 - Harness 仍未开放 Workflow `agent({ isolation })`。
 - 子 Agent 继承父 Session cwd；只有父 Session 已真实进入 Worktree 后才形成隔离。
 - dependency snapshot、完整 collaborator handoff UI 延后。

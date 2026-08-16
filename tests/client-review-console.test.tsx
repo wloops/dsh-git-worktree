@@ -450,6 +450,51 @@ describe('WorktreeReviewPanel', () => {
     expect((screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  test('upgrades the logged ToolView with live review-bound actions when the Remote adapter is available', async () => {
+    const evidence = review()
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: fixture.target } }))
+    render(<WorktreeReviewRow
+      callId="call-review-live"
+      toolName="worktree_ready_for_review"
+      sessionId="target-session"
+      block={{
+        callId: 'call-review-live',
+        kind: 'result',
+        call: { argsRaw: JSON.stringify({
+          summary: evidence.summary,
+          details: evidence.detailsMarkdown,
+          validationStatus: evidence.validationStatus,
+          validationSummary: evidence.validationSummary,
+          tests: evidence.tests,
+          suggestedCommitMessage: evidence.suggestedCommitMessage,
+        }) },
+        content: [{ type: 'text', text: JSON.stringify({
+          kind: 'worktree_ready_for_review',
+          state: 'ready_for_review',
+          reviewId: evidence.reviewId,
+          revision: evidence.revision,
+          changedFiles: evidence.changedFiles,
+        }) }],
+      }}
+      services={{} as WorktreeClientServices}
+      adapter={fixture.adapter}
+    />)
+
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'target-session' }))
+    expect((screen.getByRole('button', { name: 'Finalize cleanup' }) as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Show diff' }))
+    await waitFor(() => expect(fixture.calls).toContainEqual({
+      method: 'reviewDiff',
+      request: {
+        sessionId: 'target-session',
+        checkoutId: 'checkout-1',
+        expectedRevision: 7,
+        expectedReviewId: 'review-1',
+      },
+    }))
+  })
+
   test('keeps a logged ToolView replayable when the live Console adapter is unavailable', () => {
     const evidence = review()
     const services = {} as WorktreeClientServices

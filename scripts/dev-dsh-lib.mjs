@@ -294,22 +294,37 @@ function copyPackageEntry(source, destination) {
   copyFileSync(source, destination)
 }
 
-function profileArchiveReference(options) {
-  const dshHome = options.environment?.DSH_HOME ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
-  const manifestPath = options.profileManifestPath ?? join(dshHome, 'profiles', options.profile, 'package.json')
-  if (!existsSync(manifestPath)) throw new Error(`DSH profile manifest is missing: ${manifestPath}`)
+function dshHomeOf(options) {
+  return options.environment?.DSH_HOME ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+}
+
+function profileManifestOf(options) {
+  return options.profileManifestPath ?? join(dshHomeOf(options), 'profiles', options.profile, 'package.json')
+}
+
+function archiveReferenceFromManifest(manifestPath, required = false) {
+  if (!existsSync(manifestPath)) {
+    if (required) throw new Error(`DSH profile manifest is missing: ${manifestPath}`)
+    return undefined
+  }
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   const specifier = manifest.dependencies?.['dsh-git-worktree']
   if (typeof specifier !== 'string' || !specifier.startsWith('file:')) {
-    throw new Error(`DSH profile ${options.profile} did not record dsh-git-worktree as a local file dependency.`)
+    if (required) throw new Error('DSH profile did not record dsh-git-worktree as a local file dependency.')
+    return undefined
   }
   let filePath
   try {
     filePath = decodeURIComponent(specifier.slice('file:'.length))
   } catch {
-    throw new Error(`DSH profile ${options.profile} recorded an invalid local file dependency: ${specifier}`)
+    if (required) throw new Error(`DSH profile recorded an invalid local file dependency: ${specifier}`)
+    return undefined
   }
   return resolve(dirname(manifestPath), filePath)
+}
+
+function profileArchiveReference(options) {
+  return archiveReferenceFromManifest(profileManifestOf(options), true)
 }
 
 function comparablePath(path) {
@@ -317,12 +332,43 @@ function comparablePath(path) {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
-function cleanSupersededArchives(cacheRoot, keepPath) {
+function referencedProfileArchives(options) {
+  const references = new Set()
+  const addManifest = (manifestPath) => {
+    try {
+      const reference = archiveReferenceFromManifest(manifestPath)
+      if (reference !== undefined) references.add(comparablePath(reference))
+    } catch {
+      // A malformed unrelated profile must not make local snapshot cleanup delete more files.
+    }
+  }
+  addManifest(profileManifestOf(options))
+  const profilesRoot = join(dshHomeOf(options), 'profiles')
+  if (existsSync(profilesRoot)) {
+    for (const entry of readdirSync(profilesRoot)) addManifest(join(profilesRoot, entry, 'package.json'))
+  }
+  return references
+}
+
+function cleanSupersededArchives(cacheRoot, keepPath, options) {
+  const preserved = referencedProfileArchives(options)
+  preserved.add(comparablePath(keepPath))
   for (const entry of readdirSync(cacheRoot)) {
     if (!/^dsh-git-worktree-\d+\.tgz$/.test(entry)) continue
     const candidate = join(cacheRoot, entry)
-    if (candidate !== keepPath) rmSync(candidate, { force: true })
+    if (!preserved.has(comparablePath(candidate))) rmSync(candidate, { force: true })
   }
+}
+
+function repairMissingCurrentProfileArchive(options, archivePath) {
+  const previous = archiveReferenceFromManifest(profileManifestOf(options))
+  if (previous === undefined || existsSync(previous)) return
+  const managedCache = comparablePath(dirname(previous)) === comparablePath(options.cacheRoot)
+    && /^dsh-git-worktree-\d+\.tgz$/.test(previous.split(/[\\/]/u).at(-1) ?? '')
+  if (!managedCache) {
+    throw new Error(`DSH profile references missing local archive outside the managed cache: ${previous}`)
+  }
+  copyFileSync(archivePath, previous)
 }
 
 /** Build, pack and install only the current local snapshot. No registry publish occurs. */
@@ -363,6 +409,10 @@ export function installLocalSnapshot(options) {
   }
   if (!existsSync(archivePath)) throw new Error(`pnpm pack did not create ${archivePath}.`)
 
+  // pnpm resolves the profile's existing direct file dependency before it can
+  // replace it. Repair only our own missing cache path with the new snapshot;
+  // after the add succeeds the obsolete recovery copy becomes collectible.
+  repairMissingCurrentProfileArchive(options, archivePath)
   run(dsh, ['plugin', '--profile', options.profile, 'add', archivePath], { cwd: options.projectRoot })
   const referencedArchive = profileArchiveReference(options)
   if (comparablePath(referencedArchive) !== comparablePath(archivePath)) {
@@ -375,7 +425,7 @@ export function installLocalSnapshot(options) {
   if (!dump.includes('dsh-git-worktree')) {
     throw new Error(`Profile ${options.profile} installed the tarball but did not compose dsh-git-worktree.`)
   }
-  cleanSupersededArchives(options.cacheRoot, archivePath)
+  cleanSupersededArchives(options.cacheRoot, archivePath, options)
   return { archivePath, dumpConfig: dump }
 }
 

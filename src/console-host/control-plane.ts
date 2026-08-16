@@ -23,6 +23,7 @@ import type {
   SessionCheckoutRegistryPort,
 } from '../ports.js'
 import type { SessionCheckoutModule } from '../index.js'
+import type { SessionTargetView } from '../types.js'
 import { consoleFailure, domainError, failure, outcome } from './errors.js'
 import { projectDetails, projectLocal, projectRecord } from './projection.js'
 import { ReviewDiffStaleError, type WorktreeReviewDiffReader } from './review-diff.js'
@@ -78,6 +79,38 @@ function preflightFailure(view: Awaited<ReturnType<NonNullable<SessionCheckoutMo
 export function createWorktreeConsoleControlPlane(options: WorktreeConsoleControlPlaneOptions): WorktreeConsoleControlPlane {
   const createTargetSessionId = options.createTargetSessionId ?? randomUUID
 
+  async function unboundLocalTarget(sessionId: string): Promise<SessionTargetView> {
+    const session = options.lookup.getSession(sessionId)
+    if (session === undefined) throw domainError('session_not_found', '当前 Session 不存在')
+    if (session.projectId === undefined) throw domainError('project_not_found', '当前 Session 尚未关联项目')
+    const project = options.lookup.getProject(session.projectId)
+    if (project === undefined) throw domainError('project_not_found', '当前 Session 项目不存在')
+    if (!options.files.exists(project.root)) throw domainError('project_root_missing', '当前 Session 项目目录不存在')
+    const snapshot = await options.git.inspect(project.root)
+    if (snapshot === null) throw domainError('not_git_repository', '当前 Session 项目不是可用的 Git Worktree')
+    const status = await options.git.status(project.root)
+    return {
+      project: { id: project.id, name: project.name },
+      checkout: { id: 'local', kind: 'local', label: 'Local', phase: 'ready' },
+      source: { ref: snapshot.headRef, oid: snapshot.headOid },
+      current: { branch: snapshot.branch, oid: snapshot.headOid },
+      ownership: 'owner',
+      dirty: status.dirty,
+      revision: 0,
+    }
+  }
+
+  async function callerTarget(sessionId: string): Promise<SessionTargetView> {
+    try {
+      return await options.module.inspect(sessionId)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'target_unselected') {
+        return unboundLocalTarget(sessionId)
+      }
+      throw error
+    }
+  }
+
   async function authorize(sessionId: string, checkoutId: string): Promise<ManagedCheckoutRecord> {
     const caller = await options.module.inspect(sessionId)
     const record = recordOf(options.registry, checkoutId)
@@ -121,28 +154,41 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     return { managedRoot, snapshot, dirty: status.dirty }
   }
 
+  function ownerSessionAvailable(record: ManagedCheckoutRecord): boolean {
+    return options.lookup.getSession(record.ownerSessionId) !== undefined
+  }
+
   async function details(sessionId: string, checkoutId: string) {
     const record = await authorize(sessionId, checkoutId)
     const observed = await observe(record)
-    return projectDetails(record, sessionId, observed.managedRoot, observed.snapshot, observed.dirty)
+    return projectDetails(
+      record,
+      sessionId,
+      observed.managedRoot,
+      observed.snapshot,
+      observed.dirty,
+      ownerSessionAvailable(record),
+    )
   }
 
   async function mutationResponse(sessionId: string, checkoutId: string): Promise<WorktreeConsoleMutationResponse> {
     const record = recordOf(options.registry, checkoutId)
-    if (record.phase === 'discarded') return { target: projectRecord(record, sessionId) }
+    if (record.phase === 'discarded') {
+      return { target: projectRecord(record, sessionId, { ownerSessionAvailable: ownerSessionAvailable(record) }) }
+    }
     const observed = await observe(record)
-    return { target: projectRecord(record, sessionId, observed) }
+    return { target: projectRecord(record, sessionId, { ...observed, ownerSessionAvailable: ownerSessionAvailable(record) }) }
   }
 
   return {
     current: sessionId => outcome(async () => {
-      const target = await options.module.inspect(sessionId)
+      const target = await callerTarget(sessionId)
       if (target.checkout.kind === 'local') return { target: projectLocal(target, sessionId) }
       return { target: await details(sessionId, target.checkout.id) }
     }),
 
     list: request => outcome(async () => {
-      const caller = await options.module.inspect(request.sessionId)
+      const caller = await callerTarget(request.sessionId)
       const active = await options.module.listManagedWorktreesForSession(request.sessionId, {
         needsAttention: request.needsAttention,
       })
@@ -158,6 +204,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         const projected = projectRecord(record, request.sessionId, {
           ...observed,
           summary: activeById.get(record.checkoutId),
+          ownerSessionAvailable: ownerSessionAvailable(record),
         })
         if (request.needsAttention !== true || projected.state === 'cleanup_pending' || projected.state === 'recovery_required') {
           worktrees.push(projected)
@@ -177,7 +224,14 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || observed.managedRoot !== launch.managedRoot
       ) throw domainError('checkout_mismatch', '新建 Worktree 的 Host 身份校验失败')
       return {
-        target: projectDetails(record, sourceSessionId, observed.managedRoot, observed.snapshot, observed.dirty),
+        target: projectDetails(
+          record,
+          sourceSessionId,
+          observed.managedRoot,
+          observed.snapshot,
+          observed.dirty,
+          ownerSessionAvailable(record),
+        ),
         targetSessionId,
         managedRoot: launch.managedRoot,
       }
@@ -226,7 +280,10 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     },
 
     discard: request => outcome(async () => {
-      await authorize(request.sessionId, request.checkoutId)
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId && ownerSessionAvailable(record)) {
+        throw domainError('not_owner', 'Owner Session 已接管该 Worktree，只有 owner 可以 Discard')
+      }
       await options.module.manageManagedWorktreeForSession(request.sessionId, {
         checkoutId: request.checkoutId,
         expectedRevision: request.expectedRevision,

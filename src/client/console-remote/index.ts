@@ -25,6 +25,7 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
   ctx.effect(() => disposeRemote)
   const remote = ctx.get('remote.gitWorktree') as GitWorktreeRemote | undefined
   if (remote === undefined) throw new Error('Worktree Console Remote namespace did not mount')
-  ctx.provide('worktreeConsole', createWorktreeConsoleRemoteAdapter(remote))
-  applyToolViews(ctx as unknown as Parameters<typeof applyToolViews>[0])
+  const adapter = createWorktreeConsoleRemoteAdapter(remote)
+  ctx.provide('worktreeConsole', adapter)
+  applyToolViews(ctx as unknown as Parameters<typeof applyToolViews>[0], adapter)
 }

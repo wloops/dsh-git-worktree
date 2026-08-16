@@ -139,6 +139,30 @@ function plane(record = readyRecord(), overrides: { lookup?: SessionCheckoutLook
 }
 
 describe('Worktree Console Host control plane', () => {
+  it('projects an unselected live Git Session as Local without mutating its binding', async () => {
+    const { module, control } = plane()
+    vi.mocked(module.inspect).mockRejectedValueOnce(Object.assign(
+      new Error('会话尚未选择 Session Target'),
+      { code: 'target_unselected' },
+    ))
+
+    const result = await control.current('source-session')
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        target: {
+          state: 'local',
+          phase: 'local',
+          sourceSessionId: 'source-session',
+          managedRoot: null,
+          capabilities: { create: true },
+        },
+      },
+    })
+    expect(module.bind).not.toHaveBeenCalled()
+  })
+
   it('allocates target identity on Host and never changes the source Session target', async () => {
     const record = readyRecord()
     record.ownerSessionId = 'host-target'
@@ -192,12 +216,39 @@ describe('Worktree Console Host control plane', () => {
     })
   })
 
-  it('forwards discard, retention, and cleanup mutations through caller-scoped module CAS APIs', async () => {
+  it('rejects source-side Discard after the owner Session is live', async () => {
     const { module, control } = plane()
-    await control.discard({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 7, confirmDirty: true })
+    const result = await control.discard({
+      sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 7, confirmDirty: true,
+    })
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'not_owner', message: 'Owner Session 已接管该 Worktree，只有 owner 可以 Discard' },
+    })
+    expect(module.manageManagedWorktreeForSession).not.toHaveBeenCalled()
+  })
+
+  it('allows the Local source to discard only an unopened owner reservation', async () => {
+    const lookup = lookupDouble()
+    lookup.getSession = vi.fn(sessionId => sessionId === 'target-session'
+      ? undefined
+      : { id: sessionId, projectId: 'project-1' })
+    const { module, control } = plane(readyRecord(), { lookup })
+    const result = await control.discard({
+      sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 7, confirmDirty: true,
+    })
+    expect(result.ok).toBe(true)
+    expect(module.manageManagedWorktreeForSession).toHaveBeenCalledWith('source-session', {
+      checkoutId: 'checkout-1', expectedRevision: 7, action: 'discard', confirmDirty: true,
+    })
+  })
+
+  it('forwards owner Discard and caller-scoped retention/cleanup mutations through CAS APIs', async () => {
+    const { module, control } = plane()
+    await control.discard({ sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, confirmDirty: true })
     await control.setRetention({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 8, retention: 'retain_manual' })
     await control.retryCleanup({ sessionId: 'source-session', checkoutId: 'checkout-1', expectedRevision: 9 })
-    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(1, 'source-session', {
+    expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(1, 'target-session', {
       checkoutId: 'checkout-1', expectedRevision: 7, action: 'discard', confirmDirty: true,
     })
     expect(module.manageManagedWorktreeForSession).toHaveBeenNthCalledWith(2, 'source-session', {
