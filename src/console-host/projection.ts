@@ -48,6 +48,7 @@ export function capabilities(
     && record.delivery.state === 'preview_active'
     && record.journal?.operation === 'rollback_preview'
   const cleanup = record.delivery.state === 'finalized' || record.delivery.state === 'retained'
+  const delivered = record.phase === 'discarded' && record.delivery.state === 'delivered'
   const active = record.phase !== 'discarded'
   return {
     create: false,
@@ -61,6 +62,7 @@ export function capabilities(
     finalizePreview: owner && previewActive,
     setRetention: authorized && record.delivery.state === 'retained',
     retryCleanup: authorized && cleanup,
+    beginNextIteration: owner && delivered,
   }
 }
 
@@ -156,6 +158,7 @@ export function projectLocal(target: SessionTargetView, sessionId: string): Work
       finalizePreview: false,
       setRetention: false,
       retryCleanup: false,
+      beginNextIteration: false,
     },
     managedRoot: null,
     sourceOid: target.source.oid,

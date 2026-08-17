@@ -2,7 +2,8 @@
  * Model-facing worktree tools. Destructive delivery actions are deliberately
  * absent: Finish/Discard/Remove are human commands surfaced by the client
  * ToolView. The model can reserve a real target session, inspect its own
- * scoped worktrees, and stop at Ready for Review.
+ * scoped worktrees, safely begin a cleaned same-session iteration, and stop
+ * at Ready for Review.
  * @module dsh-git-worktree/tools
  */
 
@@ -114,6 +115,44 @@ export function registerTools(ctx: Context, module: SessionCheckoutModule): void
       }
     },
     presentCall: () => ({ card: 'generic', title: 'List managed worktrees', kind: 'other', rawInput: {} }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'worktree_begin_next_iteration',
+    description: '当当前 Isolated Session 已交付并完成 cleanup，而用户在同一对话中提出新的代码或文件修改时，先调用本工具安全重建同一个 immutable cwd 并进入下一轮，然后继续执行用户请求。不要改用 worktree_create；retained 或 cleanup_pending 状态不能调用。',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          kind: { type: 'string', required: true },
+          checkoutId: { type: 'string', required: true },
+          iteration: { type: 'number', required: true },
+          phase: { type: 'string', required: true },
+          currentOid: { type: 'string', required: true },
+          sessionId: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => renderJson(value),
+    },
+    async execute(_args, exec) {
+      const sessionId = sessionIdOf(exec.agent)
+      const current = await module.inspect(sessionId)
+      const target = await module.beginNextIteration(sessionId, current.revision)
+      if (target.delivery?.state !== 'working') {
+        throw new Error(`下一轮 Worktree 未进入 working 状态: ${target.delivery?.state ?? 'unknown'}`)
+      }
+      return {
+        kind: 'worktree_next_iteration_started',
+        checkoutId: target.checkout.id,
+        iteration: target.delivery.iteration,
+        phase: target.checkout.phase,
+        currentOid: target.current.oid,
+        sessionId,
+      }
+    },
+    presentCall: () => ({ card: 'generic', title: 'Start next Worktree iteration', kind: 'other', rawInput: {} }),
   }))
 
   ctx.tools.register(defineTool({

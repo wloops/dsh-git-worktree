@@ -78,6 +78,7 @@ function localTarget(): WorktreeConsoleTargetDetails {
       finalizePreview: false,
       setRetention: false,
       retryCleanup: false,
+      beginNextIteration: false,
     },
   }
 }
@@ -258,6 +259,43 @@ describe('Harness-native Session Target slots', () => {
     await waitFor(() => expect(screen.getByText('Preview 与 Local 发生冲突，已保留恢复现场')).toBeTruthy())
     expect(screen.getByText('自动撤回会重新检查冲突；无法证明安全时不会写入。')).toBeTruthy()
     expect(screen.getByRole('button', { name: '重新检查撤回' })).toBeTruthy()
+  })
+
+  test('已清理 delivered Session 在原 composer dock 开始下一轮并保持同一 Session', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const { review: _review, reviewSlot: _slot, ...withoutReview } = fixture.target
+    const delivered = {
+      ...withoutReview,
+      state: 'delivered' as const,
+      phase: 'discarded' as const,
+      iteration: 1,
+      revision: 9,
+      dirty: false,
+      commitOid: 'c'.repeat(40),
+      capabilities: {
+        ...fixture.target.capabilities,
+        open: false,
+        discard: false,
+        preflight: false,
+        preview: false,
+        finalize: false,
+        beginNextIteration: true,
+      },
+    }
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: delivered } }))
+    const slots = new SlotsDouble()
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+    const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+
+    render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
+
+    await waitFor(() => expect(screen.getByText('本轮已交付，可在原会话继续下一轮修改')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '开始下一轮修改' }))
+    await waitFor(() => expect(fixture.calls).toContainEqual({
+      method: 'beginNextIteration',
+      request: { sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 9 },
+    }))
+    await waitFor(() => expect(screen.queryByText('本轮已交付，可在原会话继续下一轮修改')).toBeNull())
   })
 
   test('Preview rollback 中断后 dock 保持可见并提供恢复入口', async () => {

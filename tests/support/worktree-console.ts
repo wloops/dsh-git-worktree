@@ -1,5 +1,6 @@
 import type {
   WorktreeConsoleAdapter,
+  WorktreeConsoleBeginNextIterationRequest,
   WorktreeConsoleCreateRequest,
   WorktreeConsoleCreateResponse,
   WorktreeConsoleCurrentRequest,
@@ -60,6 +61,7 @@ function readyTarget(): WorktreeConsoleTargetDetails {
       finalizePreview: false,
       setRetention: false,
       retryCleanup: false,
+      beginNextIteration: false,
     },
     review: {
       reviewId: 'review-1',
@@ -114,6 +116,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           finalizePreview: false,
           setRetention: false,
           retryCleanup: false,
+          beginNextIteration: true,
         },
       },
       changedFiles: ['src/index.ts'],
@@ -199,6 +202,28 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
     async retryCleanup(request: WorktreeConsoleRetryCleanupRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
       record('retryCleanup', request)
       return outcome(delivered())
+    },
+    async beginNextIteration(request: WorktreeConsoleBeginNextIterationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('beginNextIteration', request)
+      const {
+        review: _review,
+        reviewSlot: _slot,
+        managedRoot: _managedRoot,
+        sourceOid: _sourceOid,
+        currentBranch: _currentBranch,
+        ...working
+      } = target
+      return outcome({ target: {
+        ...working,
+        checkoutId: 'checkout-2',
+        iteration: target.iteration + 1,
+        revision: request.expectedRevision + 2,
+        state: 'working',
+        phase: 'ready',
+        dirty: false,
+        commitOid: null,
+        capabilities: { ...target.capabilities, preflight: false, preview: false, finalize: false, beginNextIteration: false },
+      } })
     },
   }
 

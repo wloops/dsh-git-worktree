@@ -29,6 +29,8 @@ workspaces.create({ path: managedRoot })
 
 When that target Session invokes the plugin, its current Workspace may have a different Workspace ID from the original Local Workspace. The module accepts it only if the Workspace root canonicalizes to the recorded `managedRoot`; otherwise it raises `project_mismatch`.
 
+After cleanup removes that immutable cwd, Harness deliberately filters the Session from `Workspace.sessionIds` because the header path no longer resolves. The conversation and live `Session` still exist, however, and its header cwd remains immutable. The lookup adapter therefore uses the normal Workspace projection first, then permits one narrow fallback for a currently live Session: `ctx.sessions.get(sessionId).header.cwd` must lexically match exactly one registered Workspace path. Cold/unknown Sessions, missing cwd, mismatched paths, and ambiguous registrations still fail closed. Once the next Worktree is recreated, the original Workspace path is valid again without changing the Session header.
+
 ### Worktree location
 
 Domi's non-polluting policy is restored:
@@ -84,6 +86,7 @@ The package exports `./client` and declares `dsh.client`. The browser closure re
 
 - `worktree_create`: path/checkout facts and an idempotent **Open isolated session** action;
 - `worktree_ready_for_review`: summary, files, tests, commit message, and explicit cleanup/retention actions.
+- delivered composer dock: **Start next iteration** safely recreates the cleaned immutable Session cwd and keeps the same conversation.
 
 The ToolViews derive display state from durable logged call/result slices. They do not reconstruct checkout authority from UI state.
 
@@ -93,7 +96,7 @@ The ToolViews derive display state from durable logged call/result slices. They 
 | --- | --- |
 | Reversible Local Preview / Finalize / Rollback | Implemented through strict Remote with durable receipts, single-project slot, CAS and recovery |
 | Global Worktree Manager sheet | Deferred until a stable Host Remote/Projection management seam is added |
-| Electron reveal/close-session choreography | Replaced only by Web Workspace/Session navigation; immediate cleanup makes the isolated Session terminal |
+| Electron reveal/close-session choreography | Web navigation remains simpler, but a successfully cleaned delivered Session now starts the next iteration by safely recreating its immutable cwd path; retained/cleanup-pending environments must be cleaned first |
 | Collaborator release/handoff UI | Partial domain remnants only; no complete Host lifecycle integration |
 | Dependency snapshot/restore | Deferred |
 | Audit timing pipeline | Deferred |
@@ -103,7 +106,8 @@ Subagents inherit their parent's persisted cwd. They are therefore isolated when
 
 ## Verification map
 
-- `tests/session-checkout-module.test.ts`: real Worktree creation plus Preview→rollback, Preview→finalize, direct finish, Preview-aware discard, Local drift, slot contention, crash recovery, caller scope, and legacy Apply fail-closed.
+- `tests/lookup.test.ts`: Harness Workspace projection lookup plus the cleanup-only live immutable-cwd fallback, including mismatch, cold, pathless, and ambiguous rejection.
+- `tests/session-checkout-module.test.ts`: real Worktree creation plus same-Session cleaned-path iteration, predecessor crash recovery, Preview→rollback, Preview→finalize, direct finish, Preview-aware discard, Local drift, slot contention, caller scope, and legacy Apply fail-closed.
 - `tests/session-checkout-apply.test.ts`: real Git preflight/Preview/rollback/finalize/Finish/fingerprint behavior, including fresh-engine receipt recovery, same-branch fast-forward rollback, overlap conflicts, branch switches, rewritten history, Local layer preservation, and final CAS.
 - `tests/client-review-console.test.tsx` and `tests/client-target-console.test.tsx`: Ready/Preview/recovery actions, revision refresh, modal confirmation, dock projection and Preview-aware Discard.
 - `scripts/check-publish.mjs`: every package export, Host patch, Host metadata, `dsh.client`, and executable browser ModuleLoader closure.

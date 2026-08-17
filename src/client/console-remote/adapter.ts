@@ -67,5 +67,6 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): W
     finalizePreview: request => invoke<WorktreeConsoleMutationResponse>('finalizePreview', () => remote.finalizePreview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention)),
     setRetention: request => invoke<WorktreeConsoleMutationResponse>('setRetention', () => remote.setRetention(request.sessionId, request.checkoutId, request.expectedRevision, request.retention)),
     retryCleanup: request => invoke<WorktreeConsoleMutationResponse>('retryCleanup', () => remote.retryCleanup(request.sessionId, request.checkoutId, request.expectedRevision)),
+    beginNextIteration: request => invoke<WorktreeConsoleMutationResponse>('beginNextIteration', () => remote.beginNextIteration(request.sessionId, request.checkoutId, request.expectedRevision)),
   }
 }

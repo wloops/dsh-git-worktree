@@ -14,6 +14,7 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
   const sessionId = session.sessionId
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [startingIteration, setStartingIteration] = useState(false)
   const mounted = useRef(true)
   const refreshing = useRef(false)
 
@@ -54,6 +55,50 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
       window.removeEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
     }
   }, [refresh, sessionId])
+
+  if (target?.state === 'delivered' && target.checkoutId !== null && target.capabilities.beginNextIteration) {
+    const beginNextIteration = async (): Promise<void> => {
+      if (startingIteration) return
+      setStartingIteration(true)
+      setError(null)
+      try {
+        const outcome = await adapter.beginNextIteration({
+          sessionId,
+          checkoutId: target.checkoutId!,
+          expectedRevision: target.revision,
+        })
+        if (!mounted.current) return
+        if (!outcome.ok) {
+          setError(outcome.error.message)
+          if (outcome.error.code === 'stale_target') void refresh()
+          return
+        }
+        setTarget(current => current ? { ...current, ...outcome.value.target } : current)
+      } catch (reason) {
+        if (mounted.current) setError(reason instanceof Error ? reason.message : String(reason))
+      } finally {
+        if (mounted.current) setStartingIteration(false)
+      }
+    }
+    return (
+      <section className="dsh-wt-review-dock" aria-label="Worktree 下一轮" data-review-state="delivered">
+        <span className="dsh-wt-review-dock-icon" aria-hidden>✓</span>
+        <span className="dsh-wt-review-dock-copy">
+          <strong>本轮已交付，可在原会话继续下一轮修改</strong>
+          <span>将安全重建已清理的 Worktree 路径，并保留当前对话。</span>
+        </span>
+        {error ? <span className="dsh-wt-error">{error}</span> : null}
+        <button
+          type="button"
+          className="dsh-wt-button dsh-wt-primary"
+          disabled={startingIteration}
+          onClick={() => { void beginNextIteration() }}
+        >
+          {startingIteration ? '正在创建…' : '开始下一轮修改'}
+        </button>
+      </section>
+    )
+  }
 
   if (
     !target

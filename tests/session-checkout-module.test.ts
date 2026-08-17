@@ -474,6 +474,127 @@ describe('SessionCheckoutModule', () => {
     expect(context.module.runtimeContext('target-session-1')).toContain('only the user may preview, directly finish')
   })
 
+  test('Given a cleaned delivered owner Session When it begins the next iteration Then the same Session and cwd receive a new checkout from latest Local HEAD', async () => {
+    const context = createContext({
+      checkoutIds: ['checkout-first', 'operation-first', 'checkout-second', 'operation-second'],
+    })
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    context.addProject('target-workspace-1', 'Target Workspace', launch.managedRoot)
+    context.addSession('target-session-1', 'target-workspace-1')
+    writeFileSync(join(launch.managedRoot, 'tracked.txt'), 'first iteration\n')
+    const ready = await context.module.markReadyForReview('target-session-1', {
+      summary: 'first iteration', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: first iteration',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected first review')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'target-session-1', expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId, commitMessage: 'test: first iteration', retention: 'cleanup',
+    })
+    if (finished.status !== 'finished') throw new Error(`expected finished, got ${finished.status}`)
+    expect(finished.cleanup).toBe('discarded')
+    expect(existsSync(launch.managedRoot)).toBe(false)
+    expect(context.module.runtimeContext('target-session-1')).toContain('worktree_begin_next_iteration')
+    expect(context.module.runtimeContext('target-session-1')).toContain('Do not call worktree_create')
+
+    writeFileSync(join(context.projectRoot, 'local-next.txt'), 'latest local head\n')
+    git(context.projectRoot, 'add', 'local-next.txt')
+    git(context.projectRoot, 'commit', '-m', 'local advances before iteration 2')
+    const latestLocalHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const next = await context.module.beginNextIteration('target-session-1', finished.target.revision)
+
+    expect(next).toMatchObject({
+      checkout: { kind: 'isolated', phase: 'ready' },
+      delivery: { state: 'working', iteration: 2 },
+      current: { oid: latestLocalHead },
+    })
+    expect(next.checkout.id).not.toBe(launch.target.checkout.id)
+    expect(await context.module.resolveManagedRoot(next.checkout.id)).toBe(launch.managedRoot)
+    expect(existsSync(join(launch.managedRoot, 'local-next.txt'))).toBe(true)
+    expect((await context.module.inspect('target-session-1')).checkout.id).toBe(next.checkout.id)
+    const persisted = JSON.parse(readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')) as {
+      managedCheckouts: Record<string, { phase: string; delivery: { state: string; iteration: number } }>
+    }
+    expect(persisted.managedCheckouts[launch.target.checkout.id]).toMatchObject({
+      phase: 'discarded', delivery: { state: 'delivered', iteration: 1 },
+    })
+  }, 30_000)
+
+  test('Given a cleaned delivered owner Session When the immutable cwd path reappears Then the next iteration refuses to overwrite it', async () => {
+    const context = createContext()
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    context.addProject('target-workspace-1', 'Target Workspace', launch.managedRoot)
+    context.addSession('target-session-1', 'target-workspace-1')
+    writeFileSync(join(launch.managedRoot, 'tracked.txt'), 'first iteration\n')
+    const ready = await context.module.markReadyForReview('target-session-1', {
+      summary: 'first iteration', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: first iteration',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected first review')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'target-session-1', expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId, commitMessage: 'test: first iteration', retention: 'cleanup',
+    })
+    if (finished.status !== 'finished') throw new Error(`expected finished, got ${finished.status}`)
+    mkdirSync(launch.managedRoot, { recursive: true })
+    writeFileSync(join(launch.managedRoot, 'foreign.txt'), 'do not overwrite\n')
+
+    await expect(context.module.beginNextIteration('target-session-1', finished.target.revision))
+      .rejects.toMatchObject({ code: 'checkout_mismatch' })
+    expect(readFileSync(join(launch.managedRoot, 'foreign.txt'), 'utf8')).toBe('do not overwrite\n')
+    expect((await context.module.inspect('target-session-1')).delivery).toMatchObject({ state: 'delivered', iteration: 1 })
+  }, 30_000)
+
+  test('Given the process stops before recreating a cleaned cwd When reconcile runs Then the predecessor binding is restored', async () => {
+    const context = createContext()
+    const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
+    context.addProject('target-workspace-1', 'Target Workspace', launch.managedRoot)
+    context.addSession('target-session-1', 'target-workspace-1')
+    writeFileSync(join(launch.managedRoot, 'tracked.txt'), 'first iteration\n')
+    const ready = await context.module.markReadyForReview('target-session-1', {
+      summary: 'first iteration', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: first iteration',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected first review')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'target-session-1', expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId, commitMessage: 'test: first iteration', retention: 'cleanup',
+    })
+    if (finished.status !== 'finished') throw new Error(`expected finished, got ${finished.status}`)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as {
+      revision: number
+      sessionBindings: Record<string, any>
+      managedCheckouts: Record<string, any>
+    }
+    const predecessor = registry.managedCheckouts[launch.target.checkout.id]
+    registry.managedCheckouts['interrupted-next'] = {
+      ...predecessor,
+      checkoutId: 'interrupted-next',
+      predecessorCheckoutId: predecessor.checkoutId,
+      phase: 'preparing',
+      delivery: { state: 'working', iteration: 2 },
+      journal: { operation: 'create', operationId: 'interrupted-op', step: 'creating_worktree', startedAt: Date.now() },
+      revision: predecessor.revision + 1,
+    }
+    registry.sessionBindings['target-session-1'] = {
+      ...registry.sessionBindings['target-session-1'],
+      target: { kind: 'isolated', checkoutId: 'interrupted-next' },
+      revision: registry.sessionBindings['target-session-1'].revision + 1,
+    }
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    await restarted.reconcile()
+    const restored = await restarted.inspect('target-session-1')
+    expect(restored).toMatchObject({
+      checkout: { id: launch.target.checkout.id, phase: 'discarded' },
+      delivery: { state: 'delivered', iteration: 1 },
+    })
+    const persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as { managedCheckouts: Record<string, unknown> }
+    expect(persisted.managedCheckouts['interrupted-next']).toBeUndefined()
+  }, 30_000)
+
   test('Given a source owns an unopened reservation When it removes the checkout Then no Host target Session is required', async () => {
     const context = createContext()
     const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')

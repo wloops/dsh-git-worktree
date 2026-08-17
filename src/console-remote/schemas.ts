@@ -58,6 +58,7 @@ const capabilitiesSchema = strict({
   finalizePreview: z.boolean(),
   setRetention: z.boolean(),
   retryCleanup: z.boolean(),
+  beginNextIteration: z.boolean(),
 })
 const targetSummarySchema = strict({
   project: projectSchema,

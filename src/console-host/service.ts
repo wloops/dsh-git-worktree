@@ -103,4 +103,9 @@ export class WorktreeConsoleService extends TypertRemoteService {
   retryCleanup(agent: Agent, checkoutId: string, expectedRevision: number): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
     return this.controlPlane.retryCleanup({ sessionId: agent.id, checkoutId, expectedRevision })
   }
+
+  @Remote
+  beginNextIteration(agent: Agent, checkoutId: string, expectedRevision: number): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.beginNextIteration({ sessionId: agent.id, checkoutId, expectedRevision })
+  }
 }

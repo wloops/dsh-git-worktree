@@ -124,7 +124,11 @@ function gitDouble(): SessionCheckoutGitPort {
   }
 }
 
-function plane(record = readyRecord(), overrides: { lookup?: SessionCheckoutLookupPort; files?: SessionCheckoutFilesPort } = {}) {
+function plane(record = readyRecord(), overrides: {
+  lookup?: SessionCheckoutLookupPort
+  files?: SessionCheckoutFilesPort
+  registry?: SessionCheckoutRegistryPort
+} = {}) {
   const module = moduleDouble(record)
   return {
     module,
@@ -132,7 +136,7 @@ function plane(record = readyRecord(), overrides: { lookup?: SessionCheckoutLook
       module,
       lookup: overrides.lookup ?? lookupDouble(),
       files: overrides.files ?? filesDouble(),
-      registry: registry(record), git: gitDouble(), createTargetSessionId: () => 'host-target',
+      registry: overrides.registry ?? registry(record), git: gitDouble(), createTargetSessionId: () => 'host-target',
       reviewDiff: { read: vi.fn(async input => ({ reviewId: input.reviewId, revision: input.revision, files: [], truncated: false })) },
     }),
   }
@@ -171,6 +175,90 @@ describe('Worktree Console Host control plane', () => {
     expect(result).toMatchObject({ ok: true, value: { targetSessionId: 'host-target', managedRoot: '/managed' } })
     expect(module.createIsolatedTarget).toHaveBeenCalledWith('source-session', 'host-target')
     expect(module.inspect).not.toHaveBeenCalledWith('host-target')
+  })
+
+  it('projects a cleaned delivered owner even though its immutable Workspace path is temporarily absent', async () => {
+    const delivered = readyRecord()
+    delivered.phase = 'discarded'
+    delivered.revision = 9
+    delivered.delivery = { state: 'delivered', iteration: 1, commitOid: B, deliveredAt: 10 }
+    const lookup = lookupDouble()
+    lookup.getSession = sessionId => ({ id: sessionId, projectId: sessionId === 'target-session' ? 'workspace-target' : 'project-1' })
+    lookup.getProject = projectId => ({ id: projectId, name: 'Project', root: projectId === 'workspace-target' ? '/managed' : '/local' })
+    const files = filesDouble()
+    files.exists = path => path !== '/managed'
+    const { module, control } = plane(delivered, { lookup, files })
+    vi.mocked(module.inspect).mockResolvedValue({
+      project: { id: delivered.projectId, name: delivered.projectName },
+      checkout: { id: delivered.checkoutId, kind: 'isolated', label: 'Task', phase: 'discarded' },
+      source: { ref: delivered.sourceRef, oid: delivered.baseOid },
+      current: { branch: 'main', oid: B }, ownership: 'owner', dirty: false, revision: delivered.revision,
+      delivery: { state: 'delivered', iteration: 1, commitOid: B, deliveredAt: 10 },
+    })
+
+    const result = await control.current('target-session')
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { target: { state: 'delivered', managedRoot: null, capabilities: { beginNextIteration: true } } },
+    })
+  })
+
+  it('starts iteration 2 for the exact delivered owner while preserving the immutable cwd identity', async () => {
+    const delivered = readyRecord()
+    delivered.phase = 'discarded'
+    delivered.revision = 9
+    delivered.delivery = {
+      state: 'delivered', iteration: 1, commitOid: B, deliveredAt: 10,
+    }
+    const next: ManagedCheckoutRecord = {
+      ...delivered,
+      checkoutId: 'checkout-2',
+      predecessorCheckoutId: delivered.checkoutId,
+      phase: 'ready',
+      delivery: { state: 'working', iteration: 2 },
+      journal: null,
+      revision: 11,
+      baseOid: B,
+      gitDir: '/git/worktrees/two',
+    }
+    let registryValue: ManagedCheckoutsRegistry = {
+      version: 2, revision: 1,
+      sessionBindings: {},
+      managedCheckouts: { [delivered.checkoutId]: delivered },
+    }
+    const registryPort: SessionCheckoutRegistryPort = {
+      read: () => structuredClone(registryValue),
+      write: nextValue => { registryValue = structuredClone(nextValue) },
+    }
+    const lookup = lookupDouble()
+    lookup.getSession = sessionId => ({ id: sessionId, projectId: sessionId === 'target-session' ? 'workspace-target' : 'project-1' })
+    lookup.getProject = projectId => ({ id: projectId, name: 'Project', root: projectId === 'workspace-target' ? '/managed' : '/local' })
+    const { module, control } = plane(delivered, { registry: registryPort, lookup })
+    vi.mocked(module.beginNextIteration).mockImplementation(async () => {
+      registryValue = {
+        ...registryValue,
+        revision: registryValue.revision + 1,
+        managedCheckouts: { ...registryValue.managedCheckouts, [next.checkoutId]: next },
+      }
+      return {
+        project: { id: next.projectId, name: next.projectName },
+        checkout: { id: next.checkoutId, kind: 'isolated', label: 'Task', phase: 'ready' },
+        source: { ref: next.sourceRef, oid: next.baseOid },
+        current: { branch: null, oid: B }, ownership: 'owner', dirty: false, revision: next.revision,
+        delivery: { state: 'working', iteration: 2 },
+      }
+    })
+
+    const result = await control.beginNextIteration({
+      sessionId: 'target-session', checkoutId: delivered.checkoutId, expectedRevision: delivered.revision,
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { target: { checkoutId: 'checkout-2', ownerSessionId: 'target-session', state: 'working', iteration: 2 } },
+    })
+    expect(module.beginNextIteration).toHaveBeenCalledWith('target-session', delivered.revision)
   })
 
   it('rejects a live same-project Session that is neither source nor owner before revealing managedRoot', async () => {

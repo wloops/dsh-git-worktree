@@ -47,6 +47,7 @@ const METHODS = [
   'finalizePreview',
   'setRetention',
   'retryCleanup',
+  'beginNextIteration',
 ]
 
 describe('manual strict Worktree Console Remote contribution', () => {
@@ -213,6 +214,18 @@ describe('manual strict Worktree Console Remote contribution', () => {
       ok: false,
       error: { code: 'malformed_response', message: 'Remote current 返回了不符合 strict contract 的 payload' },
     })
+
+    const beginNextIteration = vi.fn().mockResolvedValue({
+      ok: true,
+      value: await createWorktreeConsoleAdapterFixture().adapter.beginNextIteration({
+        sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 9,
+      }),
+    })
+    const iterationAdapter = createWorktreeConsoleRemoteAdapter({ beginNextIteration } as never)
+    await expect(iterationAdapter.beginNextIteration({
+      sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 9,
+    })).resolves.toMatchObject({ ok: true, value: { target: { state: 'working', iteration: 2 } } })
+    expect(beginNextIteration).toHaveBeenCalledWith('agent-1', 'checkout-1', 9)
 
     const malformedInputAdapter = createWorktreeConsoleRemoteAdapter({
       inspect: vi.fn().mockRejectedValue(new Error('client api: gitWorktree/inspect rejected "checkoutId"')),

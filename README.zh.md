@@ -39,6 +39,8 @@ Agent 在 Worktree 中修改并验证
     │                         └─ 撤回并继续修改
     ├─ 跳过 Preview，直接提交
     └─ 放弃任务
+    │
+    └─ cleanup 后在原 Session 开始 iteration + 1
 ```
 
 1. 在 blank/new Local Session 中打开 **Worktree** 开关并确认。未发送的文字和图片草稿会迁移到隔离 Session；取消不会创建任何资源。
@@ -49,8 +51,9 @@ Agent 在 Worktree 中修改并验证
    - **同步到 Local 验收**，再提交或撤回 Preview；
    - **跳过验收，直接提交**；
    - **放弃任务**。
+6. 成功提交并 cleanup 后，可以在原隔离 Session 中开始下一轮，不丢失现有对话。Harness 的 Session cwd 不可变，因此插件只会在严格身份校验后重建上一轮已经清理的 Host-owned managed path。
 
-所有验收路径在写入前都会重新校验 review revision、Worktree HEAD/fingerprint 和 Local 状态。
+所有验收路径在写入前都会重新校验 review revision、Worktree HEAD/fingerprint 和 Local 状态。Retained 或 cleanup-pending 环境必须先完成清理；开始下一轮不会静默删除这些环境。
 
 ## 环境要求
 
@@ -86,6 +89,7 @@ allowBuilds:
 | --- | --- |
 | `worktree_create` | 创建 managed Worktree 并预留独立 target Session，不修改当前 Session cwd |
 | `worktree_list` | 列出当前 Session 在原始项目中可见的 Worktree |
+| `worktree_begin_next_iteration` | 为已成功清理的 delivered Session 重建 iteration + 1，并保持同一 Session 与完整对话 |
 | `worktree_ready_for_review` | 保存交付报告并停止，等待用户明确验收 |
 
 Finish、Discard、Remove 不向模型开放，避免用模型参数代替用户授权。
@@ -97,6 +101,7 @@ Web UI 提供创建、Preview、撤回、提交、保留和放弃等常用操作
 ```text
 /worktree status
 /worktree list
+/worktree next
 /worktree finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual]
 /worktree finish <Commit Message>
 /worktree discard
@@ -109,12 +114,13 @@ Web UI 提供创建、Preview、撤回、提交、保留和放弃等常用操作
 
 实现把 Domi 中经过生产验证的 checkout/apply 安全基础迁移到 Harness 的权威 Workspace / Session cwd 模型。关键不变量包括：
 
-- source 与 target 始终使用不同的 Session ID。
-- target 的 Harness Workspace 必须解析到 Host 记录的 managed root，否则拒绝访问。
+- 初始 Local source 与 isolated target 使用不同的 Session ID；后续 iteration 保持同一个 isolated Session ID。
+- 活动 target 的 Harness Workspace 必须解析到 Host 记录的 managed root。已清理的 delivered target 只在 Host Workspace 原始路径与 predecessor 记录精确一致时，才允许暂时引用缺失的 immutable cwd。
 - 同一 canonical Local 项目同时只允许一个活动 Preview。
 - 在写入 Local 前先持久化 Preview receipt，使 Host 重启后仍可恢复 rollback/finalize。
 - Preview、Commit 和 rollback 路径都使用 revision、HEAD 与 fingerprint compare-and-swap 校验；基于验收报告的路径还会绑定 review ID。
 - 清理前验证路径身份、Git 元数据和最终 fingerprint；无法确认的残余会保留或 quarantine。
+- 下一轮只复用已成功清理且当前不存在的 predecessor path，创建新的 checkout record，并保留上一轮记录作为恢复证据。
 - 旧版不可逆 Apply 流程产生的历史记录不会被自动 Finish 或 Discard。
 
 详细边界与恢复设计见 [Domi 到 Harness 的迁移说明](docs/PORTING.md) 和 [Worktree Console 架构](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)。

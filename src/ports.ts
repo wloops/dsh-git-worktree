@@ -210,6 +210,8 @@ export type ManagedCheckoutDelivery =
 
 export interface ManagedCheckoutRecord {
   checkoutId: string
+  /** Prior delivered checkout whose immutable Harness cwd path this iteration safely reuses. */
+  predecessorCheckoutId?: string
   projectId: string
   projectName: string
   ownerSessionId: string

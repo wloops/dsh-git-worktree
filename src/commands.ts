@@ -26,7 +26,7 @@ function sessionIdOf(agent: unknown): string {
 }
 
 const RETENTIONS = new Set<WorktreeRetentionMode>(['cleanup', 'retain_24h', 'retain_3d', 'retain_manual'])
-const USAGE = 'Usage: /worktree status | list | finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual] | finish <message> | discard | remove <checkoutId>'
+const USAGE = 'Usage: /worktree status | list | next | finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual] | finish <message> | discard | remove <checkoutId>'
 
 function finishedText(result: Extract<Awaited<ReturnType<SessionCheckoutModule['operate']>>, { status: 'finished' }>): string {
   return `Finished: committed ${result.changedFiles.length} file(s) as ${result.commitOid?.slice(0, 7) ?? 'no-op'} (cleanup: ${result.cleanup}).`
@@ -37,7 +37,7 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
   ctx.commands.register({
     name: 'worktree',
     description: 'inspect and explicitly accept managed worktree delivery',
-    input: { hint: 'status | list | finalize [retention] | finish <message> | discard | remove <checkoutId>' },
+    input: { hint: 'status | list | next | finalize [retention] | finish <message> | discard | remove <checkoutId>' },
     handler: async (invocation) => {
       const rawInput = invocation.rawInput.trim()
       const tokens = rawInput.split(/\s+/u).filter(Boolean)
@@ -57,6 +57,12 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
                 `${summary.checkoutId}  ${summary.project.name}  i${summary.iteration}  ${summary.state}/${summary.phase}  dirty=${summary.dirty}`
               )).join('\n'),
             }
+          }
+          case 'next': {
+            const current = await module.inspect(sessionId)
+            const target = await module.beginNextIteration(sessionId, current.revision)
+            const iteration = target.delivery?.state === 'working' ? target.delivery.iteration : 0
+            return { kind: 'success', text: `Started Worktree iteration ${iteration} in the current Session.` }
           }
           case 'finalize': {
             const hasReviewIdentity = tokens[1] !== undefined && !RETENTIONS.has(tokens[1] as WorktreeRetentionMode)

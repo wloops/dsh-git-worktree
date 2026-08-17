@@ -28,7 +28,7 @@ const readyTarget: SessionTargetView = {
 }
 
 describe('public surfaces', () => {
-  test('model tools expose creation, scoped listing, and a schema-valid Ready for Review result', () => {
+  test('model tools expose creation, scoped listing, same-session iteration, and a schema-valid Ready for Review result', () => {
     const tools: Array<{
       name: string
       output?: { schema?: { properties?: Record<string, { type?: string; required?: boolean }> } }
@@ -36,9 +36,73 @@ describe('public surfaces', () => {
     const ctx = { tools: { register: (tool: (typeof tools)[number]) => { tools.push(tool) } } }
     registerTools(ctx as never, {} as SessionCheckoutModule)
 
-    expect(tools.map(tool => tool.name)).toEqual(['worktree_create', 'worktree_list', 'worktree_ready_for_review'])
+    expect(tools.map(tool => tool.name)).toEqual([
+      'worktree_create',
+      'worktree_list',
+      'worktree_begin_next_iteration',
+      'worktree_ready_for_review',
+    ])
     const readyTool = tools.find(tool => tool.name === 'worktree_ready_for_review')
     expect(readyTool?.output?.schema?.properties?.iteration).toEqual({ type: 'number' })
+  })
+
+  test('next-iteration model tool keeps the current Session and uses the latest delivered revision', async () => {
+    const tools: Array<{ name: string; execute: (args: unknown, exec: unknown) => Promise<unknown> }> = []
+    const delivered: SessionTargetView = {
+      ...readyTarget,
+      checkout: { ...readyTarget.checkout, phase: 'discarded' },
+      dirty: false,
+      revision: 9,
+      delivery: { state: 'delivered', iteration: 1, commitOid: 'c'.repeat(40), deliveredAt: 2 },
+    }
+    const next: SessionTargetView = {
+      ...readyTarget,
+      checkout: { ...readyTarget.checkout, id: 'checkout-2' },
+      dirty: false,
+      revision: 11,
+      delivery: { state: 'working', iteration: 2 },
+    }
+    const module = {
+      inspect: vi.fn(async () => delivered),
+      beginNextIteration: vi.fn(async () => next),
+    } as unknown as SessionCheckoutModule
+    registerTools({ tools: { register: (tool: typeof tools[number]) => { tools.push(tool) } } } as never, module)
+    const tool = tools.find(candidate => candidate.name === 'worktree_begin_next_iteration')
+    if (!tool) throw new Error('next iteration tool was not registered')
+
+    const result = await tool.execute({}, { agent: { session: { id: 'target-session' } } })
+
+    expect(module.beginNextIteration).toHaveBeenCalledWith('target-session', 9)
+    expect(result).toMatchObject({
+      kind: 'worktree_next_iteration_started', checkoutId: 'checkout-2', iteration: 2, sessionId: 'target-session',
+    })
+  })
+
+  test('/worktree next starts the next iteration through the same Session revision', async () => {
+    let command: { name: string; handler: (invocation: unknown) => Promise<unknown> } | undefined
+    const delivered: SessionTargetView = {
+      ...readyTarget,
+      checkout: { ...readyTarget.checkout, phase: 'discarded' },
+      revision: 9,
+      delivery: { state: 'delivered', iteration: 1, commitOid: 'c'.repeat(40), deliveredAt: 2 },
+    }
+    const next: SessionTargetView = {
+      ...readyTarget,
+      checkout: { ...readyTarget.checkout, id: 'checkout-2' },
+      revision: 11,
+      delivery: { state: 'working', iteration: 2 },
+    }
+    const module = {
+      inspect: vi.fn(async () => delivered),
+      beginNextIteration: vi.fn(async () => next),
+    } as unknown as SessionCheckoutModule
+    registerWorktreeCommand({ commands: { register: (value: typeof command) => { command = value } } } as never, module)
+    if (!command) throw new Error('command was not registered')
+
+    const result = await command.handler({ rawInput: 'next', agent: { session: { id: 'target-session' } } })
+
+    expect(result).toMatchObject({ kind: 'success', text: expect.stringContaining('iteration 2') })
+    expect(module.beginNextIteration).toHaveBeenCalledWith('target-session', 9)
   })
 
   test('finalize uses the persisted reviewed commit message and explicit retention', async () => {

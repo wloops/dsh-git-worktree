@@ -81,6 +81,8 @@ export interface WorktreeConsoleCapabilities {
   finalizePreview: boolean
   setRetention: boolean
   retryCleanup: boolean
+  /** Recreate a cleaned delivered owner's immutable cwd for iteration + 1. */
+  beginNextIteration: boolean
 }
 
 export interface WorktreeConsolePreviewRecovery {
@@ -237,6 +239,12 @@ export interface WorktreeConsoleRetryCleanupRequest {
   expectedRevision: number
 }
 
+export interface WorktreeConsoleBeginNextIterationRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+}
+
 export interface WorktreeConsoleMutationResponse {
   target: WorktreeConsoleTargetSummary
   changedFiles?: string[]
@@ -355,4 +363,5 @@ export interface WorktreeConsoleAdapter {
   finalizePreview(request: WorktreeConsoleFinalizePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   setRetention(request: WorktreeConsoleSetRetentionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   retryCleanup(request: WorktreeConsoleRetryCleanupRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  beginNextIteration(request: WorktreeConsoleBeginNextIterationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
 }

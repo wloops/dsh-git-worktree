@@ -39,6 +39,8 @@ Ready for Review
     │                         └─ Roll back and continue editing
     ├─ Skip Preview and commit directly
     └─ Discard
+    │
+    └─ After cleanup: start iteration + 1 in the same Session
 ```
 
 1. In a blank Local Session, turn on **Worktree** and confirm creation. The unsent text/image draft moves to the isolated Session; cancelling creates nothing.
@@ -49,8 +51,9 @@ Ready for Review
    - **Sync to Local for review**, then commit or roll the Preview back;
    - **Skip review and commit directly**;
    - **Discard** the task.
+6. After a successful commit and cleanup, the delivered Session can start the next iteration without losing its conversation. Harness keeps Session cwd immutable, so the plugin recreates only the previously cleaned, Host-owned managed path after strict identity checks.
 
-All acceptance paths revalidate the review revision, Worktree HEAD/fingerprint, and Local state before writing.
+All acceptance paths revalidate the review revision, Worktree HEAD/fingerprint, and Local state before writing. Retained or cleanup-pending environments must be cleaned first; starting another iteration never silently removes them.
 
 ## Requirements
 
@@ -86,6 +89,7 @@ Start Harness normally after installation and open a Git repository as the works
 | --- | --- |
 | `worktree_create` | Create a managed Worktree and reserve a distinct target Session without changing the current Session cwd |
 | `worktree_list` | List Worktrees visible to the current Session within the original project |
+| `worktree_begin_next_iteration` | Recreate a successfully cleaned delivered Session cwd for iteration + 1, preserving the same Session and conversation |
 | `worktree_ready_for_review` | Save the delivery report and stop for explicit human acceptance |
 
 Finish, Discard, and Remove are deliberately excluded from the model tool surface.
@@ -97,6 +101,7 @@ The Web UI provides the normal create, Preview, rollback, commit, retention, and
 ```text
 /worktree status
 /worktree list
+/worktree next
 /worktree finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual]
 /worktree finish <commit message>
 /worktree discard
@@ -109,12 +114,13 @@ The Web UI provides the normal create, Preview, rollback, commit, retention, and
 
 The implementation ports Domi's hardened checkout/apply foundations to Harness's authoritative Workspace and Session cwd model. Important invariants include:
 
-- Source and target Sessions always have different IDs.
-- A target is trusted only when its Harness Workspace resolves to the recorded managed root.
+- The initial Local source and isolated target use different Session IDs; later iterations keep the same isolated Session ID.
+- An active target is trusted only when its Harness Workspace resolves to the recorded managed root. A cleaned delivered target may temporarily reference its missing immutable cwd only when the Host path identity exactly matches the predecessor record.
 - One canonical Local project can have only one active Preview.
 - Preview receipts are persisted before Local writes so rollback/finalize can recover after a Host restart.
 - Preview, commit, and rollback paths use revision, HEAD, and fingerprint compare-and-swap checks; review-based paths also bind the review ID.
 - Cleanup verifies path identity, Git metadata, and the final fingerprint; uncertain residue is retained or quarantined.
+- Next iteration creation only reuses an absent path from a successfully cleaned predecessor, creates a new checkout record, and preserves the predecessor as recovery evidence.
 - Legacy records created by the old irreversible Apply flow are not automatically finished or discarded.
 
 For the detailed boundary and recovery design, see [Porting notes](docs/PORTING.md) and [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md).

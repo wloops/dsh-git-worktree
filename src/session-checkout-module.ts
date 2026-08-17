@@ -739,8 +739,12 @@ export function createSessionCheckoutModule(
       lines.push('Delivery state: Preview detached after Local drift. Do not mutate Local or the Worktree; the user must retry rollback, and Discard remains blocked until recovery succeeds.')
     } else if (record.delivery.state === 'working') {
       lines.push('Delivery state: Working. When implementation and validation are complete, put the complete report only in worktree_ready_for_review and call it as the final model tool. Do not duplicate that report in ordinary assistant prose; at most one short sentence may point the user to the bottom acceptance bar.')
+    } else if (record.delivery.state === 'delivered') {
+      lines.push('Delivery state: Delivered and cleaned. If the user requests new code or file changes in this conversation, call worktree_begin_next_iteration first; it safely recreates this Session immutable cwd for the next iteration. Do not call worktree_create.')
+    } else if (record.delivery.state === 'retained') {
+      lines.push('Delivery state: Retained. This frozen environment must be cleaned through the user controls before a next iteration can start.')
     } else {
-      lines.push(`Delivery state: ${record.delivery.state}. Treat this Session as terminal unless the user starts a new iteration.`)
+      lines.push(`Delivery state: ${record.delivery.state}. Treat this Session as terminal until cleanup or recovery completes.`)
     }
     return lines.join('\n')
   }
@@ -754,8 +758,15 @@ export function createSessionCheckoutModule(
           ? dependencies.registry.read().managedCheckouts[persisted.target.checkoutId]
           : undefined
         const workspace = session.projectId ? dependencies.lookup.getProject(session.projectId) : undefined
-        let isolatedWorkspaceMatches = false
-        if (record && workspace && dependencies.files.exists(workspace.root)) {
+        let isolatedWorkspaceMatches = Boolean(
+          record
+          && workspace
+          && record.phase === 'discarded'
+          && record.delivery.state === 'delivered'
+          && !dependencies.files.exists(workspace.root)
+          && resolvedPathsEqual(workspace.root, record.managedRoot),
+        )
+        if (!isolatedWorkspaceMatches && record && workspace && dependencies.files.exists(workspace.root)) {
           try {
             const workspaceRoot = await dependencies.files.canonicalize(workspace.root)
             isolatedWorkspaceMatches = pathsEqual(workspaceRoot, record.managedRoot)
@@ -888,6 +899,34 @@ export function createSessionCheckoutModule(
 
     for (const [checkoutId, current] of Object.entries(registry.managedCheckouts)) {
       if (current.phase === 'discarded') continue
+      if (
+        current.predecessorCheckoutId
+        && current.journal?.operation === 'create'
+        && (current.phase === 'preparing' || current.phase === 'recovery_required')
+        && !dependencies.files.exists(current.managedGitRoot)
+        && !dependencies.files.exists(current.managedRoot)
+      ) {
+        const predecessor = registry.managedCheckouts[current.predecessorCheckoutId]
+        const binding = registry.sessionBindings[current.ownerSessionId]
+        if (
+          predecessor?.phase === 'discarded'
+          && predecessor.delivery.state === 'delivered'
+          && binding?.target.kind === 'isolated'
+          && binding.target.checkoutId === current.checkoutId
+        ) {
+          delete registry.managedCheckouts[checkoutId]
+          registry.sessionBindings[current.ownerSessionId] = {
+            ...binding,
+            target: { kind: 'isolated', checkoutId: predecessor.checkoutId },
+            sourceRef: predecessor.sourceRef,
+            sourceOid: predecessor.baseOid,
+            revision: binding.revision + 1,
+          }
+          registry.revision += 1
+          changed = true
+          continue
+        }
+      }
       let record = current
       if (current.delivery.state === 'finalized') {
         // 兼容旧版本曾把 cleanup 残余错误持久化为 recovery_required；Commit 事实优先，继续收口资源即可。
@@ -2824,6 +2863,181 @@ export function createSessionCheckoutModule(
     return cleaned
   }
 
+  async function beginNextIterationTarget(
+    sessionId: string,
+    expectedRevision: number,
+  ): Promise<SessionTargetView> {
+    const session = requireSession(sessionId)
+    const registry = dependencies.registry.read()
+    const previousBinding = registry.sessionBindings[sessionId]
+    if (!previousBinding || previousBinding.target.kind !== 'isolated') {
+      throw new SessionCheckoutError('operation_not_allowed', '只有已交付的 Isolated Session 可以开始下一轮')
+    }
+    const predecessor = registry.managedCheckouts[previousBinding.target.checkoutId]
+    if (!predecessor) throw new SessionCheckoutError('checkout_missing', '上一轮 Worktree 记录不存在')
+    if (predecessor.ownerSessionId !== sessionId || previousBinding.ownerSessionId !== sessionId) {
+      throw new SessionCheckoutError('not_owner', '只有 owner Session 可以开始下一轮')
+    }
+    if (predecessor.revision !== expectedRevision) {
+      throw new SessionCheckoutError('stale_target', 'Worktree 状态已变化，请刷新后再开始下一轮')
+    }
+    if (predecessor.phase !== 'discarded' || predecessor.delivery.state !== 'delivered') {
+      throw new SessionCheckoutError('operation_not_allowed', '只有已成功清理的交付状态可以开始下一轮')
+    }
+    if (!session.projectId) throw new SessionCheckoutError('project_not_found', '当前 Session 尚未关联 Workspace')
+    const ownerWorkspace = dependencies.lookup.getProject(session.projectId)
+    if (!ownerWorkspace || !resolvedPathsEqual(ownerWorkspace.root, predecessor.managedRoot)) {
+      throw new SessionCheckoutError('project_mismatch', '当前 Session 的 immutable cwd 与上一轮 Worktree 不一致')
+    }
+    if (dependencies.files.exists(predecessor.managedGitRoot) || dependencies.files.exists(predecessor.managedRoot)) {
+      throw new SessionCheckoutError('checkout_mismatch', '上一轮 Worktree 路径已重新出现，拒绝覆盖未知内容')
+    }
+
+    const localProject = dependencies.lookup.getProject(predecessor.projectId)
+    if (!localProject || !dependencies.files.exists(localProject.root) || !dependencies.files.exists(predecessor.localRoot)) {
+      throw new SessionCheckoutError('project_root_missing', '原始 Local 项目已不可用，不能开始下一轮')
+    }
+    const canonicalProjectRoot = await dependencies.files.canonicalize(localProject.root)
+    const canonicalLocalRoot = await dependencies.files.canonicalize(predecessor.localRoot)
+    if (!pathsEqual(canonicalProjectRoot, canonicalLocalRoot)) {
+      throw new SessionCheckoutError('project_mismatch', '原始 Local 项目身份已变化')
+    }
+    const snapshot = await dependencies.git.inspect(canonicalLocalRoot)
+    if (!snapshot || !pathsEqual(snapshot.commonDir, predecessor.gitCommonDir)) {
+      throw new SessionCheckoutError('checkout_mismatch', '原始 Local Git 身份已变化')
+    }
+    const projectRelativePath = relative(snapshot.root, canonicalLocalRoot)
+    if (projectRelativePath.startsWith('..') || isAbsolute(projectRelativePath)) {
+      throw new SessionCheckoutError('checkout_mismatch', '项目根目录不在其 Git checkout 内')
+    }
+    if (!resolvedPathsEqual(resolve(predecessor.managedGitRoot, projectRelativePath), predecessor.managedRoot)) {
+      throw new SessionCheckoutError('checkout_mismatch', '上一轮 managed project 路径无法从 Local 身份重建')
+    }
+
+    const managedContainer = dirname(predecessor.managedGitRoot)
+    if (!dependencies.files.exists(managedContainer)) dependencies.files.ensureDirectory(managedContainer)
+    const containerIdentity = await dependencies.files.inspectDirectoryIdentity(managedContainer)
+    if (!containerIdentity) throw new SessionCheckoutError('checkout_mismatch', 'Worktree 容器不是可信目录')
+    const canonicalContainer = await dependencies.files.canonicalize(managedContainer)
+    if (!resolvedPathsEqual(canonicalContainer, managedContainer)) {
+      throw new SessionCheckoutError('checkout_mismatch', 'Worktree 容器路径已被重定向')
+    }
+
+    const checkoutId = dependencies.createCheckoutId()
+    const iteration = predecessor.delivery.iteration + 1
+    const record: ManagedCheckoutRecord = {
+      checkoutId,
+      predecessorCheckoutId: predecessor.checkoutId,
+      projectId: predecessor.projectId,
+      projectName: predecessor.projectName,
+      ownerSessionId: sessionId,
+      ...(predecessor.sourceSessionId ? { sourceSessionId: predecessor.sourceSessionId } : {}),
+      localRoot: canonicalLocalRoot,
+      managedRoot: predecessor.managedRoot,
+      managedGitRoot: predecessor.managedGitRoot,
+      gitCommonDir: snapshot.commonDir,
+      gitDir: '',
+      baseOid: snapshot.headOid,
+      sourceRef: snapshot.headRef,
+      phase: 'preparing',
+      delivery: { state: 'working', iteration },
+      journal: {
+        operation: 'create',
+        operationId: dependencies.createCheckoutId(),
+        step: 'creating_worktree',
+        startedAt: Date.now(),
+      },
+      revision: predecessor.revision + 1,
+    }
+    const binding: SessionBindingRecord = {
+      sessionId,
+      projectId: predecessor.projectId,
+      projectName: predecessor.projectName,
+      target: { kind: 'isolated', checkoutId },
+      ownerSessionId: sessionId,
+      sourceRef: snapshot.headRef,
+      sourceOid: snapshot.headOid,
+      revision: previousBinding.revision + 1,
+    }
+    registry.sessionBindings[sessionId] = binding
+    registry.managedCheckouts[checkoutId] = record
+    registry.revision += 1
+    dependencies.registry.write(registry)
+
+    try {
+      await dependencies.git.createDetachedWorktree(snapshot.root, predecessor.managedGitRoot, snapshot.headOid)
+      const canonicalManagedGitRoot = await dependencies.files.canonicalize(predecessor.managedGitRoot)
+      const canonicalManagedRoot = await dependencies.files.canonicalize(predecessor.managedRoot)
+      const containerAfterCreate = await dependencies.files.inspectDirectoryIdentity(managedContainer)
+      const created = await dependencies.git.inspect(canonicalManagedRoot)
+      if (
+        !containerAfterCreate
+        || !directoryIdentitiesEqual(containerIdentity, containerAfterCreate)
+        || !resolvedPathsEqual(canonicalManagedGitRoot, predecessor.managedGitRoot)
+        || !resolvedPathsEqual(canonicalManagedRoot, predecessor.managedRoot)
+        || !created
+        || !pathsEqual(created.root, canonicalManagedGitRoot)
+        || !pathsEqual(created.commonDir, snapshot.commonDir)
+        || created.headOid !== snapshot.headOid
+      ) {
+        throw new SessionCheckoutError('checkout_mismatch', '下一轮 checkout 的 Git 身份不匹配')
+      }
+      const readyRegistry = dependencies.registry.read()
+      const current = readyRegistry.managedCheckouts[checkoutId]
+      if (!current || current.phase !== 'preparing') {
+        throw new SessionCheckoutError('stale_target', '下一轮 Worktree 创建期间状态已变化')
+      }
+      readyRegistry.managedCheckouts[checkoutId] = {
+        ...current,
+        managedRoot: canonicalManagedRoot,
+        managedGitRoot: canonicalManagedGitRoot,
+        gitDir: created.gitDir,
+        phase: 'ready',
+        journal: null,
+        revision: current.revision + 1,
+      }
+      readyRegistry.revision += 1
+      dependencies.registry.write(readyRegistry)
+      return inspectIsolated(binding)
+    } catch (error) {
+      let partialCheckout: GitCheckoutSnapshot | null = null
+      try {
+        if (dependencies.files.exists(join(predecessor.managedGitRoot, '.git'))) {
+          partialCheckout = await dependencies.git.inspect(predecessor.managedRoot)
+        }
+      } catch {
+        partialCheckout = null
+      }
+      if (partialCheckout) {
+        const current = dependencies.registry.read().managedCheckouts[checkoutId]
+        if (current) markRecoveryRequired(current)
+        throw error
+      }
+
+      let residueRemoved = false
+      try {
+        residueRemoved = dependencies.files.removeEmptyDirectoryTree(predecessor.managedGitRoot)
+      } catch {
+        residueRemoved = false
+      }
+      if (!residueRemoved) {
+        const current = dependencies.registry.read().managedCheckouts[checkoutId]
+        if (current) markRecoveryRequired(current)
+        throw new SessionCheckoutError('recovery_required', '下一轮 Worktree 创建失败且残余目录包含未知内容，已保留现场')
+      }
+
+      const failedRegistry = dependencies.registry.read()
+      delete failedRegistry.managedCheckouts[checkoutId]
+      const currentBinding = failedRegistry.sessionBindings[sessionId]
+      if (currentBinding?.target.kind === 'isolated' && currentBinding.target.checkoutId === checkoutId) {
+        failedRegistry.sessionBindings[sessionId] = { ...previousBinding, revision: previousBinding.revision + 1 }
+      }
+      failedRegistry.revision += 1
+      dependencies.registry.write(failedRegistry)
+      throw new SessionCheckoutError('git_operation_failed', error instanceof Error ? error.message : String(error))
+    }
+  }
+
   async function bindTarget(
     sessionId: string,
     choice: SessionTargetBindChoice,
@@ -3119,10 +3333,9 @@ export function createSessionCheckoutModule(
       if (!record) throw new SessionCheckoutError('checkout_missing', 'Isolated Target 创建后记录缺失')
       return { targetSessionId, managedRoot: record.managedRoot, target }
     }),
-    beginNextIteration: (sessionId) => {
-      const requestStartedAt = Date.now()
-      return withBindingLock(() => bindTarget(sessionId, { kind: 'isolated' }, 0, requestStartedAt))
-    },
+    beginNextIteration: (sessionId, expectedRevision) => withBindingLock(
+      () => beginNextIterationTarget(sessionId, expectedRevision),
+    ),
     markReadyForReview: (sessionId, input) => withBindingLock(
       () => markReadyForReviewTarget(sessionId, input),
     ),

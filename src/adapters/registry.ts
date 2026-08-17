@@ -181,6 +181,7 @@ function isJournal(value: unknown): boolean {
 function isManagedCheckout(value: unknown): boolean {
   return isRecord(value)
     && typeof value.checkoutId === 'string'
+    && (value.predecessorCheckoutId === undefined || typeof value.predecessorCheckoutId === 'string')
     && typeof value.projectId === 'string'
     && typeof value.projectName === 'string'
     && typeof value.ownerSessionId === 'string'

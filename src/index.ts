@@ -92,8 +92,8 @@ export interface SessionCheckoutModule {
   bind(sessionId: string, choice: SessionTargetBindChoice): Promise<SessionTargetView>
   /** Reserve a distinct owner session and checkout without changing the source session cwd/identity. */
   createIsolatedTarget(sourceSessionId: string, targetSessionId: string): Promise<IsolatedTargetLaunch>
-  /** Lazily create the next isolated checkout when a delivered owner session needs code changes. */
-  beginNextIteration(sessionId: string): Promise<SessionTargetView>
+  /** Recreate a cleaned delivered owner's immutable cwd as the next isolated iteration. */
+  beginNextIteration(sessionId: string, expectedRevision: number): Promise<SessionTargetView>
   markReadyForReview(sessionId: string, input: MarkReadyForReviewInput): Promise<SessionTargetView>
   operate(input: SessionCheckoutOperation): Promise<SessionCheckoutOperationResult>
   listManagedWorktrees(input?: ListManagedWorktreesInput): Promise<ManagedWorktreeSummaryView[]>

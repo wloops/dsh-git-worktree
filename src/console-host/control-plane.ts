@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { resolve } from 'node:path'
 import type {
+  WorktreeConsoleBeginNextIterationRequest,
   WorktreeConsoleCreateResponse,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleDiscardRequest,
@@ -58,6 +60,7 @@ export interface WorktreeConsoleControlPlane {
   finalizePreview(request: WorktreeConsoleFinalizePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   setRetention(request: WorktreeConsoleSetRetentionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   retryCleanup(request: WorktreeConsoleRetryCleanupRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  beginNextIteration(request: WorktreeConsoleBeginNextIterationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
 }
 
 function recordOf(registry: SessionCheckoutRegistryPort, checkoutId: string): ManagedCheckoutRecord {
@@ -139,15 +142,23 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     }
     const session = options.lookup.getSession(sessionId)
     const project = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
-    if (project === undefined || !options.files.exists(project.root)) {
+    if (project === undefined) {
       throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
     }
-    const workspaceRoot = await options.files.canonicalize(project.root)
     const expectedRoot = record.ownerSessionId === sessionId ? record.managedRoot : record.localRoot
-    const normalizedWorkspace = process.platform === 'win32' ? workspaceRoot.toLowerCase() : workspaceRoot
-    const normalizedExpected = process.platform === 'win32' ? expectedRoot.toLowerCase() : expectedRoot
-    if (normalizedWorkspace !== normalizedExpected) {
-      throw domainError('project_mismatch', '当前 Session cwd 与 Worktree 授权边界不一致')
+    const cleanedOwnerCwd = record.ownerSessionId === sessionId
+      && record.phase === 'discarded'
+      && record.delivery.state === 'delivered'
+      && !options.files.exists(project.root)
+      && sameLocalRoot(resolve(project.root), resolve(expectedRoot))
+    if (!cleanedOwnerCwd) {
+      if (!options.files.exists(project.root)) {
+        throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
+      }
+      const workspaceRoot = await options.files.canonicalize(project.root)
+      if (!sameLocalRoot(workspaceRoot, expectedRoot)) {
+        throw domainError('project_mismatch', '当前 Session cwd 与 Worktree 授权边界不一致')
+      }
     }
     if (record.phase !== 'discarded') {
       const visible = await options.module.listManagedWorktreesForSession(sessionId, { checkoutId })
@@ -497,6 +508,45 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         action: 'retry_cleanup',
       })
       return mutationResponse(request.sessionId, request.checkoutId)
+    }),
+
+    beginNextIteration: request => outcome(async () => {
+      const predecessor = recordOf(options.registry, request.checkoutId)
+      if (predecessor.ownerSessionId !== request.sessionId) {
+        throw domainError('not_owner', '只有 owner Session 可以开始下一轮')
+      }
+      if (predecessor.revision !== request.expectedRevision) {
+        throw domainError('stale_target', 'Worktree 状态已变化，请刷新后再开始下一轮')
+      }
+      if (predecessor.phase !== 'discarded' || predecessor.delivery.state !== 'delivered') {
+        throw domainError('operation_not_allowed', '只有已成功清理的交付状态可以开始下一轮')
+      }
+      const session = options.lookup.getSession(request.sessionId)
+      const workspace = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
+      if (!workspace || !sameLocalRoot(resolve(workspace.root), resolve(predecessor.managedRoot))) {
+        throw domainError('project_mismatch', '当前 Session 的 immutable cwd 与上一轮 Worktree 不一致')
+      }
+
+      const target = await options.module.beginNextIteration(request.sessionId, request.expectedRevision)
+      if (target.checkout.kind !== 'isolated' || target.delivery?.state !== 'working') {
+        throw domainError('checkout_mismatch', '下一轮 Worktree 未进入 working 状态')
+      }
+      const record = recordOf(options.registry, target.checkout.id)
+      if (
+        record.predecessorCheckoutId !== predecessor.checkoutId
+        || record.ownerSessionId !== request.sessionId
+        || !sameLocalRoot(record.managedRoot, predecessor.managedRoot)
+      ) {
+        throw domainError('checkout_mismatch', '下一轮 Worktree 的 lineage 或 cwd 身份不一致')
+      }
+      const observed = await observe(record)
+      return {
+        target: projectRecord(record, request.sessionId, {
+          snapshot: observed.snapshot,
+          dirty: observed.dirty,
+          ownerSessionAvailable: true,
+        }),
+      }
     }),
   }
 }

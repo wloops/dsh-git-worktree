@@ -32,6 +32,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'gitWorktree/finalizePreview': (agentId: string, checkoutId: string, expectedRevision: number, expectedReviewId: string, commitMessage: string, retention: WorktreeRetentionMode) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
     'gitWorktree/setRetention': (agentId: string, checkoutId: string, expectedRevision: number, retention: Exclude<WorktreeRetentionMode, 'cleanup'>) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
     'gitWorktree/retryCleanup': (agentId: string, checkoutId: string, expectedRevision: number) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
+    'gitWorktree/beginNextIteration': (agentId: string, checkoutId: string, expectedRevision: number) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
   }
 
   interface TypertRemoteNamespaceMap {
