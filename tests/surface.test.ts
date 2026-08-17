@@ -28,11 +28,17 @@ const readyTarget: SessionTargetView = {
 }
 
 describe('public surfaces', () => {
-  test('model tools expose creation, scoped listing, and Ready for Review only', () => {
-    const names: string[] = []
-    const ctx = { tools: { register: (tool: { name: string }) => { names.push(tool.name) } } }
+  test('model tools expose creation, scoped listing, and a schema-valid Ready for Review result', () => {
+    const tools: Array<{
+      name: string
+      output?: { schema?: { properties?: Record<string, { type?: string; required?: boolean }> } }
+    }> = []
+    const ctx = { tools: { register: (tool: (typeof tools)[number]) => { tools.push(tool) } } }
     registerTools(ctx as never, {} as SessionCheckoutModule)
-    expect(names).toEqual(['worktree_create', 'worktree_list', 'worktree_ready_for_review'])
+
+    expect(tools.map(tool => tool.name)).toEqual(['worktree_create', 'worktree_list', 'worktree_ready_for_review'])
+    const readyTool = tools.find(tool => tool.name === 'worktree_ready_for_review')
+    expect(readyTool?.output?.schema?.properties?.iteration).toEqual({ type: 'number' })
   })
 
   test('finalize uses the persisted reviewed commit message and explicit retention', async () => {

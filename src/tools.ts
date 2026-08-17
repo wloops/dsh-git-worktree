@@ -166,6 +166,7 @@ export function registerTools(ctx: Context, module: SessionCheckoutModule): void
           state: { type: 'string', required: true },
           reviewId: { type: 'string', required: true },
           revision: { type: 'number', required: true },
+          iteration: { type: 'number', required: true },
           changedFiles: { type: 'array', required: true, items: { type: 'string' } },
         },
       },
