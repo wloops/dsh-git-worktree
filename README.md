@@ -155,7 +155,7 @@ pnpm run dev:dsh -- --repo G:/path/to/repo --port 4090 --profile web
 pnpm run dev:dsh:remove
 ```
 
-If a sibling DeepSeek Harness source checkout is found, `dev:dsh` uses it automatically. Override discovery with `DSH_HARNESS_ROOT` or `--harness <path>`.
+If a sibling DeepSeek Harness source checkout is found, `dev:dsh` uses it automatically. Select a checkout in any other location with `DSH_HARNESS_ROOT` or `--harness <path>`. Once a source checkout is selected, plugin installation, config validation, removal, and Web startup all use that source CLI without requiring a globally installed `dsh`; only runs without a source checkout fall back to `dsh` on PATH.
 
 ## Current limitations
 

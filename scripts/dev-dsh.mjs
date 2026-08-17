@@ -27,14 +27,16 @@ function printUsage() {
 
 Usage:
   pnpm run dev:dsh -- [--profile web] [--repo <git-root>] [--port 3081] [--harness <path>]
-  pnpm run dev:dsh:install -- [--profile web]
-  pnpm run dev:dsh:smoke -- [--profile web]
-  pnpm run dev:dsh:remove -- [--profile web]
+  pnpm run dev:dsh:install -- [--profile web] [--harness <path>]
+  pnpm run dev:dsh:smoke -- [--profile web] [--harness <path>]
+  pnpm run dev:dsh:remove -- [--profile web] [--harness <path>]
 
 The install path is a local tarball under the OS temporary directory. Nothing is
 published to npm or pushed to Git. A sibling Harness source checkout is used
-when available; override with DSH_HARNESS_ROOT or --harness. Without --repo, a
-marker-protected disposable Git repository is created at:
+when available; an arbitrary checkout can be selected with DSH_HARNESS_ROOT or
+--harness. Every profile and launch command then uses that source CLI instead of
+a globally installed dsh executable. Without --repo, a marker-protected
+disposable Git repository is created at:
   ${defaults.repo}
 `)
 }
@@ -45,24 +47,27 @@ try {
     process.exitCode = 0
   } else {
     const options = parseDevDshArgs(process.argv.slice(2), defaults)
+    const runtime = {
+      projectRoot,
+      profile: options.profile,
+      harnessRoot: options.harnessRoot,
+    }
     if (options.mode === 'install') {
       const installed = installLocalSnapshot({
-        projectRoot,
-        profile: options.profile,
+        ...runtime,
         cacheRoot,
       })
       console.log(`\nLocal snapshot installed in profile "${options.profile}".`)
       console.log(`Archive retained for profile reproducibility: ${installed.archivePath}`)
     } else if (options.mode === 'smoke') {
-      smokeLocalSnapshot({ projectRoot, profile: options.profile })
+      smokeLocalSnapshot(runtime)
       console.log(`Profile "${options.profile}" composes dsh-git-worktree.`)
     } else if (options.mode === 'remove') {
-      removeLocalSnapshot({ projectRoot, profile: options.profile, cacheRoot })
+      removeLocalSnapshot({ ...runtime, cacheRoot })
       console.log(`Removed dsh-git-worktree from profile "${options.profile}" and cleared local archives.`)
     } else {
       const installed = installLocalSnapshot({
-        projectRoot,
-        profile: options.profile,
+        ...runtime,
         cacheRoot,
       })
       const fixture = ensureDevFixture(options.repo, { explicit: options.repoExplicit })

@@ -210,8 +210,12 @@ export function discoverHarnessRoot(projectRoot, environment = process.env) {
   try {
     const commonDir = git(projectRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
     const localProjectRoot = dirname(resolve(projectRoot, commonDir))
-    const candidate = join(dirname(localProjectRoot), 'DeepSeek', 'deepseek-harness')
-    return isHarnessRoot(candidate) ? candidate : undefined
+    const parent = dirname(localProjectRoot)
+    const candidates = [
+      join(parent, 'deepseek-harness'),
+      join(parent, 'DeepSeek', 'deepseek-harness'),
+    ]
+    return candidates.find(isHarnessRoot)
   } catch {
     return undefined
   }
@@ -221,32 +225,44 @@ export function executable(name, platform = process.platform) {
   return platform === 'win32' ? `${name}.cmd` : name
 }
 
-export function createDshLaunch(options) {
+export function createDshInvocation(options) {
+  const cwd = options.cwd ?? options.projectRoot
+  const args = options.args ?? []
   if (!options.harnessRoot) {
     return {
       command: executable('dsh', options.platform),
-      args: ['--profile', options.profile, '--port', String(options.port)],
-      cwd: options.workspaceRoot,
+      args,
+      cwd,
       source: false,
     }
   }
-  if (!isHarnessRoot(options.harnessRoot)) {
-    throw new Error(`Harness source checkout is invalid: ${options.harnessRoot}`)
+  const harnessRoot = resolve(options.harnessRoot)
+  if (!isHarnessRoot(harnessRoot)) {
+    throw new Error(`Harness source checkout is invalid: ${harnessRoot}`)
   }
   return {
     command: executable('pnpm', options.platform),
     args: [
-      '--dir', options.harnessRoot,
+      '--dir', harnessRoot,
       'exec', 'node', '--import', 'tsx/esm',
       join(options.projectRoot, 'scripts', 'dsh-source-runner.mjs'),
-      options.workspaceRoot,
-      join(options.harnessRoot, 'apps', 'cli', 'src', 'bin.ts'),
-      '--profile', options.profile,
-      '--port', String(options.port),
+      cwd,
+      join(harnessRoot, 'apps', 'cli', 'src', 'bin.ts'),
+      ...args,
     ],
     cwd: options.projectRoot,
     source: true,
   }
+}
+
+export function createDshLaunch(options) {
+  return createDshInvocation({
+    projectRoot: options.projectRoot,
+    harnessRoot: options.harnessRoot,
+    platform: options.platform,
+    cwd: options.workspaceRoot,
+    args: ['--profile', options.profile, '--port', String(options.port)],
+  })
 }
 
 function assertWindowsCommandSafe(command, args) {
@@ -371,11 +387,46 @@ function repairMissingCurrentProfileArchive(options, archivePath) {
   copyFileSync(archivePath, previous)
 }
 
+function assertDshRuntimeAvailable(options) {
+  if (options.harnessRoot) {
+    createDshInvocation({
+      projectRoot: options.projectRoot,
+      harnessRoot: options.harnessRoot,
+      platform: options.platform,
+      args: [],
+    })
+    return
+  }
+  if (options.run) return
+  try {
+    runProcess(executable('dsh', options.platform), ['--version'], { capture: true })
+  } catch (cause) {
+    throw new Error(
+      'No Harness source checkout was selected and the installed dsh CLI is unavailable. Pass --harness <path>, set DSH_HARNESS_ROOT, or install dsh on PATH.',
+      { cause },
+    )
+  }
+}
+
+function runDsh(options, args, runOptions = {}) {
+  const invocation = createDshInvocation({
+    projectRoot: options.projectRoot,
+    harnessRoot: options.harnessRoot,
+    platform: options.platform,
+    cwd: runOptions.cwd ?? options.projectRoot,
+    args,
+  })
+  return (options.run ?? runProcess)(invocation.command, invocation.args, {
+    cwd: invocation.cwd,
+    ...(runOptions.capture === true ? { capture: true } : {}),
+  })
+}
+
 /** Build, pack and install only the current local snapshot. No registry publish occurs. */
 export function installLocalSnapshot(options) {
   const run = options.run ?? runProcess
   const pnpm = executable('pnpm', options.platform)
-  const dsh = executable('dsh', options.platform)
+  assertDshRuntimeAvailable(options)
   mkdirSync(options.cacheRoot, { recursive: true })
 
   if (!existsSync(join(options.projectRoot, 'node_modules'))) {
@@ -413,15 +464,12 @@ export function installLocalSnapshot(options) {
   // replace it. Repair only our own missing cache path with the new snapshot;
   // after the add succeeds the obsolete recovery copy becomes collectible.
   repairMissingCurrentProfileArchive(options, archivePath)
-  run(dsh, ['plugin', '--profile', options.profile, 'add', archivePath], { cwd: options.projectRoot })
+  runDsh(options, ['plugin', '--profile', options.profile, 'add', archivePath])
   const referencedArchive = profileArchiveReference(options)
   if (comparablePath(referencedArchive) !== comparablePath(archivePath)) {
     throw new Error(`DSH profile ${options.profile} still references ${referencedArchive}; preserving old and new archives for recovery.`)
   }
-  const dump = run(dsh, ['--profile', options.profile, '--dump-config'], {
-    cwd: options.projectRoot,
-    capture: true,
-  }).stdout
+  const dump = runDsh(options, ['--profile', options.profile, '--dump-config'], { capture: true }).stdout
   if (!dump.includes('dsh-git-worktree')) {
     throw new Error(`Profile ${options.profile} installed the tarball but did not compose dsh-git-worktree.`)
   }
@@ -430,10 +478,8 @@ export function installLocalSnapshot(options) {
 }
 
 export function removeLocalSnapshot(options) {
-  const run = options.run ?? runProcess
-  run(executable('dsh', options.platform), [
-    'plugin', '--profile', options.profile, 'remove', 'dsh-git-worktree',
-  ], { cwd: options.projectRoot })
+  assertDshRuntimeAvailable(options)
+  runDsh(options, ['plugin', '--profile', options.profile, 'remove', 'dsh-git-worktree'])
   if (existsSync(options.cacheRoot)) {
     for (const entry of readdirSync(options.cacheRoot)) {
       if (/^dsh-git-worktree-\d+\.tgz$/.test(entry)) rmSync(join(options.cacheRoot, entry), { force: true })
@@ -442,10 +488,8 @@ export function removeLocalSnapshot(options) {
 }
 
 export function smokeLocalSnapshot(options) {
-  const run = options.run ?? runProcess
-  const dump = run(executable('dsh', options.platform), [
-    '--profile', options.profile, '--dump-config',
-  ], { cwd: options.projectRoot, capture: true }).stdout
+  assertDshRuntimeAvailable(options)
+  const dump = runDsh(options, ['--profile', options.profile, '--dump-config'], { capture: true }).stdout
   if (!dump.includes('dsh-git-worktree')) {
     throw new Error(`Profile ${options.profile} does not compose dsh-git-worktree.`)
   }

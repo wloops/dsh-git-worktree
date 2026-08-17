@@ -155,7 +155,7 @@ pnpm run dev:dsh -- --repo G:/path/to/repo --port 4090 --profile web
 pnpm run dev:dsh:remove
 ```
 
-如果发现同级 DeepSeek Harness 源码 checkout，`dev:dsh` 会自动优先使用；也可以通过 `DSH_HARNESS_ROOT` 或 `--harness <path>` 覆盖探测结果。
+如果发现同级 DeepSeek Harness 源码 checkout，`dev:dsh` 会自动优先使用；源码位于任意其他目录时，可以通过 `DSH_HARNESS_ROOT` 或 `--harness <path>` 指定。选择源码 checkout 后，插件安装、配置验证、移除和 Web 启动都会使用该源码 CLI，不再要求全局安装 `dsh`；只有未选择源码 checkout 时才回退到 PATH 中的 `dsh`。
 
 ## 当前限制
 
