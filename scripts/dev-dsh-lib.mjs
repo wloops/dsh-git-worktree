@@ -199,6 +199,11 @@ function isHarnessRoot(path) {
     && existsSync(join(path, 'apps', 'cli', 'src', 'bin.ts'))
 }
 
+function isHarnessSourceReady(path) {
+  return isHarnessRoot(path)
+    && existsSync(join(path, 'node_modules', 'tsx', 'package.json'))
+}
+
 export function discoverHarnessRoot(projectRoot, environment = process.env) {
   if (environment.DSH_HARNESS_ROOT) {
     const configured = resolve(environment.DSH_HARNESS_ROOT)
@@ -213,9 +218,11 @@ export function discoverHarnessRoot(projectRoot, environment = process.env) {
     const parent = dirname(localProjectRoot)
     const candidates = [
       join(parent, 'deepseek-harness'),
+      join(dirname(parent), 'deepseek-harness'),
       join(parent, 'DeepSeek', 'deepseek-harness'),
     ]
-    return candidates.find(isHarnessRoot)
+    const validCandidates = candidates.filter(isHarnessRoot)
+    return validCandidates.find(isHarnessSourceReady) ?? validCandidates[0]
   } catch {
     return undefined
   }
@@ -239,6 +246,11 @@ export function createDshInvocation(options) {
   const harnessRoot = resolve(options.harnessRoot)
   if (!isHarnessRoot(harnessRoot)) {
     throw new Error(`Harness source checkout is invalid: ${harnessRoot}`)
+  }
+  if (!isHarnessSourceReady(harnessRoot)) {
+    throw new Error(
+      `Harness source checkout is not prepared: ${harnessRoot}. Run pnpm --dir "${harnessRoot}" install before dev preview.`,
+    )
   }
   return {
     command: executable('pnpm', options.platform),

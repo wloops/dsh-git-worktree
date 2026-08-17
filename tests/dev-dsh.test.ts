@@ -22,10 +22,14 @@ function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 }
 
-function createHarnessRoot(root: string): string {
+function createHarnessRoot(root: string, options: { ready?: boolean } = {}): string {
   mkdirSync(join(root, 'apps', 'cli', 'src'), { recursive: true })
   writeFileSync(join(root, 'package.json'), '{"private":true}')
   writeFileSync(join(root, 'apps', 'cli', 'src', 'bin.ts'), '')
+  if (options.ready !== false) {
+    mkdirSync(join(root, 'node_modules', 'tsx'), { recursive: true })
+    writeFileSync(join(root, 'node_modules', 'tsx', 'package.json'), '{"name":"tsx"}')
+  }
   return root
 }
 
@@ -97,21 +101,23 @@ describe('local DSH development workflow', () => {
     expect(runProcess(executable('pnpm'), ['--version'], { capture: true }).stdout).toMatch(/^\d+\.\d+\.\d+/)
   })
 
-  test('Given Harness beside the Local checkout When discovery runs from Local or a linked Worktree Then the source checkout is found', () => {
-    const parent = mkdtempSync(join(tmpdir(), 'dsh-harness-discovery-'))
-    const localProjectRoot = join(parent, 'dsh-git-worktree')
-    mkdirSync(localProjectRoot)
+  test('Given a nearer unprepared Harness and an upper ready Harness When discovery runs from Local or a linked Worktree Then the ready checkout wins', () => {
+    const layoutRoot = mkdtempSync(join(tmpdir(), 'dsh-harness-discovery-'))
+    const projectParent = join(layoutRoot, 'my')
+    const localProjectRoot = join(projectParent, 'dsh-git-worktree')
+    mkdirSync(localProjectRoot, { recursive: true })
     git(localProjectRoot, ['init'])
     writeFileSync(join(localProjectRoot, 'tracked.txt'), 'base\n')
     git(localProjectRoot, ['add', 'tracked.txt'])
     git(localProjectRoot, ['-c', 'user.name=DSH Test', '-c', 'user.email=dsh-test@example.local', 'commit', '-m', 'test: base'])
-    const harnessRoot = createHarnessRoot(join(parent, 'deepseek-harness'))
-    const linkedRoot = join(parent, 'managed-worktrees', 'task')
-    mkdirSync(join(parent, 'managed-worktrees'))
+    createHarnessRoot(join(projectParent, 'deepseek-harness'), { ready: false })
+    const readyHarnessRoot = createHarnessRoot(join(layoutRoot, 'deepseek-harness'))
+    const linkedRoot = join(projectParent, 'managed-worktrees', 'task')
+    mkdirSync(join(projectParent, 'managed-worktrees'))
     git(localProjectRoot, ['worktree', 'add', '--detach', linkedRoot])
 
-    expect(discoverHarnessRoot(localProjectRoot, {})).toBe(harnessRoot)
-    expect(discoverHarnessRoot(linkedRoot, {})).toBe(harnessRoot)
+    expect(discoverHarnessRoot(localProjectRoot, {})).toBe(readyHarnessRoot)
+    expect(discoverHarnessRoot(linkedRoot, {})).toBe(readyHarnessRoot)
   })
 
   test('Given DSH_HARNESS_ROOT points anywhere When discovery runs Then the explicit source checkout wins', () => {
@@ -119,6 +125,19 @@ describe('local DSH development workflow', () => {
     const harnessRoot = createHarnessRoot(join(mkdtempSync(join(tmpdir(), 'arbitrary-parent-')), 'Harness 源码'))
 
     expect(discoverHarnessRoot(projectRoot, { DSH_HARNESS_ROOT: harnessRoot })).toBe(harnessRoot)
+  })
+
+  test('Given an explicit unprepared Harness When installing Then the workflow fails before building with an actionable command', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-unprepared-source-'))
+    const harnessRoot = createHarnessRoot(join(root, 'deepseek-harness'), { ready: false })
+    const cacheRoot = join(root, 'cache')
+    const run = vi.fn(() => ({ stdout: '' }))
+
+    expect(() => installLocalSnapshot({
+      projectRoot: join(root, 'plugin'), harnessRoot, profile: 'web', cacheRoot, run,
+    })).toThrow(`pnpm --dir "${harnessRoot}" install`)
+    expect(run).not.toHaveBeenCalled()
+    expect(existsSync(cacheRoot)).toBe(false)
   })
 
   test('Given an invalid port or unknown option When parsing Then the workflow fails before executing commands', () => {

@@ -32,11 +32,12 @@ Usage:
   pnpm run dev:dsh:remove -- [--profile web] [--harness <path>]
 
 The install path is a local tarball under the OS temporary directory. Nothing is
-published to npm or pushed to Git. A sibling Harness source checkout is used
-when available; an arbitrary checkout can be selected with DSH_HARNESS_ROOT or
---harness. Every profile and launch command then uses that source CLI instead of
-a globally installed dsh executable. Without --repo, a marker-protected
-disposable Git repository is created at:
+published to npm or pushed to Git. Nearby Harness source checkouts are scanned
+and a candidate with node_modules/tsx is preferred; an arbitrary checkout can be
+selected with DSH_HARNESS_ROOT or --harness. Every profile and launch command
+then uses that source CLI instead of a globally installed dsh executable. An
+explicit checkout without dependencies fails early with its pnpm install command.
+Without --repo, a marker-protected disposable Git repository is created at:
   ${defaults.repo}
 `)
 }
