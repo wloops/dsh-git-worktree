@@ -1,115 +1,179 @@
 # dsh-git-worktree
 
-An **experimental** Git worktree Session Target plugin for DeepSeek Harness. It ports Domi's hardened checkout/apply engine and adapts the product flow to Harness's authoritative Workspace/Session cwd model.
+[![npm](https://img.shields.io/npm/v/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
+[![CI](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml/badge.svg)](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Current scope: real isolated Sessions, a Harness-native Session Target/Worktree Console, reversible Local Preview, accept/rollback/direct-finish flows, a project-scoped acceptance slot, durable recovery receipts, retention, crash recovery, fingerprint CAS, and conservative cleanup. It is not yet Domi's cross-project global Worktree Manager.
+**Run coding tasks in real Git worktrees, review the result in Local, and commit only after explicit human approval.**
 
-## How it works
+`dsh-git-worktree` is an experimental [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) plugin that turns a Git worktree into an isolated Session Target. The agent works in a separate checkout and Session; the original Local checkout stays under human control.
 
-1. On a blank/new Local Session, clicking the **Worktree** switch first opens a confirmation dialog. Cancel creates nothing; confirm freezes the Local composer, creates the isolated target, transfers the unsent text/image draft, and opens the target. The user still sends the first prompt through the target's native composer, so no prompt is admitted to Local.
-2. Existing Local Sessions can also create a target through the model-owned `worktree_create` ToolView. The former project-scoped **Worktree** tab is temporarily not mounted while the primary flow is stabilised.
-3. The plugin creates a unique detached Worktree in a sibling container (with a plugin-state fallback) and reserves a distinct target Session ID. The source Session stays Local.
-4. Harness registers the Worktree path as a Workspace, creates the exact Host-reserved Session, and opens it. Its persisted Session header cwd is the authoritative Session Target.
-5. The agent changes and validates code only in that isolated cwd, then calls `worktree_ready_for_review` as its final model action.
-6. A Domi-style status strip stays visible above the target composer when the Worktree is ready. Its compact Chinese Review card shows only the summary, validation state, file count, and collapsed test evidence—no Diff/Inspect controls or expanded retention buttons.
-7. The Ready primary action is **同步到 Local 验收**. The Host runs a read-only preflight and then creates an uncommitted, reversible Local Preview of the exact review. While Preview is active, the primary action becomes **验收通过并提交** and the More menu can roll the Preview back and resume Worktree editing. Ready's More menu also offers **跳过验收，直接提交** and Discard.
-8. Preview, rollback, and finalize are bound to revision/review/HEAD/fingerprint CAS. One canonical Local project can hold only one active Preview. Discard must roll an active Preview back first. Rollback may cross a same-branch fast-forward only when tree proofs show that it can remove Preview alone while preserving the new commit and prior Local layers; branch changes, rewritten history, committed Preview bytes, and content conflicts still fail closed with the Worktree and receipt preserved.
+[中文文档](README.zh.md)
 
-## Surface
+## Why use it?
+
+A normal agent session can modify the same working tree you are using. This plugin separates execution from acceptance:
+
+- **Real isolation** — each task gets a distinct Git worktree, Workspace, cwd, and Session ID.
+- **Human-gated delivery** — the model can prepare a review, but it cannot commit, discard, or clean up by itself.
+- **Reversible Local Preview** — inspect the exact change in Local before committing, then accept it or roll it back.
+- **Local changes are preserved** — staged, unstaged, and untracked Local state is kept separate from the task change.
+- **Fail-closed recovery** — stale reviews, conflicting edits, changed branches, and uncertain cleanup stop instead of overwriting data.
+
+> The project is still experimental. It provides a project-scoped Worktree Session workflow, not a cross-project global worktree manager.
+
+## Workflow
+
+```text
+Local Session
+    │
+    ├─ Create isolated Worktree Session
+    ▼
+Agent edits and validates in the Worktree
+    │
+    ├─ worktree_ready_for_review
+    ▼
+Ready for Review
+    │
+    ├─ Sync to Local Preview ── Accept and commit
+    │                         └─ Roll back and continue editing
+    ├─ Skip Preview and commit directly
+    └─ Discard
+```
+
+1. In a blank Local Session, turn on **Worktree** and confirm creation. The unsent text/image draft moves to the isolated Session; cancelling creates nothing.
+2. For an existing Local Session, the model can call `worktree_create`, after which you open the isolated Session from its ToolView.
+3. The agent edits and validates only inside the isolated cwd.
+4. The agent ends with `worktree_ready_for_review`, including changed files, validation evidence, and a suggested commit message.
+5. You choose what happens next:
+   - **Sync to Local for review**, then commit or roll the Preview back;
+   - **Skip review and commit directly**;
+   - **Discard** the task.
+
+All acceptance paths revalidate the review revision, Worktree HEAD/fingerprint, and Local state before writing.
+
+## Requirements
+
+- Node.js 20 or newer
+- DeepSeek Harness `0.1.0-rc.6` package line
+- Harness Web client for the interactive Worktree controls
+- A Git repository
+
+## Install
+
+```bash
+# npm package
+dsh plugin --profile web add dsh-git-worktree
+
+# Git tag; prepare builds the Host and Client bundles
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.2.0
+```
+
+With pnpm 10 or newer, a Git install may require this entry in the profile's `pnpm-workspace.yaml` before retrying:
+
+```yaml
+allowBuilds:
+  dsh-git-worktree: true
+```
+
+Start Harness normally after installation and open a Git repository as the workspace.
+
+## User and model controls
 
 ### Model tools
 
 | Tool | Purpose |
 | --- | --- |
-| `worktree_create` | Reserve a unique Worktree and distinct owner Session; does not mutate the current Session cwd |
-| `worktree_list` | List only Worktrees owned or created by the current Session in the original project |
-| `worktree_ready_for_review` | Persist the delivery report and stop for explicit human acceptance |
+| `worktree_create` | Create a managed Worktree and reserve a distinct target Session without changing the current Session cwd |
+| `worktree_list` | List Worktrees visible to the current Session within the original project |
+| `worktree_ready_for_review` | Save the delivery report and stop for explicit human acceptance |
 
-Apply, Finish, Discard, and Remove are intentionally **not model tools**. A model parameter is not trusted user authorization.
+Finish, Discard, and Remove are deliberately excluded from the model tool surface.
 
-### Harness-native Worktree Console
+### User controls
 
-The Client mounts the package-owned strict Typert Remote contribution through the official Gateway. A blank Local Session gets a compact **Worktree** switch in Harness's public composer tool row. Clicking it opens a confirmation dialog; only confirmation prepares the Host-allocated target and transfers the unsent text/image draft before navigation. The normal Harness Send path remains the only prompt path. Every persisted Session gets a read-only target capsule. When Ready, `conversation.input.dock` shows one compact acceptance strip with a single primary action and a More menu; the historical ToolView stays compact and replayable. The advanced `WorktreeConsoleView`, Host control plane, and strict Remote methods remain available internally, but the project-scoped `conversation.view` tab is intentionally not mounted in v0.2.0. List rows remain path-free; authorized paths are returned only by `current`, `create`, or `inspect`.
-
-### Human command
+The Web UI provides the normal create, Preview, rollback, commit, retention, and discard actions. The same Host-controlled operations are also available through `/worktree` commands:
 
 ```text
 /worktree status
 /worktree list
-/worktree finalize [cleanup|retain_24h|retain_3d|retain_manual]
-/worktree finish <custom commit message>
+/worktree finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual]
+/worktree finish <commit message>
 /worktree discard
 /worktree remove <checkoutId>
 ```
 
-The Client uses strict Remote `preflight`, `preview`, `rollbackPreview`, and `finalizePreview`; `finalize` is reserved for an explicitly selected direct-finish shortcut. Every path carries the exact review ID/revision, and commit paths also carry the user-confirmed 1–500 character Commit Message plus retention. The Host revalidates caller, project, managed cwd, review identity, HEAD/fingerprint, and Local CAS; stale cards, post-review edits, and Local drift fail closed.
+`finalize` uses the suggested commit message from the active review. `finish` is the explicit direct-commit path with a custom message.
 
-## Safety properties
+## Safety model
 
-- Source and target Sessions have different IDs; the source Session is never privately relabelled as isolated.
-- The switch confirmation creates no resources. After confirm, the pre-session transaction blocks the source composer and opens the target only after its managed Workspace, exact Session ID, draft transfer, and source draft-revision CAS succeed; failures leave the source draft untouched.
-- Target access fails closed unless its Harness Workspace path canonicalizes to the recorded managed root.
-- New paths use `<repo>--worktrees/<repo>--<checkout-short>--worktree`; identity expands on collision instead of overwriting unknown paths. Unsafe siblings fall back to `<stateDir>/worktrees/<repository-key>/`, while legacy registry paths remain manageable.
-- Legacy records that already used the old irreversible Apply path cannot automatically Finish or Discard; the user must first inspect Local.
-- Lists and management actions are caller-scoped. A recorded `ownerSessionId` is never used as authorization by itself.
-- A Preview receipt is persisted before Local writes and retains the prior working tree/index, Preview tree, and Isolated snapshot, so rollback/finalize can recover after Host restart. Same-branch fast-forward rollback first proves that the new HEAD does not contain Preview, then replays prior Local layers with pre-write and post-write CAS.
-- A canonical Local root has one acceptance slot. Detached Previews release the slot while retaining recovery evidence.
-- Finish preserves unrelated Local staged/working state and refuses stale Local or stale Isolated fingerprints. Discard of an active Preview must first roll it back safely.
-- Cleanup validates path, Git common-dir, git-dir, directory identity, and final fingerprint; uncertain residue is retained or quarantined.
+The implementation ports Domi's hardened checkout/apply foundations to Harness's authoritative Workspace and Session cwd model. Important invariants include:
 
-## Install
+- Source and target Sessions always have different IDs.
+- A target is trusted only when its Harness Workspace resolves to the recorded managed root.
+- One canonical Local project can have only one active Preview.
+- Preview receipts are persisted before Local writes so rollback/finalize can recover after a Host restart.
+- Preview, commit, and rollback paths use revision, HEAD, and fingerprint compare-and-swap checks; review-based paths also bind the review ID.
+- Cleanup verifies path identity, Git metadata, and the final fingerprint; uncertain residue is retained or quarantined.
+- Legacy records created by the old irreversible Apply flow are not automatically finished or discarded.
+
+For the detailed boundary and recovery design, see [Porting notes](docs/PORTING.md) and [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md).
+
+## Local development
+
+Install dependencies and run the standard checks:
 
 ```bash
-# npm (recommended)
-dsh plugin --profile web add dsh-git-worktree
-
-# Git source (prepare builds Host + Client bundles)
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.2.0
+pnpm install
+pnpm run typecheck
+pnpm test
+pnpm run build
+pnpm run check:publish
 ```
 
-On pnpm >= 10, Git installs may require `dsh-git-worktree: true` under `allowBuilds` in the profile's `pnpm-workspace.yaml` before retrying the add command.
-
-Requires the DeepSeek Harness `0.1.0-rc.6` package line and the Web client for interactive ToolViews.
-
-## One-command local development
-
-For repeated iterations, run this from any current checkout, including a Domi managed Worktree:
+For an end-to-end local Harness run:
 
 ```bash
 pnpm run dev:dsh
 ```
 
-The command runs typecheck/build, packs the **current checkout snapshot** into a local tarball under the OS temporary directory, installs it into the `web` profile, checks the composed config, creates or reuses a marker-protected disposable Git fixture, and finally starts `dsh web` from that fixture cwd (default `http://127.0.0.1:3081`). If a `DeepSeek/deepseek-harness` source checkout is found in the same development tree, it is preferred for launching DSH while the Session workspace remains the fixture; `DSH_HARNESS_ROOT` or `--harness <path>` can override it. The installed `dsh` on PATH is used only when no source checkout is available. The workflow never runs `npm publish`, pushes Git refs, or creates tags, and it does not leave a symlink pointing at a cleaned managed Worktree. The tarball currently referenced by the profile is retained; older local snapshots are cleaned after a successful install.
+This command builds the current checkout, packs it into a temporary local tarball, installs it into the `web` profile, verifies the composed configuration, prepares a marker-protected disposable Git fixture, and starts `dsh web` at `http://127.0.0.1:3081` by default. It does not publish to npm or push Git refs.
 
-Useful entry points:
+Useful variants:
 
 ```bash
-# Install and verify the current snapshot without starting Web
+# Install and verify the snapshot without starting Web
 pnpm run dev:dsh:install
 
-# Check the already-installed profile only
+# Verify the already-installed profile
 pnpm run dev:dsh:smoke
 
-# Use an existing Git repository or another port/profile
+# Use an existing Git root, another port, or another profile
 pnpm run dev:dsh -- --repo G:/path/to/repo --port 4090 --profile web
 
-# Explicitly uninstall from the profile and clear local development tarballs
+# Remove the development install and cached local archives
 pnpm run dev:dsh:remove
 ```
 
-The default fixture is `dsh-git-worktree-dev/fixture` under the OS temporary directory. The workflow initializes only an absent or empty directory. Reuse requires its plugin marker, the exact Git-root identity, a clean status, and no leftover linked Worktrees. Unknown files, dirty state, symlinks, or retained Worktrees fail closed; the script never resets or deletes repository content. An explicit `--repo` must already be a Git root and is validated without initialization or rewriting.
+If a sibling DeepSeek Harness source checkout is found, `dev:dsh` uses it automatically. Override discovery with `DSH_HARNESS_ROOT` or `--harness <path>`.
 
 ## Current limitations
 
-- The old direct `worktree_apply` surface remains disabled; public delivery is limited to explicit user Preview/rollback/finalize/direct-finish actions.
-- No cross-project global sidebar Manager yet. The project-scoped Worktree Console implementation is retained for recovery and future redesign, but its visible `conversation.view` tab is temporarily not mounted.
-- No automatic Workflow `agent({ isolation })`; Harness still defers that option.
-- Subagents inherit the parent Session cwd, so they are isolated only after the parent is a real Worktree Session.
-- Dependency snapshot/restore and complete collaborator handoff UI are deferred.
-- Finishing with immediate cleanup makes the isolated Session terminal because its cwd is removed; open a Local/new iteration Session for follow-up work.
+- No cross-project global sidebar manager yet.
+- The project-scoped Worktree Console implementation exists, but its visible `conversation.view` tab is not mounted in `v0.2.0` while the primary flow is stabilised.
+- In the verified Harness `0.1.0-rc.6` line, Workflow `agent({ isolation })` integration is not available.
+- In that Harness line, subagents inherit the parent Session cwd; they are isolated only when the parent is already a Worktree Session.
+- Dependency snapshot/restore and the complete collaborator handoff UI are deferred.
+- Immediate cleanup removes the isolated cwd, making that Session terminal; continue from Local or start a new iteration.
 
-See [docs/PORTING.md](docs/PORTING.md) for the Domi-to-Harness boundary and [docs/RELEASE.md](docs/RELEASE.md) for release gates.
+## Documentation
+
+- [Porting from Domi to Harness](docs/PORTING.md)
+- [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)
+- [UI development notes](docs/UI-DEVELOPMENT.md)
+- [Release checklist](docs/RELEASE.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
-MIT
+[MIT](LICENSE)
