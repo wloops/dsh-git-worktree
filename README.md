@@ -69,7 +69,7 @@ All acceptance paths revalidate the review revision, Worktree HEAD/fingerprint, 
 dsh plugin --profile web add dsh-git-worktree
 
 # Git tag; prepare builds the Host and Client bundles
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.2.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.0
 ```
 
 With pnpm 10 or newer, a Git install may require this entry in the profile's `pnpm-workspace.yaml` before retrying:
@@ -166,7 +166,7 @@ When nearby DeepSeek Harness source checkouts are found, `dev:dsh` prefers a run
 ## Current limitations
 
 - No cross-project global sidebar manager yet.
-- The project-scoped Worktree Console implementation exists, but its visible `conversation.view` tab is not mounted in `v0.2.0` while the primary flow is stabilised.
+- The project-scoped Worktree Console implementation exists, but its visible `conversation.view` tab is not mounted in `v0.3.0` while the primary flow is stabilised.
 - In the verified Harness `0.1.0-rc.6` line, Workflow `agent({ isolation })` integration is not available.
 - In that Harness line, subagents inherit the parent Session cwd; they are isolated only when the parent is already a Worktree Session.
 - Dependency snapshot/restore and the complete collaborator handoff UI are deferred.

@@ -69,7 +69,7 @@ Agent 在 Worktree 中修改并验证
 dsh plugin --profile web add dsh-git-worktree
 
 # Git tag；prepare 会构建 Host 和 Client bundle
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.2.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.0
 ```
 
 使用 pnpm 10 或更高版本时，Git 源安装可能需要先在 profile 的 `pnpm-workspace.yaml` 中加入：
@@ -166,7 +166,7 @@ pnpm run dev:dsh:remove
 ## 当前限制
 
 - 暂无跨项目全局侧栏 Manager。
-- 项目级 Worktree Console 实现仍保留，但 `v0.2.0` 暂不挂载可见的 `conversation.view` 标签页，当前优先稳定主流程。
+- 项目级 Worktree Console 实现仍保留，但 `v0.3.0` 暂不挂载可见的 `conversation.view` 标签页，当前优先稳定主流程。
 - 在已验证的 Harness `0.1.0-rc.6` 包线中，Workflow `agent({ isolation })` 集成尚不可用。
 - 在该 Harness 包线中，子 Agent 继承父 Session cwd；只有父 Session 已经是 Worktree Session 时才处于隔离环境。
 - dependency snapshot/restore 和完整 collaborator handoff UI 尚未实现。
