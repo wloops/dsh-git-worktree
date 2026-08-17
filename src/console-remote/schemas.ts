@@ -53,6 +53,7 @@ const capabilitiesSchema = strict({
   discard: z.boolean(),
   preflight: z.boolean(),
   preview: z.boolean(),
+  resumeRevision: z.boolean(),
   rollbackPreview: z.boolean(),
   finalize: z.boolean(),
   finalizePreview: z.boolean(),

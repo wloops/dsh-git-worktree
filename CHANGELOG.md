@@ -2,6 +2,21 @@
 
 本项目的显著变更记录在此文件中。版本号遵循 Semantic Versioning；在 `0.x` 阶段，minor 版本可能包含需要迁移的公开能力调整。
 
+## [Unreleased]
+
+### Added
+
+- 新增 `worktree_resume_revision`、`/worktree continue` 与 Ready 更多菜单“继续修改”，在不写入 Local 的情况下使未同步 Review 失效并恢复同一 iteration。
+- Worktree Console Contract、Host、strict Typert Remote 与 Client Adapter 增加 `resumeRevision`；Remote 方法总数由 14 个增加到 15 个。
+
+### Changed
+
+- Ready for Review 不再阻断普通对话：讨论类 follow-up 保持当前 Review；新的代码或文件修改由模型自动恢复 Working，不要求用户先同步或点击恢复编辑。
+
+### Safety
+
+- resume-revision 严格校验 live owner Session、expected revision、expected review ID、Workspace/checkout 身份；转换只更新 registry delivery state，不修改 Local、Worktree bytes 或 Git refs。
+
 ## [0.3.0] - 2026-08-17
 
 `0.3.0` 允许已成功交付并完成 cleanup 的 isolated Session 在保留 Session ID、immutable cwd 与完整对话的前提下安全开始下一轮。

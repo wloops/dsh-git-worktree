@@ -39,11 +39,35 @@ describe('public surfaces', () => {
     expect(tools.map(tool => tool.name)).toEqual([
       'worktree_create',
       'worktree_list',
+      'worktree_resume_revision',
       'worktree_begin_next_iteration',
       'worktree_ready_for_review',
     ])
     const readyTool = tools.find(tool => tool.name === 'worktree_ready_for_review')
     expect(readyTool?.output?.schema?.properties?.iteration).toEqual({ type: 'number' })
+  })
+
+  test('resume-revision model tool automatically invalidates the current review before more file changes', async () => {
+    const tools: Array<{ name: string; execute: (args: unknown, exec: unknown) => Promise<unknown> }> = []
+    const working: SessionTargetView = {
+      ...readyTarget,
+      revision: 8,
+      delivery: { state: 'working', iteration: 1 },
+    }
+    const module = {
+      inspect: vi.fn(async () => readyTarget),
+      resumeRevision: vi.fn(async () => working),
+    } as unknown as SessionCheckoutModule
+    registerTools({ tools: { register: (tool: typeof tools[number]) => { tools.push(tool) } } } as never, module)
+    const tool = tools.find(candidate => candidate.name === 'worktree_resume_revision')
+    if (!tool) throw new Error('resume revision tool was not registered')
+
+    const result = await tool.execute({}, { agent: { session: { id: 'target-session' } } })
+
+    expect(module.resumeRevision).toHaveBeenCalledWith('target-session', 7, 'review-1')
+    expect(result).toMatchObject({
+      kind: 'worktree_revision_resumed', checkoutId: 'checkout-1', iteration: 1, revision: 8, sessionId: 'target-session',
+    })
   })
 
   test('next-iteration model tool keeps the current Session and uses the latest delivered revision', async () => {
@@ -76,6 +100,22 @@ describe('public surfaces', () => {
     expect(result).toMatchObject({
       kind: 'worktree_next_iteration_started', checkoutId: 'checkout-2', iteration: 2, sessionId: 'target-session',
     })
+  })
+
+  test('/worktree continue resumes an unsynced review without requiring Local Preview', async () => {
+    let command: { name: string; handler: (invocation: unknown) => Promise<unknown> } | undefined
+    const working: SessionTargetView = { ...readyTarget, revision: 8, delivery: { state: 'working', iteration: 1 } }
+    const module = {
+      inspect: vi.fn(async () => readyTarget),
+      resumeRevision: vi.fn(async () => working),
+    } as unknown as SessionCheckoutModule
+    registerWorktreeCommand({ commands: { register: (value: typeof command) => { command = value } } } as never, module)
+    if (!command) throw new Error('command was not registered')
+
+    const result = await command.handler({ rawInput: 'continue', agent: { session: { id: 'target-session' } } })
+
+    expect(result).toMatchObject({ kind: 'success', text: expect.stringContaining('Resumed Worktree iteration 1') })
+    expect(module.resumeRevision).toHaveBeenCalledWith('target-session', 7, 'review-1')
   })
 
   test('/worktree next starts the next iteration through the same Session revision', async () => {

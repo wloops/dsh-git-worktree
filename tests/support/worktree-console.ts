@@ -18,6 +18,7 @@ import type {
   WorktreeConsolePreflightResponse,
   WorktreeConsolePreviewRequest,
   WorktreeConsoleRetryCleanupRequest,
+  WorktreeConsoleResumeRevisionRequest,
   WorktreeConsoleRollbackPreviewRequest,
   WorktreeConsoleReviewDiffRequest,
   WorktreeConsoleReviewDiffResponse,
@@ -56,6 +57,7 @@ function readyTarget(): WorktreeConsoleTargetDetails {
       discard: true,
       preflight: true,
       preview: true,
+      resumeRevision: true,
       rollbackPreview: false,
       finalize: true,
       finalizePreview: false,
@@ -111,6 +113,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           discard: false,
           preflight: false,
           preview: false,
+          resumeRevision: false,
           rollbackPreview: false,
           finalize: false,
           finalizePreview: false,
@@ -167,8 +170,33 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         ...target,
         state: 'preview_active',
         revision: target.revision + 1,
-        capabilities: { ...target.capabilities, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: true },
+        capabilities: { ...target.capabilities, preflight: false, preview: false, resumeRevision: false, rollbackPreview: true, finalize: false, finalizePreview: true },
       }, changedFiles: ['src/index.ts'] })
+    },
+    async resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('resumeRevision', request)
+      const {
+        review: _review,
+        reviewSlot: _slot,
+        managedRoot: _managedRoot,
+        sourceOid: _sourceOid,
+        currentBranch: _currentBranch,
+        ...working
+      } = target
+      return outcome({ target: {
+        ...working,
+        state: 'working',
+        revision: target.revision + 1,
+        capabilities: {
+          ...target.capabilities,
+          preflight: false,
+          preview: false,
+          resumeRevision: false,
+          rollbackPreview: false,
+          finalize: false,
+          finalizePreview: false,
+        },
+      } })
     },
     async rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
       record('rollbackPreview', request)
@@ -178,7 +206,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           ...working,
           state: 'working',
           revision: target.revision + 1,
-          capabilities: { ...target.capabilities, preflight: false, preview: false, rollbackPreview: false, finalize: false, finalizePreview: false },
+          capabilities: { ...target.capabilities, preflight: false, preview: false, resumeRevision: false, rollbackPreview: false, finalize: false, finalizePreview: false },
         }, changedFiles: ['src/index.ts'] })
       }
       return outcome({ target: { ...target, revision: target.revision + 1 }, changedFiles: ['src/index.ts'] })
@@ -222,7 +250,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         phase: 'ready',
         dirty: false,
         commitOid: null,
-        capabilities: { ...target.capabilities, preflight: false, preview: false, finalize: false, beginNextIteration: false },
+        capabilities: { ...target.capabilities, preflight: false, preview: false, resumeRevision: false, finalize: false, beginNextIteration: false },
       } })
     },
   }

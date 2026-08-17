@@ -89,10 +89,11 @@ Start Harness normally after installation and open a Git repository as the works
 | --- | --- |
 | `worktree_create` | Create a managed Worktree and reserve a distinct target Session without changing the current Session cwd |
 | `worktree_list` | List Worktrees visible to the current Session within the original project |
+| `worktree_resume_revision` | Automatically invalidate an unsynced review before new code/file changes and resume the same iteration without touching Local |
 | `worktree_begin_next_iteration` | Recreate a successfully cleaned delivered Session cwd for iteration + 1, preserving the same Session and conversation |
 | `worktree_ready_for_review` | Save the delivery report and stop for explicit human acceptance |
 
-Finish, Discard, and Remove are deliberately excluded from the model tool surface.
+Finish, Discard, and Remove are deliberately excluded from the model tool surface. While an unsynced review is waiting, ordinary discussion continues without changing it; if a follow-up requests code or file changes, the model calls `worktree_resume_revision` automatically. The user does not need to synchronize Local or click a recovery control.
 
 ### User controls
 
@@ -101,6 +102,7 @@ The Web UI provides the normal create, Preview, rollback, commit, retention, and
 ```text
 /worktree status
 /worktree list
+/worktree continue
 /worktree next
 /worktree finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual]
 /worktree finish <commit message>
@@ -118,7 +120,7 @@ The implementation ports Domi's hardened checkout/apply foundations to Harness's
 - An active target is trusted only when its Harness Workspace resolves to the recorded managed root. A cleaned delivered target may temporarily reference its missing immutable cwd only when the Host path identity exactly matches the predecessor record.
 - One canonical Local project can have only one active Preview.
 - Preview receipts are persisted before Local writes so rollback/finalize can recover after a Host restart.
-- Preview, commit, and rollback paths use revision, HEAD, and fingerprint compare-and-swap checks; review-based paths also bind the review ID.
+- Preview, commit, rollback, and resume-revision paths use revision and identity checks; review-based paths bind the review ID, and resume-revision changes only registry delivery state after validating the managed checkout.
 - Cleanup verifies path identity, Git metadata, and the final fingerprint; uncertain residue is retained or quarantined.
 - Next iteration creation only reuses an absent path from a successfully cleaned predecessor, creates a new checkout record, and preserves the predecessor as recovery evidence.
 - Legacy records created by the old irreversible Apply flow are not automatically finished or discarded.

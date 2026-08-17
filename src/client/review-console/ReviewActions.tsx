@@ -22,7 +22,7 @@ interface ReviewActionsProps {
   onTargetChange: (target: WorktreeConsoleTargetSummary) => void
 }
 
-type Mutation = 'preview' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
+type Mutation = 'preview' | 'resume_revision' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
 type CommitMode = 'finish' | 'finalize_preview'
 
 function isStale(error: WorktreeConsoleError): boolean {
@@ -125,6 +125,18 @@ export function ReviewActions({
     }
     applyTarget(outcome.value.target)
     setMessage('已同步为可撤回的 Local Preview；请在 Local 中验收。')
+    finish()
+  }
+
+  const resumeRevision = async (): Promise<void> => {
+    if (!begin('resume_revision') || !adapter || !identity) return
+    const outcome = await adapter.resumeRevision(identity)
+    if (!outcome.ok) {
+      finishError(outcome.error)
+      return
+    }
+    applyTarget(outcome.value.target)
+    setMessage('已恢复编辑；继续发送修改要求即可。Local 未受影响。')
     finish()
   }
 
@@ -263,10 +275,16 @@ export function ReviewActions({
                 }}>查看验收卡</button>
               ) : null}
               {ready ? (
-                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize} onClick={(event) => {
-                  setCommitMode('finish')
-                  event.currentTarget.closest('details')?.removeAttribute('open')
-                }}>跳过验收，直接提交</button>
+                <>
+                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.resumeRevision} onClick={(event) => {
+                    void resumeRevision()
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                  }}>{submitting === 'resume_revision' ? '恢复中…' : '继续修改'}</button>
+                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize} onClick={(event) => {
+                    setCommitMode('finish')
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                  }}>跳过验收，直接提交</button>
+                </>
               ) : null}
               {previewActive || previewRecovery ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={(event) => {

@@ -41,6 +41,7 @@ const METHODS = [
   'reviewDiff',
   'preflight',
   'preview',
+  'resumeRevision',
   'rollbackPreview',
   'discard',
   'finalize',
@@ -214,6 +215,19 @@ describe('manual strict Worktree Console Remote contribution', () => {
       ok: false,
       error: { code: 'malformed_response', message: 'Remote current 返回了不符合 strict contract 的 payload' },
     })
+
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const resumeRevision = vi.fn().mockResolvedValue({
+      ok: true,
+      value: await fixture.adapter.resumeRevision({
+        sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+      }),
+    })
+    const resumeAdapter = createWorktreeConsoleRemoteAdapter({ resumeRevision } as never)
+    await expect(resumeAdapter.resumeRevision({
+      sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    })).resolves.toMatchObject({ ok: true, value: { target: { state: 'working', iteration: 1 } } })
+    expect(resumeRevision).toHaveBeenCalledWith('agent-1', 'checkout-1', 7, 'review-1')
 
     const beginNextIteration = vi.fn().mockResolvedValue({
       ok: true,

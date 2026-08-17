@@ -47,6 +47,7 @@ The old plugin flow wrote directly to Local on `worktree_apply`, advanced `apply
 ```text
 Working
   → Ready for Review
+  → discussion stays Ready / new file edits automatically resume Working (no Local write)
   → read-only preflight
   → Local Preview active (no commit)
   → accept and commit / rollback
@@ -56,6 +57,7 @@ Working
 A low-frequency Ready shortcut can skip interactive Local review and directly finish, but internally still uses receipt-first Preview → Finalize under one Host mutation lock.
 
 - `worktree_apply` is not registered as a model tool or command; Finish/Discard/Remove are not model tools.
+- An unsynced Ready review does not block conversation. Discussion leaves the persisted review untouched; a code/file follow-up automatically invokes `worktree_resume_revision`, validating owner/revision/review/checkout identity and returning the same iteration to Working without Local or Git-ref writes. `/worktree continue` and the More-menu action are manual fallbacks, not required steps.
 - Ready primary action calls `preflight` then `preview`; Preview primary action calls `finalizePreview`; rollback is in the More menu; direct `finalize` is only the explicit “skip review” shortcut.
 - The Host allocates one acceptance slot per canonical `localRoot`. A second task receives `project_acceptance_busy` until rollback/finalize releases the slot.
 - Preview receipt persistence and internal refs precede Local writes. The receipt binds Local branch/HEAD/fingerprint, prior working/index trees, Preview tree, Isolated HEAD/fingerprint/snapshot, review ID, iteration, and changed files.
@@ -74,7 +76,7 @@ A replay-stable dynamic context reports only the current registry state:
 - Local with no target;
 - Local handoff pending (stop modifications and open the target card);
 - Isolated Working (authoritative cwd and Local boundary);
-- Ready for Review (model stops; user previews, directly finishes, or discards);
+- Ready for Review (discussion continues; new code/file work first auto-calls `worktree_resume_revision`; the user may still preview, directly finish, or discard);
 - Local Preview active/detached (model and Local Session remain read-only);
 - Recovery required.
 
@@ -86,6 +88,7 @@ The package exports `./client` and declares `dsh.client`. The browser closure re
 
 - `worktree_create`: path/checkout facts and an idempotent **Open isolated session** action;
 - `worktree_ready_for_review`: summary, files, tests, commit message, and explicit cleanup/retention actions.
+- Ready composer actions include a secondary **Continue editing** fallback, while normal code/file follow-ups resume automatically through the model tool.
 - delivered composer dock: **Start next iteration** safely recreates the cleaned immutable Session cwd and keeps the same conversation.
 
 The ToolViews derive display state from durable logged call/result slices. They do not reconstruct checkout authority from UI state.

@@ -2,8 +2,8 @@
  * Model-facing worktree tools. Destructive delivery actions are deliberately
  * absent: Finish/Discard/Remove are human commands surfaced by the client
  * ToolView. The model can reserve a real target session, inspect its own
- * scoped worktrees, safely begin a cleaned same-session iteration, and stop
- * at Ready for Review.
+ * scoped worktrees, invalidate an unsynced review before further file edits,
+ * safely begin a cleaned same-session iteration, and stop at Ready for Review.
  * @module dsh-git-worktree/tools
  */
 
@@ -115,6 +115,51 @@ export function registerTools(ctx: Context, module: SessionCheckoutModule): void
       }
     },
     presentCall: () => ({ card: 'generic', title: 'List managed worktrees', kind: 'other', rawInput: {} }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'worktree_resume_revision',
+    description: '当前 Isolated Session 处于尚未同步 Local 的 Ready for Review，且用户提出新的代码或文件修改时，必须先自动调用本工具使旧 Review 失效并恢复同一轮 Working，然后直接继续执行请求。纯讨论、问答或补充信息不要调用；不要要求用户点击恢复编辑，也不要先同步 Local。',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          kind: { type: 'string', required: true },
+          checkoutId: { type: 'string', required: true },
+          iteration: { type: 'number', required: true },
+          revision: { type: 'number', required: true },
+          phase: { type: 'string', required: true },
+          sessionId: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => renderJson(value),
+    },
+    async execute(_args, exec) {
+      const sessionId = sessionIdOf(exec.agent)
+      const current = await module.inspect(sessionId)
+      if (current.delivery?.state !== 'ready_for_review') {
+        throw new Error(`当前 Worktree 没有可恢复的未同步 Review: ${current.delivery?.state ?? 'unknown'}`)
+      }
+      const target = await module.resumeRevision(
+        sessionId,
+        current.revision,
+        current.delivery.review.reviewId,
+      )
+      if (target.delivery?.state !== 'working') {
+        throw new Error(`Worktree 未恢复到 working 状态: ${target.delivery?.state ?? 'unknown'}`)
+      }
+      return {
+        kind: 'worktree_revision_resumed',
+        checkoutId: target.checkout.id,
+        iteration: target.delivery.iteration,
+        revision: target.revision,
+        phase: target.checkout.phase,
+        sessionId,
+      }
+    },
+    presentCall: () => ({ card: 'generic', title: 'Resume Worktree revision', kind: 'other', rawInput: {} }),
   }))
 
   ctx.tools.register(defineTool({

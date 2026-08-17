@@ -86,7 +86,7 @@ function moduleDouble(record = readyRecord()): SessionCheckoutModule {
       configuredBaseOid: A, effectiveBaseOid: A, baseStrategy: 'recorded_base', localBranch: 'main',
       localHeadOid: A, isolatedHeadOid: B, changedFiles: ['src/index.ts'],
     })),
-    runExclusiveSessionMutation: vi.fn(), bind: vi.fn(), beginNextIteration: vi.fn(), markReadyForReview: vi.fn(),
+    runExclusiveSessionMutation: vi.fn(), bind: vi.fn(), beginNextIteration: vi.fn(), resumeRevision: vi.fn(), markReadyForReview: vi.fn(),
     createIsolatedTarget: vi.fn(async (sourceSessionId, targetSessionId) => ({ targetSessionId, managedRoot: '/managed', target: isolated })),
     operate: vi.fn(), listManagedWorktrees: vi.fn(), inspectManagedWorktreeCleanup: vi.fn(), bulkCleanupManagedWorktrees: vi.fn(),
     listManagedWorktreesForSession: vi.fn(async sessionId => sessionId === 'intruder-session' ? [] : [{
@@ -202,6 +202,54 @@ describe('Worktree Console Host control plane', () => {
       ok: true,
       value: { target: { state: 'delivered', managedRoot: null, capabilities: { beginNextIteration: true } } },
     })
+  })
+
+  it('resumes the exact unsynced review without writing Local or changing checkout identity', async () => {
+    const record = readyRecord()
+    let registryValue: ManagedCheckoutsRegistry = {
+      version: 2, revision: 1, sessionBindings: {}, managedCheckouts: { [record.checkoutId]: record },
+    }
+    const registryPort: SessionCheckoutRegistryPort = {
+      read: () => structuredClone(registryValue),
+      write: nextValue => { registryValue = structuredClone(nextValue) },
+    }
+    const { module, control } = plane(record, { registry: registryPort })
+    vi.mocked(module.resumeRevision).mockImplementation(async () => {
+      const current = registryValue.managedCheckouts[record.checkoutId]!
+      registryValue = {
+        ...registryValue,
+        revision: registryValue.revision + 1,
+        managedCheckouts: {
+          ...registryValue.managedCheckouts,
+          [record.checkoutId]: { ...current, revision: 8, delivery: { state: 'working', iteration: 1 } },
+        },
+      }
+      return {
+        project: { id: record.projectId, name: record.projectName },
+        checkout: { id: record.checkoutId, kind: 'isolated', label: 'Task', phase: 'ready' },
+        source: { ref: record.sourceRef, oid: record.baseOid }, current: { branch: null, oid: B },
+        ownership: 'owner', dirty: true, revision: 8, delivery: { state: 'working', iteration: 1 },
+      }
+    })
+
+    const result = await control.resumeRevision({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { target: { checkoutId: 'checkout-1', state: 'working', iteration: 1, revision: 8 } },
+    })
+    expect(module.resumeRevision).toHaveBeenCalledWith('target-session', 7, 'review-1')
+  })
+
+  it('rejects a stale review identity before resuming revision', async () => {
+    const { module, control } = plane()
+    const result = await control.resumeRevision({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-old',
+    })
+    expect(result).toMatchObject({ ok: false, error: { code: 'stale_target' } })
+    expect(module.resumeRevision).not.toHaveBeenCalled()
   })
 
   it('starts iteration 2 for the exact delivered owner while preserving the immutable cwd identity', async () => {

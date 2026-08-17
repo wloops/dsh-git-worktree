@@ -75,6 +75,8 @@ export interface WorktreeConsoleCapabilities {
   discard: boolean
   preflight: boolean
   preview: boolean
+  /** Invalidate an unsynced review and resume the same iteration without touching Local. */
+  resumeRevision: boolean
   rollbackPreview: boolean
   /** Direct Ready → Commit path that skips Local Preview. */
   finalize: boolean
@@ -194,6 +196,13 @@ export interface WorktreeConsolePreflightResponse {
 }
 
 export interface WorktreeConsolePreviewRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  expectedReviewId: string
+}
+
+export interface WorktreeConsoleResumeRevisionRequest {
   sessionId: string
   checkoutId: string
   expectedRevision: number
@@ -357,6 +366,7 @@ export interface WorktreeConsoleAdapter {
   reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
   preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>

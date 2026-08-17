@@ -26,6 +26,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'gitWorktree/reviewDiff': (agentId: string, checkoutId: string, expectedRevision: number, expectedReviewId: string) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>>
     'gitWorktree/preflight': (agentId: string, checkoutId: string, expectedRevision: number, expectedReviewId: string) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>>
     'gitWorktree/preview': (agentId: string, checkoutId: string, expectedRevision: number, expectedReviewId: string) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
+    'gitWorktree/resumeRevision': (agentId: string, checkoutId: string, expectedRevision: number, expectedReviewId: string) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
     'gitWorktree/rollbackPreview': (agentId: string, checkoutId: string, expectedRevision: number, resumeRevision?: boolean) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
     'gitWorktree/discard': (agentId: string, checkoutId: string, expectedRevision: number, confirmDirty: boolean, rollbackPreview?: boolean) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>
     'gitWorktree/finalize': (agentId: string, checkoutId: string, expectedRevision: number, expectedReviewId: string, commitMessage: string, retention: WorktreeRetentionMode) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>>

@@ -89,10 +89,11 @@ allowBuilds:
 | --- | --- |
 | `worktree_create` | 创建 managed Worktree 并预留独立 target Session，不修改当前 Session cwd |
 | `worktree_list` | 列出当前 Session 在原始项目中可见的 Worktree |
+| `worktree_resume_revision` | 新的代码/文件修改前自动使未同步 Review 失效，在不触碰 Local 的情况下恢复同一 iteration |
 | `worktree_begin_next_iteration` | 为已成功清理的 delivered Session 重建 iteration + 1，并保持同一 Session 与完整对话 |
 | `worktree_ready_for_review` | 保存交付报告并停止，等待用户明确验收 |
 
-Finish、Discard、Remove 不向模型开放，避免用模型参数代替用户授权。
+Finish、Discard、Remove 不向模型开放，避免用模型参数代替用户授权。未同步 Review 等待期间，普通讨论会直接继续且不改变验收稿；如果 follow-up 要求修改代码或文件，模型会自动调用 `worktree_resume_revision`。用户不需要先同步 Local，也不需要点击恢复编辑。
 
 ### 用户操作
 
@@ -101,6 +102,7 @@ Web UI 提供创建、Preview、撤回、提交、保留和放弃等常用操作
 ```text
 /worktree status
 /worktree list
+/worktree continue
 /worktree next
 /worktree finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual]
 /worktree finish <Commit Message>
@@ -118,7 +120,7 @@ Web UI 提供创建、Preview、撤回、提交、保留和放弃等常用操作
 - 活动 target 的 Harness Workspace 必须解析到 Host 记录的 managed root。已清理的 delivered target 只在 Host Workspace 原始路径与 predecessor 记录精确一致时，才允许暂时引用缺失的 immutable cwd。
 - 同一 canonical Local 项目同时只允许一个活动 Preview。
 - 在写入 Local 前先持久化 Preview receipt，使 Host 重启后仍可恢复 rollback/finalize。
-- Preview、Commit 和 rollback 路径都使用 revision、HEAD 与 fingerprint compare-and-swap 校验；基于验收报告的路径还会绑定 review ID。
+- Preview、Commit、rollback 与 resume-revision 路径都使用 revision 和身份校验；基于验收报告的路径绑定 review ID，resume-revision 在验证 managed checkout 后只改变 registry delivery state。
 - 清理前验证路径身份、Git 元数据和最终 fingerprint；无法确认的残余会保留或 quarantine。
 - 下一轮只复用已成功清理且当前不存在的 predecessor path，创建新的 checkout record，并保留上一轮记录作为恢复证据。
 - 旧版不可逆 Apply 流程产生的历史记录不会被自动 Finish 或 Discard。

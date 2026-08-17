@@ -142,6 +142,20 @@ describe('Domi-style Worktree Review', () => {
     expect(fixture.adapter.preview).not.toHaveBeenCalled()
   })
 
+  test('Ready 更多菜单可手动继续修改，但正常 follow-up 不依赖该入口', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.resumeRevision = vi.fn(fixture.adapter.resumeRevision)
+    const onTargetChange = vi.fn()
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} onTargetChange={onTargetChange} />)
+
+    fireEvent.click(screen.getByLabelText('更多交付操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: '继续修改' }))
+
+    await waitFor(() => expect(fixture.adapter.resumeRevision).toHaveBeenCalledWith(identity()))
+    expect(onTargetChange).toHaveBeenCalledWith(expect.objectContaining({ state: 'working', iteration: 1 }))
+    expect(screen.getByText(/已恢复编辑；继续发送修改要求即可/)).toBeTruthy()
+  })
+
   test('Ready 更多菜单提供跳过验收直接提交，并保持 Commit Message/Retention 确认', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     fixture.adapter.finalize = vi.fn(fixture.adapter.finalize)

@@ -15,6 +15,7 @@ import type {
   WorktreeConsolePreflightRequest,
   WorktreeConsolePreflightResponse,
   WorktreeConsolePreviewRequest,
+  WorktreeConsoleResumeRevisionRequest,
   WorktreeConsoleRollbackPreviewRequest,
   WorktreeConsoleRetryCleanupRequest,
   WorktreeConsoleReviewDiffRequest,
@@ -54,6 +55,7 @@ export interface WorktreeConsoleControlPlane {
   reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
   preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
@@ -366,6 +368,23 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         ...(await mutationResponse(request.sessionId, request.checkoutId)),
         changedFiles: [...result.changedFiles],
       }
+    }),
+
+    resumeRevision: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以继续修改')
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      const review = readyReview(record)
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      const target = await options.module.resumeRevision(
+        request.sessionId,
+        request.expectedRevision,
+        request.expectedReviewId,
+      )
+      if (target.checkout.id !== request.checkoutId || target.delivery?.state !== 'working') {
+        throw domainError('checkout_mismatch', '恢复编辑后 Worktree 身份或状态不一致')
+      }
+      return mutationResponse(request.sessionId, request.checkoutId)
     }),
 
     rollbackPreview: request => outcome(async () => {

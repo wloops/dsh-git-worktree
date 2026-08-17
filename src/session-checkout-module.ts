@@ -732,7 +732,7 @@ export function createSessionCheckoutModule(
       'Make task changes only in the authoritative cwd; never write directly to the Original Local boundary.',
     ]
     if (record.delivery.state === 'ready_for_review') {
-      lines.push('Delivery state: Ready for Review. The model must stop; only the user may preview, directly finish, discard, or clean up through the Worktree acceptance UI.')
+      lines.push('Delivery state: Ready for Review, not yet synchronized to Local. Continue ordinary discussion and answer questions without changing this Review. If the user requests new code or file changes, call worktree_resume_revision first, then continue the requested work in this same Session; do not ask the user to click a recovery control and do not synchronize Local. Until that tool succeeds, treat the Worktree as read-only. The user may still preview, directly finish, or discard through the Worktree acceptance UI.')
     } else if (record.delivery.state === 'preview_active') {
       lines.push('Delivery state: Local Preview active. The model must remain read-only; only the user may accept and commit, rollback, or discard through the Worktree acceptance UI.')
     } else if (record.delivery.state === 'preview_detached') {
@@ -1179,6 +1179,49 @@ export function createSessionCheckoutModule(
           isolatedHeadOid: snapshot.isolatedHeadOid,
         },
       },
+      revision: current.revision + 1,
+    }))
+    return inspectIsolated(binding)
+  }
+
+  async function resumeRevisionTarget(
+    sessionId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+  ): Promise<SessionTargetView> {
+    const binding = await resolveBinding(sessionId)
+    if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
+      throw new SessionCheckoutError('not_owner', '只有 owner Isolated 会话可以恢复编辑')
+    }
+    let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
+    if (!record) throw new SessionCheckoutError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (record.revision !== expectedRevision) {
+      throw new SessionCheckoutError('stale_target', 'Session Target 已变化，请刷新后重试')
+    }
+    if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
+      throw new SessionCheckoutError('operation_not_allowed', '当前 Worktree 没有可恢复编辑的未同步验收稿')
+    }
+    if (record.delivery.review.reviewId !== expectedReviewId) {
+      throw new SessionCheckoutError('stale_target', '该验收卡已不是当前 Review，请刷新后重试')
+    }
+    const inspected = await inspectIsolated(binding)
+    if (inspected.checkout.phase !== 'ready') {
+      throw new SessionCheckoutError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复')
+    }
+    record = dependencies.registry.read().managedCheckouts[record.checkoutId]
+    if (
+      !record
+      || record.revision !== expectedRevision
+      || record.phase !== 'ready'
+      || record.delivery.state !== 'ready_for_review'
+      || record.delivery.review.reviewId !== expectedReviewId
+    ) {
+      throw new SessionCheckoutError('stale_target', '验收状态在恢复编辑前发生变化，请刷新后重试')
+    }
+    const iteration = record.delivery.review.iteration
+    updateManagedCheckout(record.checkoutId, (current) => ({
+      ...current,
+      delivery: { state: 'working', iteration },
       revision: current.revision + 1,
     }))
     return inspectIsolated(binding)
@@ -3335,6 +3378,9 @@ export function createSessionCheckoutModule(
     }),
     beginNextIteration: (sessionId, expectedRevision) => withBindingLock(
       () => beginNextIterationTarget(sessionId, expectedRevision),
+    ),
+    resumeRevision: (sessionId, expectedRevision, expectedReviewId) => withBindingLock(
+      () => resumeRevisionTarget(sessionId, expectedRevision, expectedReviewId),
     ),
     markReadyForReview: (sessionId, input) => withBindingLock(
       () => markReadyForReviewTarget(sessionId, input),

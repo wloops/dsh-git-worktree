@@ -73,6 +73,7 @@ function localTarget(): WorktreeConsoleTargetDetails {
       discard: false,
       preflight: false,
       preview: false,
+      resumeRevision: false,
       rollbackPreview: false,
       finalize: false,
       finalizePreview: false,

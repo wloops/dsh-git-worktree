@@ -26,7 +26,7 @@ function sessionIdOf(agent: unknown): string {
 }
 
 const RETENTIONS = new Set<WorktreeRetentionMode>(['cleanup', 'retain_24h', 'retain_3d', 'retain_manual'])
-const USAGE = 'Usage: /worktree status | list | next | finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual] | finish <message> | discard | remove <checkoutId>'
+const USAGE = 'Usage: /worktree status | list | continue | next | finalize [<reviewId> <revision>] [cleanup|retain_24h|retain_3d|retain_manual] | finish <message> | discard | remove <checkoutId>'
 
 function finishedText(result: Extract<Awaited<ReturnType<SessionCheckoutModule['operate']>>, { status: 'finished' }>): string {
   return `Finished: committed ${result.changedFiles.length} file(s) as ${result.commitOid?.slice(0, 7) ?? 'no-op'} (cleanup: ${result.cleanup}).`
@@ -37,7 +37,7 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
   ctx.commands.register({
     name: 'worktree',
     description: 'inspect and explicitly accept managed worktree delivery',
-    input: { hint: 'status | list | next | finalize [retention] | finish <message> | discard | remove <checkoutId>' },
+    input: { hint: 'status | list | continue | next | finalize [retention] | finish <message> | discard | remove <checkoutId>' },
     handler: async (invocation) => {
       const rawInput = invocation.rawInput.trim()
       const tokens = rawInput.split(/\s+/u).filter(Boolean)
@@ -57,6 +57,19 @@ export function registerWorktreeCommand(ctx: Context, module: SessionCheckoutMod
                 `${summary.checkoutId}  ${summary.project.name}  i${summary.iteration}  ${summary.state}/${summary.phase}  dirty=${summary.dirty}`
               )).join('\n'),
             }
+          }
+          case 'continue': {
+            const current = await module.inspect(sessionId)
+            if (current.delivery?.state !== 'ready_for_review') {
+              return { kind: 'error', text: '当前 Worktree 没有尚未同步的 Ready for Review 验收稿。' }
+            }
+            const target = await module.resumeRevision(
+              sessionId,
+              current.revision,
+              current.delivery.review.reviewId,
+            )
+            const iteration = target.delivery?.state === 'working' ? target.delivery.iteration : 0
+            return { kind: 'success', text: `Resumed Worktree iteration ${iteration}; Local was not modified.` }
           }
           case 'next': {
             const current = await module.inspect(sessionId)

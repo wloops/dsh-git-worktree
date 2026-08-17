@@ -83,6 +83,11 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.expectedRevision`),
     json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.expectedReviewId`),
   ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
+  descriptor('resumeRevision', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.expectedReviewId`),
+  ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('rollbackPreview', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.checkoutId`),
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.expectedRevision`),

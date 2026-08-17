@@ -56,6 +56,11 @@ export class WorktreeConsoleService extends TypertRemoteService {
   }
 
   @Remote
+  resumeRevision(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.resumeRevision({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  }
+
+  @Remote
   rollbackPreview(agent: Agent, checkoutId: string, expectedRevision: number, resumeRevision?: boolean): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
     return this.controlPlane.rollbackPreview({ sessionId: agent.id, checkoutId, expectedRevision, resumeRevision })
   }

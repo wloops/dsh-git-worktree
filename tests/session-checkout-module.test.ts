@@ -471,7 +471,58 @@ describe('SessionCheckoutModule', () => {
       suggestedCommitMessage: 'test: ready context',
     })
     expect(context.module.runtimeContext('target-session-1')).toContain('Ready for Review')
-    expect(context.module.runtimeContext('target-session-1')).toContain('only the user may preview, directly finish')
+    expect(context.module.runtimeContext('target-session-1')).toContain('Continue ordinary discussion')
+    expect(context.module.runtimeContext('target-session-1')).toContain('call worktree_resume_revision first')
+    expect(context.module.runtimeContext('target-session-1')).toContain('do not ask the user to click a recovery control')
+  })
+
+  test('Given an unsynced Ready review When the owner requests more file changes Then editing resumes without touching Local', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'reviewed draft\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'reviewed draft', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: reviewed draft',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+    const localHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const localBytes = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+
+    const resumed = await context.module.resumeRevision(
+      'session-1',
+      ready.revision,
+      ready.delivery.review.reviewId,
+    )
+
+    expect(resumed).toMatchObject({
+      checkout: { id: target.checkout.id, phase: 'ready' },
+      revision: ready.revision + 1,
+      delivery: { state: 'working', iteration: ready.delivery.review.iteration },
+    })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHead)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBytes)
+    expect(readFileSync(join(managedRoot, 'tracked.txt'), 'utf8')).toBe('reviewed draft\n')
+    expect(context.module.runtimeContext('session-1')).toContain('worktree_ready_for_review')
+  })
+
+  test('Given a stale or foreign Ready review When resume is requested Then it fails closed and preserves the review', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'reviewed draft\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'reviewed draft', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: reviewed draft',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+
+    await expect(context.module.resumeRevision('session-1', ready.revision, 'old-review'))
+      .rejects.toMatchObject({ code: 'stale_target' })
+    context.addSession('session-2', 'project-1')
+    await expect(context.module.resumeRevision('session-2', ready.revision, ready.delivery.review.reviewId))
+      .rejects.toMatchObject({ code: 'target_unselected' })
+    expect((await context.module.inspect('session-1')).delivery).toMatchObject({
+      state: 'ready_for_review', review: { reviewId: ready.delivery.review.reviewId },
+    })
   })
 
   test('Given a cleaned delivered owner Session When it begins the next iteration Then the same Session and cwd receive a new checkout from latest Local HEAD', async () => {
