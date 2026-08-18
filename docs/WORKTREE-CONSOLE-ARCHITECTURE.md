@@ -4,7 +4,7 @@
 
 本文是 Backend Control Plane、Session Target UI、Review UI 三条并行 Worktree 的共同基线。共享 JSON 契约位于 [`src/console-contract.ts`](../src/console-contract.ts)，测试 fixture 位于 [`tests/support/worktree-console.ts`](../tests/support/worktree-console.ts)。
 
-本文现已升级为 Worktree Console 与 Domi 式验收生命周期的共同基线。它不实现跨项目全局 Manager，也不恢复旧 `worktree_apply`；Local Preview/Rollback/Finalize 只通过 Host 权威状态机和 strict Typert Remote 暴露给用户操作。
+本文现已升级为 Worktree Console 与两阶段验收生命周期的共同基线。它不实现跨项目全局 Manager，也不恢复旧 `worktree_apply`；Local Preview/Rollback/Finalize 只通过 Host 权威状态机和 strict Typert Remote 暴露给用户操作。
 
 ## 2. 已核验的 Harness 扩展缝
 

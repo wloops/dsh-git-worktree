@@ -1,6 +1,6 @@
 # Release checklist（发布清单）
 
-发布门禁必须同时覆盖 Host、Client、tarball 与真实安装。`check-publish` 默认允许 Domi managed Worktree 的未提交 review 状态；正式发布 CI 必须额外设置 `CHECK_PUBLISH_REQUIRE_CLEAN=1`。
+发布门禁必须同时覆盖 Host、Client、tarball 与真实安装。`check-publish` 默认允许 managed Worktree 的未提交 review 状态；正式发布 CI 必须额外设置 `CHECK_PUBLISH_REQUIRE_CLEAN=1`。
 
 ## 1. 同一快照构建与验证
 

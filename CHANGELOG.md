@@ -47,7 +47,7 @@
   - Create/Ready ToolView；
   - Header Session Target 状态胶囊；
   - `conversation.input.dock` 的 Ready、Preview 与 Recovery 状态条。
-- Domi 式交付生命周期：
+- 两阶段验收交付生命周期：
   - Ready for Review；
   - 不提交、可撤回的 Local Preview；
   - Preview 验收提交；
@@ -86,7 +86,7 @@
 
 ## [0.1.2] - 2026-07-28
 
-- 发布初版 Domi-grade Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
+- 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
 [0.3.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.1.2...v0.2.0

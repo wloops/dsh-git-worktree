@@ -88,7 +88,7 @@ UI 不得继续显示旧按钮为可用状态，也不得自动重放 Finalize�
 
 ## Validation 与详情
 
-普通验收卡按 Domi 信息层级只默认展示：
+普通验收卡按紧凑信息层级只默认展示：
 
 - iteration + summary；
 - validation status；

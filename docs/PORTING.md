@@ -1,6 +1,6 @@
-# Porting notes: Domi Session Target → DeepSeek Harness
+# Session Target porting notes: desktop implementation → DeepSeek Harness
 
-`dsh-git-worktree` reuses Domi's session-checkout domain and Git delivery engine, but Host identity cannot be copied mechanically. In Harness, a Session's persisted header cwd and Workspace attachment are the authority; a plugin registry is only supporting state.
+`dsh-git-worktree` adapts a mature desktop session-checkout domain and Git delivery engine, but Host identity cannot be copied mechanically. In Harness, a Session's persisted header cwd and Workspace attachment are the authority; a plugin registry is only supporting state.
 
 ## Preserved core
 
@@ -33,7 +33,7 @@ After cleanup removes that immutable cwd, Harness deliberately filters the Sessi
 
 ### Worktree location
 
-Domi's non-polluting policy is restored:
+The source implementation's non-polluting path policy is preserved:
 
 1. preferred: `<local-repo-parent>/<repo>--worktrees/<repo>--<checkout-short>--worktree>`;
 2. fallback after an unsafe sibling or clean creation failure: `<plugin-state>/worktrees/<repository-key>/<repo>--<checkout-short>--worktree>`.
@@ -42,7 +42,7 @@ Both locations are outside the Local checkout. The Host derives the repository l
 
 ### Human acceptance with reversible Local Preview
 
-The old plugin flow wrote directly to Local on `worktree_apply`, advanced `applyBaseOid`, and could make a later Finish observe zero delta while Local remained modified. That surface stays disabled. The plugin now ports Domi's receipt-first Preview / Rollback / Finalize invariants behind Harness's official strict Typert Remote and public Client slots:
+The old plugin flow wrote directly to Local on `worktree_apply`, advanced `applyBaseOid`, and could make a later Finish observe zero delta while Local remained modified. That surface stays disabled. The plugin now exposes receipt-first Preview / Rollback / Finalize invariants behind Harness's official strict Typert Remote and public Client slots:
 
 ```text
 Working
@@ -95,13 +95,15 @@ The ToolViews derive display state from durable logged call/result slices. They 
 
 ## Deliberately deferred
 
-| Domi capability | Current status |
+| Source capability | Current status |
 | --- | --- |
 | Reversible Local Preview / Finalize / Rollback | Implemented through strict Remote with durable receipts, single-project slot, CAS and recovery |
 | Global Worktree Manager sheet | Deferred until a stable Host Remote/Projection management seam is added |
 | Electron reveal/close-session choreography | Web navigation remains simpler, but a successfully cleaned delivered Session now starts the next iteration by safely recreating its immutable cwd path; retained/cleanup-pending environments must be cleaned first |
 | Collaborator release/handoff UI | Partial domain remnants only; no complete Host lifecycle integration |
 | Dependency snapshot/restore | Deferred |
+| Worktree Checkpoint / Save stage and continue | Deferred; Harness has no Host-managed checkpoint commit, stage lineage, or continue-from-clean-stage flow yet |
+| Snapshot-bound Local Maintenance Transaction | Deferred; an Isolated Harness Session cannot currently obtain a user-approved bounded Host lease to repair the real Local checkout outside the normal Preview/Finalize path |
 | Audit timing pipeline | Deferred |
 | Workflow `agent({ isolation })` | Blocked by Harness's deferred workflow isolation option |
 

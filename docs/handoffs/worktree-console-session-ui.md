@@ -194,7 +194,7 @@ sessions.open(targetSessionId)
 - 错误消息包含稳定用户动作，不只显示 code；
 - 颜色不是唯一状态信号；
 - 窄宽度下列表不横向撑破 conversation view；
-- 不出现 Domi 产品文案或产品归因。
+- 不出现来源实现的产品文案或产品归因。
 
 ## 验收标准
 
