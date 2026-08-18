@@ -110,6 +110,42 @@ After a successful commit and cleanup, the current Worktree cwd is removed, but 
 
 Retained, cleanup-pending, and recovery states are never removed silently. They must be handled before another iteration can begin.
 
+## Screenshots
+
+The following screenshots show the primary delivery flow in the order a task normally follows it.
+
+### Create a Worktree Session
+
+After Worktree is enabled in a new Local Session, Harness explains the Session-switch boundary. The isolated Session is created and selected only after explicit confirmation.
+
+![Confirm creation and switch to a Worktree Session](docs/screenshots/01-create-worktree.png)
+
+### Prepare the review
+
+When implementation and validation finish, the agent prepares a Ready for Review report. The user can inspect the summary and validation evidence before syncing anything to Local.
+
+![Worktree changes ready for review](docs/screenshots/02-ready-for-review.png)
+
+### Review the Local Preview
+
+After synchronization, the task delta waits in Local as a reversible Preview. The user can commit it, roll it back and continue editing, or discard the task.
+
+![Task changes waiting for acceptance in Local Preview](docs/screenshots/03-local-preview.png)
+
+### Confirm the commit and choose retention
+
+The default path confirms the Commit Message and cleans up the Worktree after submission. When further investigation is useful, the frozen runtime environment can instead be retained for the selected period.
+
+| Commit and clean up | Commit and retain the runtime environment |
+| --- | --- |
+| ![Confirm the task-only commit and clean up the Worktree](docs/screenshots/04-commit-confirmation.png) | ![Confirm the task-only commit and retain the runtime environment](docs/screenshots/06-retain-environment.png) |
+
+### Start the next iteration in the same Session
+
+After delivery and cleanup succeed, the conversation remains available and can begin another iteration from the latest Local HEAD.
+
+![Delivered Session ready to start the next iteration](docs/screenshots/05-next-iteration.png)
+
 ## Design foundation and Harness adaptation
 
 The Worktree lifecycle and Git delivery engine are adapted from a mature desktop implementation that has been exercised in real workflows. The goal is not to copy its UI, but to preserve proven safety invariants:
@@ -228,7 +264,7 @@ The following items describe possible directions for continuing the project. The
 
 ### Near term
 
-- Add complete product screenshots, marketplace presentation, and end-to-end examples.
+- Continue improving marketplace presentation and end-to-end examples.
 - Continue hardening Ready, Preview, Rollback, Finalize, cleanup, and iteration recovery.
 - Improve error categories, recovery guidance, and compatibility across real Harness releases.
 - Re-evaluate mounting the project-scoped Worktree Console tab after the primary flow stabilizes.

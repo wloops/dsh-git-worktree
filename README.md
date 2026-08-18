@@ -110,6 +110,42 @@ Agent 只在隔离 cwd 中读取、修改和验证项目。该 cwd 对应真实 
 
 Retained、cleanup-pending 或 recovery 状态不会被静默清理，必须先完成对应的人工处理。
 
+## 界面预览
+
+以下截图按一次完整任务的实际顺序展示主要交付流程。
+
+### 创建 Worktree Session
+
+在新的 Local Session 中启用 Worktree 后，Harness 会先说明会话切换边界；只有用户确认后才会创建并切换到隔离 Session。
+
+![确认创建并切换到 Worktree Session](docs/screenshots/01-create-worktree.png)
+
+### 准备验收
+
+Agent 完成实现和验证后生成 Ready for Review，用户可以查看变更摘要与验证结果，再决定是否同步到 Local。
+
+![Worktree 修改已准备验收](docs/screenshots/02-ready-for-review.png)
+
+### 在 Local Preview 中验收
+
+同步后，本次任务增量会以可撤回的 Local Preview 等待验收；用户可以提交、撤回后继续修改，或放弃任务。
+
+![任务修改正在 Local Preview 中等待验收](docs/screenshots/03-local-preview.png)
+
+### 确认提交与环境保留
+
+默认路径会确认 Commit Message 并在提交后清理 Worktree；需要继续排查时，也可以按所选时长暂时保留冻结的运行环境。
+
+| 提交并清理 | 提交并保留运行环境 |
+| --- | --- |
+| ![确认提交任务增量并清理 Worktree](docs/screenshots/04-commit-confirmation.png) | ![确认提交任务增量并保留运行环境](docs/screenshots/06-retain-environment.png) |
+
+### 在同一 Session 开始下一轮
+
+交付与 cleanup 成功后，原对话会保留，并可以基于最新 Local HEAD 开始下一轮修改。
+
+![本轮已交付并可以开始下一轮修改](docs/screenshots/05-next-iteration.png)
+
 ## 术语说明
 
 文档保留部分英文术语，以便与 Harness 界面、工具名和错误码对应；首次阅读时可以按下表理解：
@@ -244,7 +280,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 
 ### 近期
 
-- 补充完整的产品截图、市场展示和端到端使用示例；
+- 持续完善市场展示和端到端使用示例；
 - 继续稳定 Ready（待验收）、Preview（Local 预览）、Rollback（撤回预览）、Finalize（确认提交）、cleanup（清理）与 iteration（任务轮次）恢复流程；
 - 改善错误分类、recovery（恢复处理）指引和真实 Harness 版本兼容性；
 - 根据实际使用反馈，评估重新开放项目级 Worktree Console（Worktree 管理面板）标签页。
