@@ -4,181 +4,197 @@
 [![CI](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml/badge.svg)](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Let agents work in real Git worktrees, preview the result in Local, and commit only after explicit human approval.**
+**让 Agent 在真实 Git Worktree 中执行任务，把结果同步到 Local 验收，并且只在用户明确确认后提交。**
 
-`dsh-git-worktree` is an experimental Session Target plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness). Each coding task runs in its own checkout and Session, so the Local workspace controlled by the user does not become the agent's construction site.
+`dsh-git-worktree` 是面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的实验性 Session Target 插件。每个编码任务都在独立 checkout 和独立 Session 中运行，用户正在使用的 Local 工作区不会直接变成 Agent 的施工现场。
 
-This is more than a wrapper around `git worktree`. It provides a complete delivery lifecycle: create an isolated environment, iterate safely, prepare a review, preview the task in Local without committing, finalize one task-only commit, and preserve recovery evidence when safety cannot be proven.
+它不是一个简单的 `git worktree` 命令包装器，而是一套完整的任务交付流程：创建隔离环境、持续修改、生成验收报告、可撤回地同步到 Local、确认后创建单个提交，以及失败时保留恢复证据。
 
-> Its Worktree safety foundation originates from workflows used in the author's internal desktop project **Domi**. This plugin is independently adapted for Harness and does not require Domi to install or run.
+> Worktree 安全基础源自作者内部桌面项目 **Domi** 的实际工作流；本插件已针对 Harness 独立适配，安装和使用均不依赖 Domi。
 
-[中文文档](README.zh.md)
+[English](README.en.md)
 
-## What problem does it solve?
+## 它解决什么问题？
 
-When an agent edits the current working tree directly, several concerns become entangled:
+普通 Agent Session 直接修改当前工作区时，用户容易遇到几个问题：
 
-- task changes mix with existing staged, unstaged, and untracked Local state;
-- multiple agent tasks sharing one checkout can overwrite files, switch branches, or contaminate each other's commit boundaries;
-- multiple tasks writing results into Local at the same time can interfere with Preview, conflict handling, and cleanup;
-- it becomes difficult to tell which bytes belong to the current task;
-- “show me the result” may already mean an irreversible write into Local;
-- commit, cleanup, and recovery decisions may depend too heavily on model judgment;
-- starting another coding round often means losing the original conversation or rebuilding its context.
+- Agent 的修改与 Local 中已有的 staged、unstaged、untracked 内容混在一起；
+- 多个 Agent 任务共用一个 checkout 时，会相互覆盖文件、切换分支或污染彼此的提交边界；
+- 多个任务同时把结果写入 Local 时，Preview、冲突处理和清理操作容易互相干扰；
+- 任务完成前，用户很难确认哪些修改属于本次任务；
+- “查看结果”常常已经等于“写入 Local”，不容易安全撤回；
+- 提交、清理或恢复操作如果依赖模型自行判断，会放大误操作风险；
+- 长对话完成一轮后，开始下一轮通常需要换 Session、重新解释上下文。
 
-This plugin separates a coding task into two explicit boundaries:
+本插件把一次编码任务分成两个边界清晰的阶段：
 
-1. **The agent implements and validates in an Isolated Worktree.**
-2. **The user reviews the result in Local and decides whether to commit it.**
+1. **Agent 在 Isolated Worktree 中施工和验证**；
+2. **用户在 Local 中验收并决定是否提交**。
 
-## Highlights
+## 核心能力
 
-- **Real isolation** — every task gets a distinct Git worktree, Harness Workspace, cwd, and Session ID.
-- **Human-gated delivery** — the model may prepare a review, but it cannot Preview, Commit, Discard, or delete the Worktree by itself.
-- **Reversible Local Preview** — inspect the task in Local without creating a commit, then accept it or remove only that Preview.
-- **Local state preservation** — existing staged, unstaged, and untracked Local changes are not automatically folded into the task commit.
-- **Parallel preparation, serialized acceptance** — multiple Isolated Worktrees may prepare tasks concurrently, while one active Preview per Local project prevents review drafts from being written over each other.
-- **Stop on conflict instead of overwriting** — overlapping changes, Local drift, branch movement, or an inseparable delta enters conflict/recovery rather than silently choosing one side.
-- **Task-only commit** — acceptance creates one commit for the isolated task while preserving separable Local work.
-- **Continuous Session iterations** — after delivery and cleanup, iteration + 1 can start in the same Session with the full conversation intact.
-- **Review-to-edit recovery** — an unsynced review does not block discussion; a later file change safely resumes the current iteration first.
-- **Fail-closed recovery** — stale reviews, Local drift, branch changes, concurrent Previews, and uncertain cleanup stop instead of overwriting data.
+- **真实隔离**：每个任务拥有独立的 Git Worktree、Harness Workspace、cwd 和 Session ID。
+- **用户掌握交付权**：模型可以准备验收报告，但不能自行 Preview、Commit、Discard 或删除 Worktree。
+- **可撤回的 Local Preview**：先把任务增量同步到 Local 查看，不创建 Commit；不满意时可以只撤回这次 Preview。
+- **保留 Local 现场**：Local 原有的 staged、unstaged 和 untracked 内容不会被自动混入任务提交。
+- **并行施工、有序验收**：多个 Isolated Worktree 可以并行准备任务，但同一 Local 项目同时只允许一个 active Preview，避免多个验收稿交叉写入。
+- **冲突时停止而非覆盖**：重叠修改、Local 漂移、分支变化或无法安全拆分的增量会进入 conflict/recovery，不自动选择一方覆盖。
+- **单任务提交**：验收通过后，只为本次任务创建一个 Commit，并继续保留可分离的 Local 修改。
+- **同一 Session 连续迭代**：本轮成功交付并 cleanup 后，可在原 Session 中开始 iteration + 1，保留完整对话。
+- **Review 可恢复编辑**：尚未同步的验收稿不会阻断普通讨论；后续需要改文件时，Agent 会先安全恢复当前 iteration。
+- **保守恢复**：Review 过期、Local 漂移、分支变化、并发 Preview 或清理身份不确定时停止写入，不覆盖用户数据。
 
-> The current scope is a project-scoped Worktree Session workflow, not a cross-project global Worktree Manager. The project is still experimental; use it first in Git repositories that you can recover independently.
+> 当前定位是“项目级 Worktree Session 工作流”，不是跨项目全局 Worktree Manager。项目仍处于实验阶段，建议先在可恢复的 Git 仓库中使用。
 
-### Parallel tasks and conflict boundaries
+### 多任务与冲突边界
 
-Multiple tasks can edit, test, and prepare reviews concurrently in separate Worktrees, Workspaces, and Sessions without sharing one checkout. Local acceptance is deliberately serialized: one canonical Local project has one acceptance slot. Until the active Preview is committed or rolled back, another task receives `project_acceptance_busy` instead of layering another write into Local.
+多个任务可以各自在独立 Worktree、Workspace 和 Session 中并行修改、测试与准备 Review，不需要共享同一个 checkout。进入 Local 验收时则刻意串行化：同一 canonical Local 项目只有一个 acceptance slot，已有 Preview 未提交或撤回前，其他任务会收到 `project_acceptance_busy`，而不是继续叠加写入。
 
-“Parallel tasks” does not mean “automatically merge every conflict.” If a task overlaps Local changes, its review becomes stale, the branch moves non-fast-forward, or the Host cannot prove that Rollback/Finalize will preserve unrelated work, the operation stops and retains recovery evidence for the user to resolve.
+插件不会把“支持并行任务”解释成“自动合并所有冲突”。如果任务增量与 Local 修改重叠、Review 已过期、分支发生非快进变化，或 Host 无法证明 Rollback/Finalize 能保留其他修改，操作会停止并保留恢复证据，交给用户决定下一步。
 
-## Workflow
+## 工作流程
 
 ```text
 Local Session
     │
-    ├─ Create isolated Worktree Session
+    ├─ 创建隔离的 Worktree Session
     ▼
-Agent edits and validates in the Worktree
+Agent 在 Worktree 中修改、测试
     │
     ├─ worktree_ready_for_review
     ▼
 Ready for Review
     │
-    ├─ Sync to Local Preview ── Accept and commit
-    │                         └─ Roll back and continue editing
-    ├─ Skip Preview and commit directly
-    └─ Discard
+    ├─ 同步到 Local Preview ── 验收并提交
+    │                         └─ 撤回 Preview，继续修改
+    ├─ 跳过 Preview，直接提交
+    └─ 放弃任务
     │
-    └─ After cleanup: start iteration + 1 in the same Session
+    └─ cleanup 后在原 Session 开始 iteration + 1
 ```
 
-### 1. Create an isolated Session
+### 1. 创建隔离 Session
 
-In a blank/new Local Session, enable **Worktree** and confirm creation. Nothing is created before confirmation. After confirmation, the unsent text and image draft is transferred to the new isolated Session.
+在 blank/new Local Session 中打开 **Worktree** 开关并确认。确认之前不会创建 Worktree；确认后，未发送的文字和图片草稿会迁移到新的隔离 Session。
 
-An existing Local Session may also ask the model to call `worktree_create`. The source Session remains Local and is never silently switched to another cwd.
+已有 Local Session 也可以由模型调用 `worktree_create` 创建目标 Session。源 Session 始终保持 Local，不会被偷偷切换到另一个 cwd。
 
-### 2. Work inside the Worktree
+### 2. Agent 在 Worktree 中工作
 
-The agent reads, edits, and validates only inside the isolated cwd. That cwd is a real Git worktree and is registered as a Harness Workspace, so Harness Workspace and Session boundaries remain authoritative.
+Agent 只在隔离 cwd 中读取、修改和验证项目。该 cwd 对应真实 Git Worktree，同时注册为 Harness Workspace，因此 Harness 的 Workspace 和 Session 边界仍然有效。
 
-### 3. Prepare the review
+### 3. 准备验收
 
-When implementation and validation are complete, the agent calls `worktree_ready_for_review` with:
+实现和验证完成后，Agent 调用 `worktree_ready_for_review`，提交：
 
-- a change summary;
-- changed files;
-- validation status and test commands;
-- a suggested commit message.
+- 变更摘要；
+- changed files；
+- 验证状态与测试命令；
+- 建议 Commit Message。
 
-This stores a review report. It does not write to Local and does not create a commit.
+该操作只保存验收报告，不写入 Local，也不创建 Commit。
 
-### 4. Choose how to deliver
+### 4. 用户决定如何交付
 
-The user can then:
+用户可以选择：
 
-- **Sync to Local for review** — create an uncommitted, reversible Preview;
-- **Accept and commit** — commit only the task delta;
-- **Roll back and continue editing** — remove the Preview and return to the Worktree;
-- **Skip review and commit directly** — use the guarded direct-delivery path after explicit confirmation;
-- **Discard** — clean up the task environment when all safety conditions pass.
+- **同步到 Local 验收**：创建一个未提交、可撤回的 Preview；
+- **验收通过并提交**：只提交本次任务增量；
+- **撤回并继续修改**：移除 Preview，返回原 Worktree；
+- **跳过验收直接提交**：显式确认后走受保护的直接交付路径；
+- **放弃任务**：在满足安全条件后清理任务环境。
 
-### 5. Start the next round in the same conversation
+### 5. 在原对话开始下一轮
 
-After a successful commit and cleanup, the current Worktree cwd is removed, but the Session and conversation remain. When the user requests more code or file changes, the plugin can recreate the immutable cwd from the latest Local HEAD and start the next iteration safely.
+成功提交并 cleanup 后，本轮 Worktree cwd 会被删除，但 Session 和对话仍然保留。用户提出新的代码或文件修改时，插件可以基于最新 Local HEAD，安全重建该 Session 的 immutable cwd，并进入下一轮 iteration。
 
-Retained, cleanup-pending, and recovery states are never removed silently. They must be handled before another iteration can begin.
+Retained、cleanup-pending 或 recovery 状态不会被静默清理，必须先完成对应的人工处理。
 
-## Design foundation and Harness adaptation
+## 术语说明
 
-The Worktree lifecycle and Git delivery engine are adapted from a mature desktop implementation that has been exercised in real workflows. The goal is not to copy its UI, but to preserve proven safety invariants:
+文档保留部分英文术语，以便与 Harness 界面、工具名和错误码对应；首次阅读时可以按下表理解：
 
-- managed checkout registry and revision CAS;
-- canonical path, Git common-dir, and git-dir identity checks;
-- complete fingerprints for staged, unstaged, untracked, binary, and deleted files;
-- receipt-first Local Preview, Rollback, and Finalize;
-- task-only commits that preserve unrelated Local work;
-- internal refs, journal recovery, retention, quarantine, and conservative cleanup;
-- fail closed whenever the Host cannot prove that a write is safe.
+| 术语 | 中文注解 | 在本项目中的含义 |
+| --- | --- | --- |
+| Session Target | 会话执行目标 | 当前 Session 被固定到的实际工作位置与执行边界，可以是 Local 或 Isolated Worktree |
+| Isolated Worktree / checkout | 隔离 Worktree / checkout | Agent 独立施工的 Git 工作副本，不直接修改用户的 Local checkout |
+| Review / Ready for Review | 验收稿 / 等待验收 | Agent 完成当前阶段后提交的摘要、文件、验证结果和建议 Commit Message |
+| Local Preview | Local 预览 | 将任务增量临时同步到 Local 查看，但暂不创建 Commit |
+| Rollback / Finalize | 撤回预览 / 确认提交 | 分别表示安全移除本次 Preview，或将验收通过的任务增量提交到 Local |
+| acceptance slot | 验收槽位 | 同一 Local 项目唯一的 Preview 写入名额，用于避免多个任务同时写入 Local |
+| cleanup / retention | 清理 / 保留运行环境 | 交付后立即删除 Worktree，或按用户选择暂时保留冻结环境 |
+| iteration | 任务轮次 | 同一 Session 中一次完整的创建、修改、验收与交付周期 |
+| fail closed / recovery | 保守拒绝 / 恢复处理 | 无法证明安全时停止写入并保留证据，而不是自动猜测或覆盖 |
 
-DeepSeek Harness has a different Host and Session model from the original desktop host, so the integration was adapted rather than copied mechanically:
+## 设计基础与 Harness 适配
 
-- Harness Workspace and Session cwd are authoritative; the plugin registry is supporting state only;
-- Host capabilities are exposed through strict Typert Remote, while browser UI uses public Harness Client Slots;
-- Local source and Isolated target always use separate Sessions;
-- cleanup does not mutate Harness's persisted Session cwd; the next iteration recreates the same path only after strict identity checks;
-- the model creates targets, resumes editing, and prepares reviews, while user-controlled surfaces own Local writes, commits, and cleanup.
+本项目的 Worktree 生命周期与 Git 交付引擎基于一套经过实际使用验证的桌面端实现重新适配。重点不是复制原有界面，而是保留已经验证过的安全不变量：
 
-See [Session Target porting notes](docs/PORTING.md) for the detailed identity, state, and recovery boundary mapping.
+- managed checkout registry 与 revision CAS；
+- canonical path、Git common-dir 和 git-dir 身份校验；
+- staged、unstaged、untracked、binary 和 deletion 状态的完整 fingerprint；
+- receipt-first Local Preview、Rollback 与 Finalize；
+- 只提交任务增量，同时保留 Local 其他修改；
+- internal refs、journal recovery、retention、quarantine 和保守 cleanup；
+- 无法证明安全时 fail closed，而不是猜测后继续写入。
 
-## Requirements
+DeepSeek Harness 与原桌面端宿主模型不同，因此本插件对产品和权限边界做了重新适配：
 
-- Node.js 20 or newer;
-- DeepSeek Harness `0.1.0-rc.6` package line;
-- Harness Web Client for the complete Worktree creation and acceptance UI;
-- a Git repository as the current Workspace.
+- Harness 的 Workspace 与 Session cwd 是权威身份，插件 registry 只作为辅助状态；
+- Host 能力通过 strict Typert Remote 暴露，浏览器 UI 使用 Harness 的公开 Client Slots；
+- Local source Session 与 Isolated target Session 始终分离；
+- cleanup 后不修改 Harness 已持久化的 Session cwd，而是在下一轮严格校验后重建同一路径；
+- 模型只负责创建、恢复编辑和准备验收，最终写入 Local、提交与清理由用户入口控制。
 
-## Install
+详细的身份、状态与恢复边界见 [Session Target 迁移说明](docs/PORTING.md)。
 
-Install the npm package:
+## 环境要求
+
+- Node.js 20 或更高版本；
+- DeepSeek Harness `0.1.0-rc.6` 包线；
+- Harness Web Client，用于完整的 Worktree 创建和验收界面；
+- 当前 Workspace 是 Git 仓库。
+
+## 安装
+
+推荐直接安装 npm 包：
 
 ```bash
 dsh plugin --profile web add dsh-git-worktree
 ```
 
-Or install a specific Git tag:
+也可以安装指定 Git tag：
 
 ```bash
 dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.0
 ```
 
-With pnpm 10 or newer, a Git install may require this entry in the profile's `pnpm-workspace.yaml` before retrying:
+使用 pnpm 10 或更高版本时，Git 源安装可能需要先在 profile 的 `pnpm-workspace.yaml` 中允许该包执行 `prepare`：
 
 ```yaml
 allowBuilds:
   dsh-git-worktree: true
 ```
 
-Start Harness normally after installation and open a Git repository as the Workspace.
+安装完成后正常启动 Harness，并打开一个 Git 仓库作为 Workspace。
 
-## Model tools and user controls
+## 模型工具与用户入口
 
-### Model tools
+### 模型工具
 
-| Tool | Purpose |
+| 工具 | 作用 |
 | --- | --- |
-| `worktree_create` | Create a managed Worktree from a Local Session and reserve a distinct target Session |
-| `worktree_list` | List Worktrees visible to the current Session in the original project |
-| `worktree_resume_revision` | Invalidate an unsynced review and resume the current iteration without touching Local |
-| `worktree_begin_next_iteration` | Recreate the Worktree cwd for a delivered and successfully cleaned Session |
-| `worktree_ready_for_review` | Save the delivery report and stop for explicit human acceptance |
+| `worktree_create` | 从 Local Session 创建 managed Worktree，并预留独立 target Session |
+| `worktree_list` | 列出当前 Session 在原项目中可见的 Worktree |
+| `worktree_resume_revision` | 使尚未同步的旧 Review 失效，在不触碰 Local 的情况下恢复当前 iteration |
+| `worktree_begin_next_iteration` | 为已交付且 cleanup 完成的 Session 重建下一轮 Worktree cwd |
+| `worktree_ready_for_review` | 保存交付报告并停止，等待用户验收 |
 
-Finish, Discard, Remove, and Local Preview are not model tools. Ordinary discussion leaves a Ready review unchanged; only new code or file work needs to resume Working.
+Finish、Discard、Remove 和 Local Preview 不属于模型工具。普通讨论不会让 Ready Review 失效；只有新的代码或文件修改才需要恢复 Working。
 
-### User controls
+### 用户操作
 
-The Web UI provides the normal create, Preview, rollback, commit, retention, continue-editing, and discard actions. Equivalent Host-controlled operations are also available through `/worktree` commands:
+Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续修改和放弃入口。Host 控制的同类能力也可通过 `/worktree` 命令使用：
 
 ```text
 /worktree status
@@ -191,67 +207,67 @@ The Web UI provides the normal create, Preview, rollback, commit, retention, con
 /worktree remove <checkoutId>
 ```
 
-`finalize` uses the suggested commit message from the current review. `finish` is the explicit direct-commit path with a user-provided message.
+`finalize` 使用当前验收报告中的建议 Commit Message；`finish` 是用户提供自定义消息的显式直接提交路径。
 
-## Safety model
+## 安全模型
 
-Every acceptance operation is revalidated by the Host. Browser display state and model-provided identity data are never treated as authority.
+所有验收操作都由 Host 重新校验，不信任浏览器展示状态或模型输出中的身份信息。
 
-Important rules include:
+关键规则包括：
 
-- Local source and Isolated target use different Session IDs;
-- an active target Workspace must canonicalize to the managed root recorded by the Host;
-- one canonical Local project can have only one active Preview;
-- Preview receipts and internal refs are persisted before Local writes;
-- Preview, Rollback, Finalize, Discard, and resume-editing paths bind checkout, revision, review, and fingerprint identity;
-- Rollback removes only the delta proven to belong to the Preview and preserves separable Local changes made during review;
-- branch switches, non-fast-forward history, overlapping conflicts, committed Preview bytes, or additional drift enter recovery instead of being overwritten;
-- cleanup verifies managed-path identity, Git metadata, and the final fingerprint; uncertain residue is retained or quarantined;
-- historical records from the old irreversible Apply flow are not automatically finished or discarded.
+- Local source 与 Isolated target 使用不同 Session ID；
+- active target 的 Workspace 必须 canonicalize 到 registry 记录的 managed root；
+- 同一 canonical Local 项目同时最多存在一个 active Preview；
+- Preview receipt 和 internal refs 在写入 Local 前持久化；
+- Preview、Rollback、Finalize、Discard 和继续修改都绑定 checkout、revision、review 与 fingerprint；
+- Rollback 只移除可以证明属于本次 Preview 的增量，并尽量保留验收期间新增的无关 Local 修改；
+- branch switch、non-fast-forward、重叠冲突、Preview 已进入 Commit 或额外漂移会进入 recovery，而不是强行覆盖；
+- cleanup 前验证 managed path、Git metadata 和最终 fingerprint；未知残余会保留或 quarantine；
+- 历史不可逆 Apply 记录不会被自动 Finish 或 Discard。
 
-See [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md) for the complete state model and authorization matrix.
+更完整的状态机和权限矩阵见 [Worktree Console 架构](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)。
 
-## Current limitations
+## 当前限制
 
-- There is no cross-project global Worktree Manager yet.
-- The project-scoped Worktree Console Host capabilities and components remain available, but the visible `conversation.view` tab is not mounted in `v0.3.0`.
-- Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.0-rc.6` line.
-- Subagents inherit their parent Session cwd; they share the isolated boundary only when the parent is already a Worktree Session.
-- Dependency snapshot/restore and the complete collaborator handoff UI have not yet been implemented.
-- A reviewed stage cannot yet be saved as an internal checkpoint before continuing development.
-- An Isolated Session cannot yet request a bounded transaction to repair the real Local checkout directly.
-- Cleanup removes the current Worktree cwd, but a delivered Session can recreate the path and start another iteration after strict validation.
+- 暂无跨项目全局 Worktree Manager（Worktree 管理器）；
+- 项目级 Worktree Console（Worktree 管理面板）的 Host 能力和组件仍保留，但 `v0.3.0` 暂不挂载可见的 `conversation.view` 标签页；
+- 在已验证的 Harness `0.1.0-rc.6` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
+- 子 Agent 继承父 Session cwd；只有父 Session 已经位于 Worktree Session 时，子 Agent 才处于相同隔离边界；
+- dependency snapshot/restore（依赖快照与恢复）与完整 collaborator handoff UI（协作者交接界面）尚未实现；
+- 暂不支持把已验收阶段固化为内部检查点后继续开发；
+- 暂不支持 Isolated Session 申请受控事务直接维修真实 Local；
+- cleanup 会删除本轮 Worktree cwd，但已交付 Session 可以在严格校验后重建路径并开始下一轮。
 
-## Roadmap
+## 后续计划
 
-The following items describe possible directions for continuing the project. They are not release-date commitments.
+以下是继续完善项目的可能方向，不代表已经承诺的发布时间：
 
-### Near term
+### 近期
 
-- Add complete product screenshots, marketplace presentation, and end-to-end examples.
-- Continue hardening Ready, Preview, Rollback, Finalize, cleanup, and iteration recovery.
-- Improve error categories, recovery guidance, and compatibility across real Harness releases.
-- Re-evaluate mounting the project-scoped Worktree Console tab after the primary flow stabilizes.
+- 补充完整的产品截图、市场展示和端到端使用示例；
+- 继续稳定 Ready（待验收）、Preview（Local 预览）、Rollback（撤回预览）、Finalize（确认提交）、cleanup（清理）与 iteration（任务轮次）恢复流程；
+- 改善错误分类、recovery（恢复处理）指引和真实 Harness 版本兼容性；
+- 根据实际使用反馈，评估重新开放项目级 Worktree Console（Worktree 管理面板）标签页。
 
-### Medium term
+### 中期
 
-- Add “save stage and continue” so long tasks can record reviewed stages inside the isolated checkout, continue from a clean worktree, and retain stage history in final acceptance.
-- Evaluate a bounded Local repair transaction: a user-approved temporary authorization tied to the current Local state, allowing an Isolated Session to repair Local through restricted tools without changing its Session Target, then automatically resume the original task.
-- Port dependency snapshot/restore to reduce repeated setup across Worktrees.
-- Complete the collaborator/subagent handoff lifecycle so delegated work can be released and delivered safely.
-- Add richer project-scoped Worktree listing, inspection, retention, and cleanup management.
-- Improve review presentation with clearer diff and validation information without weakening Host authority.
+- 增加“保存阶段并继续”：让长任务可以把已验收阶段固化到隔离 checkout、清理工作区后继续开发，并在最终验收中保留阶段记录；
+- 评估受控 Local 维修事务：由用户批准一次绑定当前 Local 状态的临时授权，让 Isolated Session 在不改变会话执行目标的情况下通过受限工具修复真实 Local，并自动恢复原任务；
+- 迁移 dependency snapshot/restore（依赖快照与恢复），减少不同 Worktree 间重复安装依赖的成本；
+- 完成 collaborator / subagent handoff（协作者 / 子 Agent 交接）生命周期，让协作任务可以安全释放并交付；
+- 提供更完整的项目级 Worktree 列表、状态检查、保留期与清理管理；
+- 丰富 Review（验收）展示，在不改变 Host 权威边界的前提下提供更清晰的差异和验证信息。
 
-### Long term
+### 长期
 
-- Build a cross-project global Worktree Manager.
-- Integrate Workflow-level `agent({ isolation })` when Harness exposes a stable seam.
-- Add richer audit, runtime metrics, and recovery diagnostics.
-- Explore richer multi-task orchestration, serialized acceptance, and cross-Session handoff while preserving explicit human approval for every Local write.
+- 建设跨项目全局 Worktree Manager（Worktree 管理器）；
+- 在 Harness 提供稳定接口后接入 Workflow 级 `agent({ isolation })`（工作流级隔离）；
+- 增加更完整的审计、运行指标和恢复诊断能力；
+- 探索更完整的多任务并行调度、有序验收与跨 Session handoff（跨 Session 交接），同时继续保持 Local 写入必须由用户确认。
 
-## Local development
+## 本地开发
 
-Install dependencies and run the standard checks:
+安装依赖并运行标准检查：
 
 ```bash
 pnpm install
@@ -261,38 +277,38 @@ pnpm run build
 pnpm run check:publish
 ```
 
-For an end-to-end local Harness run:
+端到端启动本地 Harness：
 
 ```bash
 pnpm run dev:dsh
 ```
 
-This command builds the current checkout, packs a temporary tarball, installs it into the `web` profile, validates the composed configuration, prepares a marker-protected disposable Git fixture, and starts `dsh web` at `http://127.0.0.1:3081` by default. It does not publish packages or push Git refs.
+该命令会构建当前 checkout、打包临时 tarball、安装到 `web` profile、验证组合配置、准备受 marker 保护的临时 Git fixture，并默认在 `http://127.0.0.1:3081` 启动 `dsh web`。它不会发布 npm 包或 push Git refs。
 
-Useful variants:
+常用变体：
 
 ```bash
-# Install and verify the snapshot without starting Web
+# 只安装并验证当前快照，不启动 Web
 pnpm run dev:dsh:install
 
-# Verify the already-installed profile
+# 验证已安装的 profile
 pnpm run dev:dsh:smoke
 
-# Select another Git root, port, profile, or Harness source checkout
+# 指定 Git 根目录、端口或 Harness 源码 checkout
 pnpm run dev:dsh -- --repo G:/path/to/repo --port 4090 --profile web
 
-# Remove the development install and cached local archives
+# 移除开发安装和缓存的本地归档
 pnpm run dev:dsh:remove
 ```
 
-## Documentation
+## 文档
 
-- [Session Target porting notes](docs/PORTING.md)
-- [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)
-- [UI development notes](docs/UI-DEVELOPMENT.md)
-- [Release checklist](docs/RELEASE.md)
-- [Changelog](CHANGELOG.md)
+- [Session Target 迁移说明](docs/PORTING.md)
+- [Worktree Console 架构](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)
+- [UI 开发说明](docs/UI-DEVELOPMENT.md)
+- [发布清单](docs/RELEASE.md)
+- [变更记录](CHANGELOG.md)
 
-## License
+## 许可证
 
 [MIT](LICENSE)
