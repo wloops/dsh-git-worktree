@@ -202,7 +202,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定 Git tag：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.1
 ```
 
 使用 pnpm 10 或更高版本时，Git 源安装可能需要先在 profile 的 `pnpm-workspace.yaml` 中允许该包执行 `prepare`：
@@ -266,7 +266,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 ## 当前限制
 
 - 暂无跨项目全局 Worktree Manager（Worktree 管理器）；
-- 项目级 Worktree Console（Worktree 管理面板）的 Host 能力和组件仍保留，但 `v0.3.0` 暂不挂载可见的 `conversation.view` 标签页；
+- 项目级 Worktree Console（Worktree 管理面板）的 Host 能力和组件仍保留，但 `v0.3.1` 暂不挂载可见的 `conversation.view` 标签页；
 - 在已验证的 Harness `0.1.0-rc.6` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
 - 子 Agent 继承父 Session cwd；只有父 Session 已经位于 Worktree Session 时，子 Agent 才处于相同隔离边界；
 - dependency snapshot/restore（依赖快照与恢复）与完整 collaborator handoff UI（协作者交接界面）尚未实现；

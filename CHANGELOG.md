@@ -2,6 +2,21 @@
 
 本项目的显著变更记录在此文件中。版本号遵循 Semantic Versioning；在 `0.x` 阶段，minor 版本可能包含需要迁移的公开能力调整。
 
+## [0.3.1] - 2026-08-18
+
+`0.3.1` 修复验收卡操作菜单被卡片裁剪的问题，并将项目文档重组为中文优先、带完整产品流程截图的发布入口。
+
+### Fixed
+
+- Ready for Review Tool 卡片允许操作菜单溢出显示，避免菜单被卡片边界裁剪。
+- 验收卡菜单改为向下展开，composer dock 中的同类菜单继续向上展开，并增加对应 CSS 回归测试。
+
+### Changed
+
+- 中文 README 成为默认入口，英文文档迁移到 `README.en.md`。
+- 重写 Worktree 产品文档、迁移说明与架构入口，补充创建、Ready、Local Preview、提交、保留环境和下一轮修改的产品截图。
+- 本地 DSH 开发 tarball staging 同步包含 `README.en.md`。
+
 ## [0.3.0] - 2026-08-17
 
 `0.3.0` 完善同一 isolated Session 的连续修改体验：未同步 Review 可以安全恢复编辑，成功交付并 cleanup 后也能保留 Session ID、immutable cwd 与完整对话开始下一轮。
@@ -88,6 +103,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.3.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/wloops/dsh-git-worktree/releases/tag/v0.1.2

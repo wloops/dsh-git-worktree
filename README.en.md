@@ -186,7 +186,7 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific Git tag:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.1
 ```
 
 With pnpm 10 or newer, a Git install may require this entry in the profile's `pnpm-workspace.yaml` before retrying:
@@ -250,7 +250,7 @@ See [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md) for t
 ## Current limitations
 
 - There is no cross-project global Worktree Manager yet.
-- The project-scoped Worktree Console Host capabilities and components remain available, but the visible `conversation.view` tab is not mounted in `v0.3.0`.
+- The project-scoped Worktree Console Host capabilities and components remain available, but the visible `conversation.view` tab is not mounted in `v0.3.1`.
 - Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.0-rc.6` line.
 - Subagents inherit their parent Session cwd; they share the isolated boundary only when the parent is already a Worktree Session.
 - Dependency snapshot/restore and the complete collaborator handoff UI have not yet been implemented.
