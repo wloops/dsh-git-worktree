@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { WorktreeReviewRow } from '../src/client/WorktreeReviewRow.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
+import { WORKTREE_STYLES } from '../src/client/styles.js'
 import { WorktreeReviewPanel, type WorktreeReviewEvidence } from '../src/client/review-console/WorktreeReviewPanel.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
 
@@ -72,6 +73,28 @@ function loggedReviewRow(adapter?: ReturnType<typeof createWorktreeConsoleAdapte
 }
 
 describe('Domi-style Worktree Review', () => {
+  test('验收卡菜单不被卡片裁剪，卡片向下展开而 composer dock 向上展开', () => {
+    const style = document.createElement('style')
+    style.textContent = WORKTREE_STYLES
+    document.head.append(style)
+    try {
+      const rules = Array.from(style.sheet?.cssRules ?? []) as CSSStyleRule[]
+      const rule = (selector: string): CSSStyleDeclaration => {
+        const matched = rules.find(candidate => candidate.selectorText === selector)
+        if (!matched) throw new Error(`Missing CSS rule: ${selector}`)
+        return matched.style
+      }
+
+      expect(rule('.dsh-wt-card[data-tool="worktree_ready_for_review"]').overflow).toBe('visible')
+      expect(rule('.dsh-wt-more-content').top).toBe('calc(100% + 6px)')
+      expect(rule('.dsh-wt-more-content').bottom).toBe('auto')
+      expect(rule('.dsh-wt-review-dock .dsh-wt-more-content').top).toBe('auto')
+      expect(rule('.dsh-wt-review-dock .dsh-wt-more-content').bottom).toBe('calc(100% + 6px)')
+    } finally {
+      style.remove()
+    }
+  })
+
   test('默认只展示中文摘要，并按用户操作展开验证详情', () => {
     const evidence = review({ detailsMarkdown: '<img src=x onerror=alert(1)>\n\n**plain markdown source**' })
     const { container } = render(<WorktreeReviewPanel review={evidence} />)

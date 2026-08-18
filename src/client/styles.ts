@@ -17,6 +17,7 @@ export const WORKTREE_STYLES = String.raw`
   overflow: hidden;
   font-size: 13px;
 }
+.dsh-wt-card[data-tool="worktree_ready_for_review"] { overflow:visible; }
 .dsh-wt-head { display:flex; align-items:center; gap:10px; padding:10px 12px; min-width:0; }
 .dsh-wt-mark { width:9px; height:9px; flex:0 0 auto; border-radius:999px; background:var(--wt-green); box-shadow:0 0 0 4px color-mix(in srgb, var(--wt-green) 14%, transparent); }
 .dsh-wt-card[data-state="running"] .dsh-wt-mark { background:var(--wt-amber); animation:dsh-wt-pulse 1.4s ease-in-out infinite; }

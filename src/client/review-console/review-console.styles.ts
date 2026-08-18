@@ -40,7 +40,8 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
 .dsh-wt-more-menu { position:relative; }
 .dsh-wt-more-trigger { display:grid; place-items:center; width:32px; height:30px; border:1px solid var(--wt-line); border-radius:8px; cursor:pointer; list-style:none; font-weight:800; letter-spacing:1px; }
 .dsh-wt-more-trigger::-webkit-details-marker { display:none; }
-.dsh-wt-more-content { position:absolute; right:0; bottom:calc(100% + 6px); z-index:40; min-width:150px; padding:4px; border:1px solid var(--wt-line); border-radius:9px; background:Canvas; box-shadow:0 10px 30px color-mix(in srgb, black 18%, transparent); }
+.dsh-wt-more-content { position:absolute; right:0; top:calc(100% + 6px); bottom:auto; z-index:40; min-width:150px; padding:4px; border:1px solid var(--wt-line); border-radius:9px; background:Canvas; box-shadow:0 10px 30px color-mix(in srgb, black 18%, transparent); }
+.dsh-wt-review-dock .dsh-wt-more-content { top:auto; bottom:calc(100% + 6px); }
 .dsh-wt-more-item { width:100%; border:0; border-radius:6px; padding:7px 9px; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
 .dsh-wt-more-item:hover:not(:disabled) { background:color-mix(in srgb, currentColor 7%, transparent); }
 .dsh-wt-more-item:disabled { opacity:.5; cursor:not-allowed; }
