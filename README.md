@@ -187,7 +187,7 @@ DeepSeek Harness 与原桌面端宿主模型不同，因此本插件对产品和
 ## 环境要求
 
 - Node.js 20 或更高版本；
-- DeepSeek Harness `0.1.0-rc.6` 包线；
+- DeepSeek Harness `0.1.0-rc.7` 包线；
 - Harness Web Client，用于完整的 Worktree 创建和验收界面；
 - 当前 Workspace 是 Git 仓库。
 
@@ -267,7 +267,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 
 - 暂无跨项目全局 Worktree Manager（Worktree 管理器）；
 - 项目级 Worktree Console（Worktree 管理面板）的 Host 能力和组件仍保留，但 `v0.3.1` 暂不挂载可见的 `conversation.view` 标签页；
-- 在已验证的 Harness `0.1.0-rc.6` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
+- 在已验证的 Harness `0.1.0-rc.7` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
 - 子 Agent 继承父 Session cwd；只有父 Session 已经位于 Worktree Session 时，子 Agent 才处于相同隔离边界；
 - dependency snapshot/restore（依赖快照与恢复）与完整 collaborator handoff UI（协作者交接界面）尚未实现；
 - 暂不支持把已验收阶段固化为内部检查点后继续开发；

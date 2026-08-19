@@ -171,7 +171,7 @@ See [Session Target porting notes](docs/PORTING.md) for the detailed identity, s
 ## Requirements
 
 - Node.js 20 or newer;
-- DeepSeek Harness `0.1.0-rc.6` package line;
+- DeepSeek Harness `0.1.0-rc.7` package line;
 - Harness Web Client for the complete Worktree creation and acceptance UI;
 - a Git repository as the current Workspace.
 
@@ -251,7 +251,7 @@ See [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md) for t
 
 - There is no cross-project global Worktree Manager yet.
 - The project-scoped Worktree Console Host capabilities and components remain available, but the visible `conversation.view` tab is not mounted in `v0.3.1`.
-- Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.0-rc.6` line.
+- Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.0-rc.7` line.
 - Subagents inherit their parent Session cwd; they share the isolated boundary only when the parent is already a Worktree Session.
 - Dependency snapshot/restore and the complete collaborator handoff UI have not yet been implemented.
 - A reviewed stage cannot yet be saved as an internal checkpoint before continuing development.
