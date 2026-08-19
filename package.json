@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-worktree",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Experimental Git worktree Session Targets for DeepSeek Harness with real isolated sessions, review ToolViews, human-confirmed delivery, and safe cleanup.",
   "type": "module",
   "main": "lib/index.js",

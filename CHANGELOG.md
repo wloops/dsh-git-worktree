@@ -4,9 +4,14 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-19
+
+`0.3.2` 将插件更新到已验证的 DeepSeek Harness `0.1.0-rc.7` 包线，并保持现有 Worktree Session Target 与验收交付接口兼容。
+
 ### Compatibility
 
 - 将 DeepSeek Harness 依赖与已验证兼容包线更新到 `0.1.0-rc.7`；rc.6 → rc.7 的已使用公开类型与 Remote/Tool 注册接口保持兼容。
+- 重新生成纯 rc.7 锁文件，消除 rc.6 peer 混用，并更新中英文环境要求与已知限制说明。
 
 ## [0.3.1] - 2026-08-18
 
@@ -109,6 +114,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.3.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.1.2...v0.2.0
