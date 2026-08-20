@@ -133,6 +133,31 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     }
   }
 
+  async function verifyCallerRoot(
+    sessionId: string,
+    record: ManagedCheckoutRecord,
+    expectedRoot: string,
+  ): Promise<void> {
+    const session = options.lookup.getSession(sessionId)
+    const project = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
+    if (project === undefined) {
+      throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
+    }
+    const cleanedOwnerCwd = record.ownerSessionId === sessionId
+      && record.phase === 'discarded'
+      && record.delivery.state === 'delivered'
+      && !options.files.exists(project.root)
+      && sameLocalRoot(resolve(project.root), resolve(expectedRoot))
+    if (cleanedOwnerCwd) return
+    if (!options.files.exists(project.root)) {
+      throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
+    }
+    const workspaceRoot = await options.files.canonicalize(project.root)
+    if (!sameLocalRoot(workspaceRoot, expectedRoot)) {
+      throw domainError('project_mismatch', '当前 Session cwd 与 Worktree 授权边界不一致')
+    }
+  }
+
   async function authorize(sessionId: string, checkoutId: string): Promise<ManagedCheckoutRecord> {
     const caller = await options.module.inspect(sessionId)
     const record = recordOf(options.registry, checkoutId)
@@ -142,26 +167,8 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     if (record.projectId !== caller.project.id) {
       throw domainError('project_mismatch', 'Worktree 与当前 Session 项目不一致')
     }
-    const session = options.lookup.getSession(sessionId)
-    const project = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
-    if (project === undefined) {
-      throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
-    }
     const expectedRoot = record.ownerSessionId === sessionId ? record.managedRoot : record.localRoot
-    const cleanedOwnerCwd = record.ownerSessionId === sessionId
-      && record.phase === 'discarded'
-      && record.delivery.state === 'delivered'
-      && !options.files.exists(project.root)
-      && sameLocalRoot(resolve(project.root), resolve(expectedRoot))
-    if (!cleanedOwnerCwd) {
-      if (!options.files.exists(project.root)) {
-        throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
-      }
-      const workspaceRoot = await options.files.canonicalize(project.root)
-      if (!sameLocalRoot(workspaceRoot, expectedRoot)) {
-        throw domainError('project_mismatch', '当前 Session cwd 与 Worktree 授权边界不一致')
-      }
-    }
+    await verifyCallerRoot(sessionId, record, expectedRoot)
     if (record.phase !== 'discarded') {
       const visible = await options.module.listManagedWorktreesForSession(sessionId, { checkoutId })
       if (!visible.some(item => item.checkoutId === checkoutId)) {
@@ -169,6 +176,35 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       }
     }
     return record
+  }
+
+  async function linkedReadAccess(
+    sessionId: string,
+    checkoutId: string,
+  ): Promise<{ record: ManagedCheckoutRecord; linkedRead: boolean }> {
+    const requested = recordOf(options.registry, checkoutId)
+    if (requested.ownerSessionId === sessionId || requested.sourceSessionId === sessionId) {
+      return { record: await authorize(sessionId, checkoutId), linkedRead: false }
+    }
+    const caller = await callerTarget(sessionId)
+    if (caller.checkout.kind !== 'isolated') {
+      throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+    }
+    const anchor = await authorize(sessionId, caller.checkout.id)
+    const sourceSessionId = anchor.sourceSessionId ?? anchor.ownerSessionId
+    const requestedSourceSessionId = requested.sourceSessionId ?? requested.ownerSessionId
+    if (
+      requested.projectId !== anchor.projectId
+      || requestedSourceSessionId !== sourceSessionId
+      || !sameLocalRoot(requested.localRoot, anchor.localRoot)
+    ) {
+      throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+    }
+    if (!ownerSessionAvailable(requested)) {
+      throw domainError('checkout_missing', '关联 Worktree 的 owner Session 不可用')
+    }
+    await verifyCallerRoot(requested.ownerSessionId, requested, requested.managedRoot)
+    return { record: requested, linkedRead: true }
   }
 
   async function observe(record: ManagedCheckoutRecord): Promise<{
@@ -221,15 +257,16 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
   }
 
   async function details(sessionId: string, checkoutId: string) {
-    const record = await authorize(sessionId, checkoutId)
-    const observed = await observe(record)
-    return projectReviewSlot(record, projectDetails(
-      record,
+    const access = await linkedReadAccess(sessionId, checkoutId)
+    const observed = await observe(access.record)
+    return projectReviewSlot(access.record, projectDetails(
+      access.record,
       sessionId,
       observed.managedRoot,
       observed.snapshot,
       observed.dirty,
-      ownerSessionAvailable(record),
+      ownerSessionAvailable(access.record),
+      access.linkedRead,
     ))
   }
 
@@ -251,22 +288,39 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
     list: request => outcome(async () => {
       const caller = await callerTarget(request.sessionId)
-      const active = await options.module.listManagedWorktreesForSession(request.sessionId, {
+      let sourceSessionId = request.sessionId
+      let localRoot: string | undefined
+      if (caller.checkout.kind === 'isolated') {
+        const anchor = await authorize(request.sessionId, caller.checkout.id)
+        sourceSessionId = anchor.sourceSessionId ?? anchor.ownerSessionId
+        localRoot = anchor.localRoot
+      } else {
+        const session = options.lookup.getSession(request.sessionId)
+        const project = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
+        if (project === undefined || project.id !== caller.project.id || !options.files.exists(project.root)) {
+          throw domainError('project_mismatch', '当前 Session Workspace 无法证明关联 Worktree 项目')
+        }
+        localRoot = await options.files.canonicalize(project.root)
+      }
+      const active = await options.module.listManagedWorktreesForSession(sourceSessionId, {
         needsAttention: request.needsAttention,
       })
       const activeById = new Map(active.map(summary => [summary.checkoutId, summary]))
       const records = Object.values(options.registry.read().managedCheckouts)
         .filter(record => record.projectId === caller.project.id)
-        .filter(record => record.ownerSessionId === request.sessionId || record.sourceSessionId === request.sessionId)
+        .filter(record => (record.sourceSessionId ?? record.ownerSessionId) === sourceSessionId)
+        .filter(record => localRoot === undefined || sameLocalRoot(record.localRoot, localRoot))
         .filter(record => request.includeDelivered === true || record.phase !== 'discarded')
         .filter(record => record.phase === 'discarded' || activeById.has(record.checkoutId))
       const worktrees = []
       for (const record of records) {
         const observed = record.phase === 'discarded' ? undefined : await observe(record)
+        const linkedRead = record.ownerSessionId !== request.sessionId && record.sourceSessionId !== request.sessionId
         const projected = projectReviewSlot(record, projectRecord(record, request.sessionId, {
           ...observed,
           summary: activeById.get(record.checkoutId),
           ownerSessionAvailable: ownerSessionAvailable(record),
+          linkedRead,
         }))
         if (request.needsAttention !== true || projected.state === 'cleanup_pending' || projected.state === 'recovery_required') {
           worktrees.push(projected)

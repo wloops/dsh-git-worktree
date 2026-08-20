@@ -216,7 +216,7 @@ Finish, Discard, Remove, and Local Preview are not model tools. Ordinary discuss
 
 ### User controls
 
-The Web UI provides the normal create, Preview, rollback, commit, retention, continue-editing, and discard actions. Equivalent Host-controlled operations are also available through `/worktree` commands:
+The Web UI provides the normal create, Preview, rollback, commit, retention, continue-editing, and discard actions. The `Local / Worktree · status` capsule in the Session Header opens the current-target controls and the Linked Worktrees manager directly; a source Session or any linked target Session can view the same source-linked tasks, navigate to their Sessions, and manage its own Worktree without returning to the original project. The manager stays focused on status, navigation, and owner lifecycle actions; review remains in the dedicated Review card and composer dock. Equivalent Host-controlled operations are also available through `/worktree` commands:
 
 ```text
 /worktree status
@@ -252,7 +252,8 @@ See [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md) for t
 ## Current limitations
 
 - There is no cross-project global Worktree Manager yet.
-- The project-scoped Worktree Console Host capabilities and components remain available, but the visible `conversation.view` tab is not mounted in `v0.3.3`.
+- The linked Worktree Manager opens from the Session Header control; a persistent `conversation.view` tab is still not mounted.
+- Harness still presents Local and Worktree Sessions as separate Workspaces by canonical cwd. The plugin manager shows the `sourceSessionId` relationship without changing native sidebar grouping.
 - Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.0-rc.8` line.
 - Subagents inherit their parent Session cwd; they share the isolated boundary only when the parent is already a Worktree Session.
 - Dependency snapshot/restore and the complete collaborator handoff UI have not yet been implemented.
@@ -269,7 +270,7 @@ The following items describe possible directions for continuing the project. The
 - Continue improving marketplace presentation and end-to-end examples.
 - Continue hardening Ready, Preview, Rollback, Finalize, cleanup, and iteration recovery.
 - Improve error categories, recovery guidance, and compatibility across real Harness releases.
-- Re-evaluate mounting the project-scoped Worktree Console tab after the primary flow stabilizes.
+- Re-evaluate whether a persistent Worktrees tab is still useful in addition to the Header Manager.
 
 ### Medium term
 
@@ -277,7 +278,7 @@ The following items describe possible directions for continuing the project. The
 - Evaluate a bounded Local repair transaction: a user-approved temporary authorization tied to the current Local state, allowing an Isolated Session to repair Local through restricted tools without changing its Session Target, then automatically resume the original task.
 - Port dependency snapshot/restore to reduce repeated setup across Worktrees.
 - Complete the collaborator/subagent handoff lifecycle so delegated work can be released and delivered safely.
-- Add richer project-scoped Worktree listing, inspection, retention, and cleanup management.
+- Continue enriching linked Worktree listing, inspection, retention, and cleanup management.
 - Improve review presentation with clearer diff and validation information without weakening Host authority.
 
 ### Long term

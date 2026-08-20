@@ -89,6 +89,7 @@ const targetSummarySchema = strict({
 })
 const targetDetailsSchema = targetSummarySchema.extend({
   managedRoot: z.string().min(1).nullable(),
+  sourceRoot: z.string().min(1).nullable(),
   sourceOid: oidSchema,
   currentBranch: z.string().nullable(),
 }).strict()

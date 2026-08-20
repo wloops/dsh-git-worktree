@@ -11,14 +11,18 @@ afterEach(() => cleanup())
 function services(): WorktreeClientServices & { opened: string[]; commands: string[] } {
   const listeners = new Set<() => void>()
   const ids: string[] = []
-  const byId: Record<string, unknown> = {}
+  const byId: Record<string, { cwd?: string } | undefined> = {}
   const opened: string[] = []
+  let workspacePath = ''
   const commands: string[] = []
   return {
     opened,
     commands,
     workspaces: {
-      create: vi.fn(async ({ path }) => ({ workspaceId: 'workspace-target', path })),
+      create: vi.fn(async ({ path }) => {
+        workspacePath = path
+        return { workspaceId: 'workspace-target', path }
+      }),
       openPath: vi.fn(async () => undefined),
     },
     sessions: {
@@ -31,7 +35,7 @@ function services(): WorktreeClientServices & { opened: string[]; commands: stri
       },
       create: vi.fn(async ({ sessionId }) => {
         ids.push(sessionId)
-        byId[sessionId] = { sessionId }
+        byId[sessionId] = { cwd: workspacePath }
         for (const listener of listeners) listener()
         return sessionId
       }),

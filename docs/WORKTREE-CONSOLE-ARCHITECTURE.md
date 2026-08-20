@@ -35,17 +35,19 @@
 当前 Harness 已确认可用：
 
 - `conversation.input.left`：blank Local Session 的 pre-session Worktree switch；
-- `conversation.session.header.actions`：Session 级只读状态胶囊；
-- `conversation.view`：Harness seam 仍可用，但当前不注册 Worktree Console tab，先聚焦主流程；
+- `conversation.session.header.actions`：Session 级 Target 状态胶囊与关联 Manager 入口；
+- `conversation.view`：Harness seam 仍可用，但当前不注册 Worktree Console tab，避免与 Header Manager、Review 卡重复；
 - `shell.overlay`：根级抽屉或弹层；
 - `tool.call.toolview`：现有 Create/Ready 对话卡片。
 
 推荐的 Harness-native 组合：
 
 - blank Local composer 的 input-left switch 点击后只打开确认弹窗；用户确认后才 block source、准备并打开 target，再把后续发送交还标准 composer；
-- Header action 只读显示 `Local / Working / Ready / Recovery`，不伪装成可点击导航；
-- Worktree Console 组件和 Host 管理能力继续保留，但暂不挂载 `conversation.view` 页签；
-- 只有主流程稳定后确实需要项目级管理入口时，才重新启用 view tab 或占用 `shell.overlay`；
+- Header action 显示 `Local / Worktree · Working / Ready / Recovery`，点击后提供当前目标详情、工作位置、来源 Session、关联 Manager 与 capability 驱动的 lifecycle 操作；
+- Worktree Console 通过 Header 打开的 Modal 承载同一 `sourceSessionId + projectId + canonical localRoot` 关联组，暂不挂载 `conversation.view` 页签；
+- source 与任一 owner target 都可查看关联组；兄弟 target 只有 path-free list 与 identity-validated open（Client 内部仍通过 inspect 取得当次授权路径），mutation 继续由各自 owner/source 特例控制；
+- Manager 行只展示状态、导航和 owner lifecycle 操作，不重复挂载 Inspect 展开详情或 Review 面板；验收由专用 Review 卡和 composer dock 承担；
+- 只有真实使用证明需要常驻工作台时，才重新评估 view tab；跨项目全局入口仍是长期能力；
 - ToolView 继续承担这次调用的上下文记录，不承担全局发现入口。
 
 ### 2.3 Workspace/Session
@@ -117,9 +119,9 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 | 操作 | caller | project/cwd | owner/source | CAS |
 | --- | --- | --- | --- | --- |
 | current | 精确 Session | lookup 与持久项目一致 | 当前 binding | read-only identity check |
-| list | 精确 Session | 只投影 caller 原项目 | 仅 owner 或 source 可见 | 无授权复用 |
+| list | 精确 Session | 同一 project/source/canonical localRoot 关联组 | source、owner target；兄弟仅只读投影 | 无 mutation 授权复用 |
 | create | source Session | canonical Git project | source 必须 Local | Host 分配 target ID；幂等/并发锁 |
-| inspect | caller Session | checkout 属于 caller 项目；root identity 匹配 | owner 或 source | 返回当次 revision |
+| inspect | caller Session | checkout 属于已证明的关联组；目标 root identity 重验 | owner/source，或 linked target 只读 | 返回当次 revision |
 | reviewDiff | owner/source 规则由 Backend 明确；默认 owner | 同上 | review 必须仍为当前 | revision + reviewId + fingerprint/head |
 | preflight/preview | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；项目单槽位 | revision + reviewId + isolated fingerprint/head + Local CAS |
 | rollbackPreview | isolated owner | receipt 的 canonical Local boundary | 仅 owner | revision + Preview receipt + same-ref ancestry + Local HEAD/ref/fingerprint + post-write tree/index |

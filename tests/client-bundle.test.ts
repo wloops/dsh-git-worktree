@@ -14,7 +14,7 @@ interface ClientHandoff {
 }
 
 function platformRequire(nodeRequire: NodeRequire, specifier: string): unknown {
-  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null }
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null }
   return nodeRequire(specifier)
 }
 

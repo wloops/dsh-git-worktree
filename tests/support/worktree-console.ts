@@ -50,6 +50,7 @@ function readyTarget(): WorktreeConsoleTargetDetails {
     currentBranch: null,
     commitOid: null,
     managedRoot: '/fixture/project-worktrees/checkout-1',
+    sourceRoot: '/fixture/project',
     capabilities: {
       create: false,
       open: true,
@@ -98,7 +99,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
     calls.push({ method, request })
   }
   const delivered = (): WorktreeConsoleMutationResponse => {
-    const { managedRoot: _managedRoot, sourceOid: _sourceOid, currentBranch: _currentBranch, ...summary } = target
+    const { managedRoot: _managedRoot, sourceRoot: _sourceRoot, sourceOid: _sourceOid, currentBranch: _currentBranch, ...summary } = target
     return {
       target: {
         ...summary,
@@ -179,6 +180,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         review: _review,
         reviewSlot: _slot,
         managedRoot: _managedRoot,
+        sourceRoot: _sourceRoot,
         sourceOid: _sourceOid,
         currentBranch: _currentBranch,
         ...working
@@ -237,6 +239,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         review: _review,
         reviewSlot: _slot,
         managedRoot: _managedRoot,
+        sourceRoot: _sourceRoot,
         sourceOid: _sourceOid,
         currentBranch: _currentBranch,
         ...working

@@ -161,7 +161,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
       cancel: () => undefined, whenIdle: async () => undefined, runMaintenance: async () => undefined,
       send: () => undefined, followup: () => undefined,
     } as unknown as Agent)
-    const { managedRoot: _managedRoot, sourceOid: _sourceOid, currentBranch: _currentBranch, ...summary } = fixture.target
+    const { managedRoot: _managedRoot, sourceRoot: _sourceRoot, sourceOid: _sourceOid, currentBranch: _currentBranch, ...summary } = fixture.target
     const listed = { ok: true as const, value: { project: fixture.target.project, worktrees: [summary] } }
     const control = {
       current: vi.fn(async () => expected),

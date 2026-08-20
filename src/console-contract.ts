@@ -133,6 +133,8 @@ export interface WorktreeConsoleTargetSummary {
 /** Identity-validated detail used only when the caller may open this target. */
 export interface WorktreeConsoleTargetDetails extends WorktreeConsoleTargetSummary {
   managedRoot: string | null
+  /** Host-validated canonical Local root used only for source Session navigation. */
+  sourceRoot: string | null
   sourceOid: string
   currentBranch: string | null
 }

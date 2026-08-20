@@ -11,16 +11,13 @@ import {
   type WorktreeConsoleTargetSummary,
 } from '../../console-contract.js'
 import { openIsolatedTarget, type WorktreeClientServices } from '../actions.js'
-import {
-  reviewEvidenceFromTarget,
-  reviewIdentityFromTarget,
-  WorktreeReviewPanel,
-} from '../review-console/index.js'
 
 export interface WorktreeConsoleViewProps {
   sessionId: string
   adapter: WorktreeConsoleAdapter
   services: WorktreeClientServices
+  focusCheckoutId?: string | null
+  onTargetChange?(): void
 }
 
 const STATE_LABELS: Record<WorktreeConsoleTargetState, string> = {
@@ -69,8 +66,27 @@ function TargetState({ target }: { target: WorktreeConsoleTargetSummary }) {
   )
 }
 
-/** Project-scoped Worktree management surface backed only by WorktreeConsoleAdapter. */
-export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeConsoleViewProps) {
+const ATTENTION_RANK: Record<WorktreeConsoleTargetState, number> = {
+  recovery_required: 0,
+  preview_detached: 1,
+  cleanup_pending: 2,
+  ready_for_review: 3,
+  preview_active: 4,
+  retained: 5,
+  working: 6,
+  creating: 7,
+  delivered: 8,
+  local: 9,
+}
+
+/** Source-linked Worktree management surface backed only by WorktreeConsoleAdapter. */
+export function WorktreeConsoleView({
+  sessionId,
+  adapter,
+  services,
+  focusCheckoutId,
+  onTargetChange,
+}: WorktreeConsoleViewProps) {
   const mounted = useRef(true)
   const request = useRef(0)
   const sessionGeneration = useRef(0)
@@ -79,8 +95,6 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
   const [error, setError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [confirmTarget, setConfirmTarget] = useState<WorktreeConsoleTargetSummary | null>(null)
-  const [inspected, setInspected] = useState<Record<string, WorktreeConsoleTargetDetails>>({})
-  const [selectedReviewCheckoutId, setSelectedReviewCheckoutId] = useState<string | null>(null)
   const confirmButton = useRef<HTMLButtonElement>(null)
   const visibleSnapshot = snapshot?.sessionId === sessionId ? snapshot : null
 
@@ -93,9 +107,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
     sessionGeneration.current += 1
     request.current += 1
     setSnapshot(null)
-    setInspected({})
     setConfirmTarget(null)
-    setSelectedReviewCheckoutId(null)
     setPendingAction(null)
     setError(null)
     setLoading(true)
@@ -155,6 +167,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
         },
       }
     })
+    onTargetChange?.()
   }
 
   const mutationError = (code: WorktreeConsoleErrorCode, message: string, generation: number): void => {
@@ -205,12 +218,13 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
           worktrees: [
             ...current.list.worktrees.filter(row => row.checkoutId !== target.checkoutId),
             (() => {
-              const { managedRoot: _root, sourceOid: _source, currentBranch: _branch, ...summary } = target
+              const { managedRoot: _root, sourceRoot: _sourceRoot, sourceOid: _source, currentBranch: _branch, ...summary } = target
               return summary
             })(),
           ],
         },
       })
+      onTargetChange?.()
       void refresh()
     } catch (reason) {
       if (isActive(generation)) {
@@ -275,29 +289,6 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
     }
   }
 
-  const inspectTarget = async (target: WorktreeConsoleTargetSummary): Promise<void> => {
-    if (pendingAction !== null || target.checkoutId === null || !target.capabilities.inspect) return
-    const generation = sessionGeneration.current
-    setPendingAction(`inspect:${target.checkoutId}`)
-    setError(null)
-    try {
-      const outcome = await adapter.inspect({ sessionId, checkoutId: target.checkoutId })
-      if (!isActive(generation)) return
-      if (!outcome.ok) {
-        mutationError(outcome.error.code, outcome.error.message, generation)
-        return
-      }
-      if (outcome.value.target.checkoutId !== target.checkoutId) {
-        throw new Error('检查结果返回了不同的 Checkout 身份。')
-      }
-      setInspected(current => ({ ...current, [target.checkoutId!]: outcome.value.target }))
-    } catch (reason) {
-      if (isActive(generation)) setError(reason instanceof Error ? reason.message : String(reason))
-    } finally {
-      if (isActive(generation)) setPendingAction(null)
-    }
-  }
-
   const openListedTarget = async (target: WorktreeConsoleTargetSummary): Promise<void> => {
     if (
       pendingAction !== null
@@ -346,15 +337,15 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
     }
   }
 
-  const selectedReviewTarget = selectedReviewCheckoutId === null
-    ? null
-    : visibleSnapshot?.list.worktrees.find(target => target.checkoutId === selectedReviewCheckoutId) ?? null
-  const selectedReviewEvidence = selectedReviewTarget === null
-    ? null
-    : reviewEvidenceFromTarget(selectedReviewTarget)
-  const selectedReviewIdentity = selectedReviewTarget === null
-    ? null
-    : reviewIdentityFromTarget(sessionId, selectedReviewTarget)
+  const orderedWorktrees = visibleSnapshot === null
+    ? []
+    : [...visibleSnapshot.list.worktrees].sort((left, right) => {
+        const focusedLeft = left.checkoutId === focusCheckoutId ? 0 : 1
+        const focusedRight = right.checkoutId === focusCheckoutId ? 0 : 1
+        if (focusedLeft !== focusedRight) return focusedLeft - focusedRight
+        const rank = ATTENTION_RANK[left.state] - ATTENTION_RANK[right.state]
+        return rank !== 0 ? rank : right.iteration - left.iteration
+      })
 
   if (loading && visibleSnapshot === null) {
     return <div className="dsh-wtc-loading" role="status" aria-live="polite">正在加载 Worktree 控制台…</div>
@@ -365,7 +356,7 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
       <header className="dsh-wtc-console-head">
         <div>
           <span className="dsh-wtc-kicker">SESSION TARGET</span>
-          <h2>Worktree 控制台</h2>
+          <h2>关联 Worktrees</h2>
         </div>
         <button type="button" className="dsh-wtc-button" disabled={loading} onClick={() => { void refresh() }}>
           {loading ? '刷新中…' : '刷新'}
@@ -393,10 +384,10 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
               ) : null}
             </div>
           </section>
-          <section className="dsh-wtc-list-section" aria-label="项目 Worktree">
+          <section className="dsh-wtc-list-section" aria-label="关联 Worktrees">
             <div className="dsh-wtc-section-head">
               <div>
-                <span className="dsh-wtc-label">项目</span>
+                <span className="dsh-wtc-label">逻辑关联</span>
                 <h3>{visibleSnapshot.list.project.name}</h3>
               </div>
               <span className="dsh-wtc-count">{visibleSnapshot.list.worktrees.length}</span>
@@ -405,12 +396,19 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
               <div className="dsh-wtc-empty">这个项目还没有受管 Worktree。</div>
             ) : (
               <ul className="dsh-wtc-list">
-                {visibleSnapshot.list.worktrees.map(target => (
-                  <li className="dsh-wtc-row" key={target.checkoutId ?? `local:${target.sourceSessionId}`}>
+                {orderedWorktrees.map(target => (
+                  <li
+                    className="dsh-wtc-row"
+                    data-current-target={target.checkoutId === visibleSnapshot.current.checkoutId || undefined}
+                    key={target.checkoutId ?? `local:${target.sourceSessionId}`}
+                  >
                     <div className="dsh-wtc-row-main">
                       <div className="dsh-wtc-row-title">
                         <TargetState target={target} />
                         <span className="dsh-wtc-row-id">{target.checkoutId ?? 'Local source'}</span>
+                        {target.checkoutId === visibleSnapshot.current.checkoutId ? <span className="dsh-wtc-relation">当前</span> : null}
+                        {sessionId === target.sourceSessionId && sessionId !== target.ownerSessionId ? <span className="dsh-wtc-relation">来源</span> : null}
+                        {sessionId !== target.sourceSessionId && sessionId !== target.ownerSessionId ? <span className="dsh-wtc-relation">关联任务</span> : null}
                       </div>
                       <div className="dsh-wtc-facts">
                         <span>第 {target.iteration} 轮</span>
@@ -422,29 +420,6 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
                     </div>
                     <div className="dsh-wtc-row-actions">
                       <span className="dsh-wtc-revision">r{target.revision}</span>
-                      {target.review && target.checkoutId !== null ? (
-                        <button
-                          type="button"
-                          className="dsh-wtc-button"
-                          aria-label={`验收 ${target.checkoutId}`}
-                          aria-pressed={selectedReviewCheckoutId === target.checkoutId}
-                          disabled={pendingAction !== null}
-                          onClick={() => setSelectedReviewCheckoutId(current => current === target.checkoutId ? null : target.checkoutId)}
-                        >
-                          验收
-                        </button>
-                      ) : null}
-                      {target.capabilities.inspect && target.checkoutId !== null ? (
-                        <button
-                          type="button"
-                          className="dsh-wtc-button"
-                          aria-label={`检查 ${target.checkoutId}`}
-                          disabled={pendingAction !== null}
-                          onClick={() => { void inspectTarget(target) }}
-                        >
-                          {pendingAction === `inspect:${target.checkoutId}` ? '检查中…' : '检查'}
-                        </button>
-                      ) : null}
                       {target.capabilities.open && target.capabilities.inspect && target.checkoutId !== null ? (
                         <button
                           type="button"
@@ -482,31 +457,11 @@ export function WorktreeConsoleView({ sessionId, adapter, services }: WorktreeCo
                         </button>
                       ) : null}
                     </div>
-                    {target.checkoutId !== null && inspected[target.checkoutId] ? (
-                      <div className="dsh-wtc-inspect" aria-label={`检查结果 ${target.checkoutId}`}>
-                        <span className="dsh-wtc-label">已授权工作目录</span>
-                        <code>{inspected[target.checkoutId]!.managedRoot ?? 'Unavailable'}</code>
-                        <span className="dsh-wtc-label">分支</span>
-                        <code>{inspected[target.checkoutId]!.currentBranch ?? 'detached'}</code>
-                      </div>
-                    ) : null}
                   </li>
                 ))}
               </ul>
             )}
           </section>
-          {selectedReviewTarget && selectedReviewEvidence && selectedReviewIdentity ? (
-            <div className="dsh-wt-card">
-              <WorktreeReviewPanel
-                review={selectedReviewEvidence}
-                identity={selectedReviewIdentity}
-                adapter={adapter}
-                target={selectedReviewTarget}
-                onRefresh={() => refresh(false)}
-                onTargetChange={target => applyMutation({ target }, sessionGeneration.current)}
-              />
-            </div>
-          ) : null}
         </>
       ) : null}
       {confirmTarget !== null ? (

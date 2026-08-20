@@ -232,7 +232,7 @@ Finish、Discard、Remove 和 Local Preview 不属于模型工具。普通讨论
 
 ### 用户操作
 
-Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续修改和放弃入口。Host 控制的同类能力也可通过 `/worktree` 命令使用：
+Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续修改和放弃入口。Session Header 的 `Local / Worktree · 状态` 胶囊可直接打开当前目标控制面板与“关联 Worktrees”管理器；source 或任一关联 target Session 都能查看同源任务、打开对应 Session，并在自身权限范围内处理当前 Worktree，无需返回原项目。Manager 只承载状态、导航与 owner lifecycle 操作，验收继续由专用 Review 卡和 composer dock 承担。Host 控制的同类能力也可通过 `/worktree` 命令使用：
 
 ```text
 /worktree status
@@ -268,7 +268,8 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 ## 当前限制
 
 - 暂无跨项目全局 Worktree Manager（Worktree 管理器）；
-- 项目级 Worktree Console（Worktree 管理面板）的 Host 能力和组件仍保留，但 `v0.3.3` 暂不挂载可见的 `conversation.view` 标签页；
+- 关联 Worktree Manager 通过 Session Header 控制面板打开；当前仍不挂载常驻的 `conversation.view` 标签页；
+- Harness 仍按 canonical cwd 把 Local 与各 Worktree Session 显示为独立 Workspace；插件管理器展示的是 `sourceSessionId` 关联，不改变 Harness 原生侧边栏归组；
 - 在已验证的 Harness `0.1.0-rc.8` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
 - 子 Agent 继承父 Session cwd；只有父 Session 已经位于 Worktree Session 时，子 Agent 才处于相同隔离边界；
 - dependency snapshot/restore（依赖快照与恢复）与完整 collaborator handoff UI（协作者交接界面）尚未实现；
@@ -285,7 +286,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 - 持续完善市场展示和端到端使用示例；
 - 继续稳定 Ready（待验收）、Preview（Local 预览）、Rollback（撤回预览）、Finalize（确认提交）、cleanup（清理）与 iteration（任务轮次）恢复流程；
 - 改善错误分类、recovery（恢复处理）指引和真实 Harness 版本兼容性；
-- 根据实际使用反馈，评估重新开放项目级 Worktree Console（Worktree 管理面板）标签页。
+- 根据实际使用反馈，评估是否还需要在 Header Manager 之外增加常驻 Worktrees 标签页。
 
 ### 中期
 
@@ -293,7 +294,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 - 评估受控 Local 维修事务：由用户批准一次绑定当前 Local 状态的临时授权，让 Isolated Session 在不改变会话执行目标的情况下通过受限工具修复真实 Local，并自动恢复原任务；
 - 迁移 dependency snapshot/restore（依赖快照与恢复），减少不同 Worktree 间重复安装依赖的成本；
 - 完成 collaborator / subagent handoff（协作者 / 子 Agent 交接）生命周期，让协作任务可以安全释放并交付；
-- 提供更完整的项目级 Worktree 列表、状态检查、保留期与清理管理；
+- 继续丰富关联 Worktree 列表、状态检查、保留期与清理管理；
 - 丰富 Review（验收）展示，在不改变 Host 权威边界的前提下提供更清晰的差异和验证信息。
 
 ### 长期

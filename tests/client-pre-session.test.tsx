@@ -58,10 +58,14 @@ function successFixture() {
     }),
     removeImage: vi.fn(),
   }
+  let workspacePath = ''
+  const byId: Record<string, { cwd?: string } | undefined> = { 'source-session': { cwd: '/repo' } }
+  const listeners = new Set<() => void>()
   const services = {
     workspaces: {
       create: vi.fn(async ({ path }: { path: string }) => {
         events.push(`workspace:create:${path}`)
+        workspacePath = path
         return { workspaceId: 'workspace-target', path }
       }),
       openPath: vi.fn(async () => undefined),
@@ -72,12 +76,17 @@ function successFixture() {
       create: vi.fn(async ({ workspaceId, sessionId }: { workspaceId: string; sessionId: string }) => {
         events.push(`session:create:${workspaceId}:${sessionId}`)
         targetBinding = { ctx: targetCtx, session: { command: vi.fn() } }
+        byId[sessionId] = { cwd: workspacePath }
+        for (const listener of listeners) listener()
         return sessionId
       }),
       open: vi.fn((sessionId: string) => { events.push(`session:open:${sessionId}`) }),
       list: {
-        getSnapshot: vi.fn(() => ({ current: 'source-session', ids: ['source-session'], byId: { 'source-session': {} } })),
-        subscribe: vi.fn(() => () => undefined),
+        getSnapshot: vi.fn(() => ({ current: 'source-session', ids: Object.keys(byId), byId })),
+        subscribe: vi.fn((listener: () => void) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        }),
       },
       binding: vi.fn((sessionId: string) => sessionId === 'source-session'
         ? { ctx: sourceCtx, session: { command: vi.fn() } }

@@ -18,10 +18,10 @@ export interface TargetConsoleContextLike {
 export function registerTargetConsole(
   ctx: TargetConsoleContextLike,
   adapter: WorktreeConsoleAdapter,
-  _services: WorktreeClientServices,
+  services: WorktreeClientServices,
 ): void {
   const HeaderAction = ({ sessionId }: { sessionId: string }) =>
-    createElement(TargetStatusAction, { sessionId, adapter })
+    createElement(TargetStatusAction, { sessionId, adapter, services })
   const ReviewStatus = ({ session }: { session: { sessionId: string } }) =>
     createElement(WorktreeReviewStatus, { session, adapter })
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
@@ -39,4 +39,5 @@ export function registerTargetConsole(
 
 export { TargetStatusAction } from './TargetStatusAction.js'
 export { WorktreeConsoleView } from './WorktreeConsoleView.js'
+export { WorktreeManagerModal } from './WorktreeManagerModal.js'
 export { WorktreeReviewStatus } from './WorktreeReviewStatus.js'

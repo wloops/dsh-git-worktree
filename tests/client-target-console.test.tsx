@@ -64,6 +64,7 @@ function localTarget(): WorktreeConsoleTargetDetails {
     currentOid: 'a'.repeat(40),
     commitOid: null,
     managedRoot: null,
+    sourceRoot: null,
     sourceOid: 'a'.repeat(40),
     currentBranch: 'main',
     capabilities: {
@@ -85,17 +86,30 @@ function localTarget(): WorktreeConsoleTargetDetails {
 }
 
 function clientServices(): WorktreeClientServices {
+  let workspacePath = ''
+  const byId: Record<string, { cwd?: string } | undefined> = { 'source-session': { cwd: '/fixture/project' } }
+  const listeners = new Set<() => void>()
   return {
     workspaces: {
-      create: vi.fn(async ({ path }) => ({ workspaceId: 'workspace-target', path })),
+      create: vi.fn(async ({ path }) => {
+        workspacePath = path
+        return { workspaceId: 'workspace-target', path }
+      }),
       openPath: vi.fn(async () => undefined),
     },
     sessions: {
-      create: vi.fn(async ({ sessionId }) => sessionId),
+      create: vi.fn(async ({ sessionId }) => {
+        byId[sessionId] = { cwd: workspacePath }
+        for (const listener of listeners) listener()
+        return sessionId
+      }),
       open: vi.fn(),
       list: {
-        getSnapshot: vi.fn(() => ({ current: 'source-session', ids: ['source-session'], byId: { 'source-session': {} } })),
-        subscribe: vi.fn(() => () => undefined),
+        getSnapshot: vi.fn(() => ({ current: 'source-session', ids: Object.keys(byId), byId })),
+        subscribe: vi.fn((listener: () => void) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        }),
       },
       binding: vi.fn(),
     },
@@ -103,7 +117,7 @@ function clientServices(): WorktreeClientServices {
 }
 
 function summaryOf(target: WorktreeConsoleTargetDetails) {
-  const { managedRoot: _root, sourceOid: _source, currentBranch: _branch, ...summary } = target
+  const { managedRoot: _root, sourceRoot: _sourceRoot, sourceOid: _source, currentBranch: _branch, ...summary } = target
   return summary
 }
 
@@ -120,7 +134,7 @@ afterEach(() => cleanup())
 describe('Harness-native Session Target slots', () => {
   test.each([
     ['local', 'Local'],
-    ['working', 'Worktree'],
+    ['working', '修改中'],
     ['ready_for_review', '待验收'],
     ['preview_active', 'Local 验收中'],
     ['preview_detached', '预览待恢复'],
@@ -131,7 +145,7 @@ describe('Harness-native Session Target slots', () => {
       ok: true,
       value: { target: { ...fixture.target, state, phase: state === 'recovery_required' ? 'recovery_required' : 'ready' } },
     }))
-    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} />)
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} />)
     await waitFor(() => expect(screen.getByText(label)).toBeTruthy())
   })
 
@@ -152,13 +166,117 @@ describe('Harness-native Session Target slots', () => {
     render(<Header sessionId="session-from-slot-props" />)
     expect(screen.getByText('加载中…')).toBeTruthy()
     await waitFor(() => expect(screen.getByText('Local')).toBeTruthy())
-    const status = screen.getByRole('status', { name: 'Session Target：Local' })
-    expect(status.tagName).toBe('SPAN')
-    expect(status.getAttribute('title')).toBe('Session Target 状态')
+    const status = screen.getByRole('button', { name: 'Session Target：Local' })
+    expect(status.tagName).toBe('BUTTON')
+    expect(status.getAttribute('title')).toBe('Session Target 与关联 Worktrees')
     expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-from-slot-props' })
 
     slots.dispose()
     expect(slots.entries.some(candidate => candidate.descriptor.id === 'worktree-target')).toBe(false)
+  })
+
+  test('Header 切换 Session 时丢弃旧请求，避免跨 Session 注入路径与来源身份', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    let resolveA!: (value: Awaited<ReturnType<typeof fixture.adapter.current>>) => void
+    let resolveB!: (value: Awaited<ReturnType<typeof fixture.adapter.current>>) => void
+    fixture.adapter.current = vi.fn(async ({ sessionId }) => new Promise(resolve => {
+      if (sessionId === 'session-a') resolveA = resolve
+      else resolveB = resolve
+    }))
+    const services = clientServices()
+    const view = render(<TargetStatusAction sessionId="session-a" adapter={fixture.adapter} services={services} />)
+    view.rerender(<TargetStatusAction sessionId="session-b" adapter={fixture.adapter} services={services} />)
+
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-b' }))
+    resolveA({ ok: true, value: { target: { ...fixture.target, project: { id: 'project-a', name: 'Project A' }, sourceSessionId: 'source-a', managedRoot: '/managed-a' } } })
+    await Promise.resolve()
+    expect(screen.queryByRole('button', { name: 'Session Target：Worktree · 待验收' })).toBeNull()
+
+    resolveB({ ok: true, value: { target: { ...fixture.target, project: { id: 'project-b', name: 'Project B' }, sourceSessionId: 'source-b', managedRoot: '/managed-b' } } })
+    expect(await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Session Target：Worktree · 待验收' }))
+    expect(screen.getByText('Project B')).toBeTruthy()
+    expect(screen.queryByText('Project A')).toBeNull()
+  })
+
+  test('Header 胶囊在当前 Session 内打开快捷面板、来源导航和关联 Manager', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    services.sessions.list.getSnapshot = vi.fn(() => ({
+      current: 'target-session',
+      ids: ['source-session', 'target-session'],
+      byId: {
+        'source-session': { cwd: '/fixture/project' },
+        'target-session': { cwd: fixture.target.managedRoot! },
+      },
+    }))
+
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={services} />)
+
+    const trigger = await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' })
+    expect(trigger.querySelector('.dsh-wtc-target-chevron')?.textContent).toBe('')
+    fireEvent.click(trigger)
+    expect(screen.getByRole('button', { name: '打开当前工作位置' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '返回来源 Session' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '返回来源 Session' }))
+    expect(services.sessions.open).toHaveBeenCalledWith('source-session')
+
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: '管理关联 Worktrees' }))
+    expect(await screen.findByRole('dialog', { name: '关联 Worktrees' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '关联 Worktrees' })).toBeTruthy()
+    expect(screen.queryByRole('tab', { name: 'Worktrees' })).toBeNull()
+  })
+
+  test('Header owner lifecycle 操作经过二次确认并绑定当前 revision', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} />)
+
+    const trigger = await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: '放弃任务并清理 Worktree' }))
+    expect(screen.getByRole('dialog', { name: '放弃任务并清理 Worktree？' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '确认清理 Worktree' }))
+
+    await waitFor(() => expect(fixture.calls).toContainEqual({
+      method: 'discard',
+      request: {
+        sessionId: 'target-session',
+        checkoutId: 'checkout-1',
+        expectedRevision: 7,
+        confirmDirty: true,
+      },
+    }))
+  })
+
+  test('Header 清理 active Preview 时显式请求先安全撤回', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const preview = {
+      ...fixture.target,
+      state: 'preview_active' as const,
+      capabilities: {
+        ...fixture.target.capabilities,
+        preflight: false,
+        preview: false,
+        finalize: false,
+        finalizePreview: true,
+        rollbackPreview: true,
+      },
+    }
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: preview } }))
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Session Target：Worktree · Local 验收中' }))
+    fireEvent.click(screen.getByRole('button', { name: '撤回验收并清理 Worktree' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认清理 Worktree' }))
+
+    await waitFor(() => expect(fixture.calls).toContainEqual({
+      method: 'discard',
+      request: {
+        sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7,
+        confirmDirty: true, rollbackPreview: true,
+      },
+    }))
   })
 
   test('在 input dock 注册 Domi 式待验收状态条，并只显示一个主操作与更多菜单', async () => {
@@ -353,16 +471,16 @@ describe('Worktree Console loading and inspection', () => {
     expect(screen.getByRole('alert').textContent).toContain('当前 Session')
   })
 
-  test('shows managedRoot only after an explicit authorized inspect', async () => {
+  test('keeps Manager rows focused on navigation and lifecycle actions without duplicate inspect/review controls', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
-    const inspect = fixture.adapter.inspect
-    fixture.adapter.inspect = vi.fn(request => inspect(request))
     renderConsole(fixture.adapter)
 
+    const row = await screen.findByRole('listitem')
+    expect(within(row).queryByRole('button', { name: '检查 checkout-1' })).toBeNull()
+    expect(within(row).queryByRole('button', { name: '验收 checkout-1' })).toBeNull()
     expect(screen.queryByText(fixture.target.managedRoot!)).toBeNull()
-    fireEvent.click(await screen.findByRole('button', { name: '检查 checkout-1' }))
-    await waitFor(() => expect(screen.getByText(fixture.target.managedRoot!)).toBeTruthy())
-    expect(fixture.adapter.inspect).toHaveBeenCalledWith({ sessionId: 'source-session', checkoutId: 'checkout-1' })
+    expect(within(row).getByRole('button', { name: '打开 checkout-1' })).toBeTruthy()
+    expect(within(row).getByRole('button', { name: '放弃 checkout-1' })).toBeTruthy()
   })
 
   test('ignores a late initial response after unmount', async () => {
@@ -575,6 +693,53 @@ describe('Worktree Console Create/Open', () => {
     expect(services.sessions.open).not.toHaveBeenCalled()
   })
 
+  test('opens a linked sibling Session in place without recreating its existing Workspace', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const sibling = {
+      ...fixture.target,
+      checkoutId: 'checkout-2',
+      ownerSessionId: 'target-session-2',
+      targetSessionId: 'target-session-2',
+      managedRoot: '/fixture/project-worktrees/checkout-2',
+      revision: 8,
+      capabilities: {
+        ...fixture.target.capabilities,
+        discard: false,
+        preflight: false,
+        preview: false,
+        resumeRevision: false,
+        finalize: false,
+      },
+    }
+    fixture.adapter.list = vi.fn(async () => ({
+      ok: true,
+      value: { project: fixture.target.project, worktrees: [summaryOf(fixture.target), summaryOf(sibling)] },
+    }))
+    fixture.adapter.inspect = vi.fn(async ({ checkoutId }) => ({
+      ok: true,
+      value: { target: checkoutId === 'checkout-2' ? sibling : fixture.target },
+    }))
+    const services = clientServices()
+    services.sessions.list.getSnapshot = vi.fn(() => ({
+      current: 'target-session',
+      ids: ['target-session', 'target-session-2'],
+      byId: {
+        'target-session': { cwd: fixture.target.managedRoot! },
+        'target-session-2': { cwd: sibling.managedRoot },
+      },
+    }))
+    renderConsole(fixture.adapter, services, 'target-session')
+
+    fireEvent.click(await screen.findByRole('button', { name: '打开 checkout-2' }))
+
+    await waitFor(() => expect(fixture.adapter.inspect).toHaveBeenCalledWith({
+      sessionId: 'target-session', checkoutId: 'checkout-2',
+    }))
+    expect(services.workspaces.create).not.toHaveBeenCalled()
+    expect(services.sessions.create).not.toHaveBeenCalled()
+    expect(services.sessions.open).toHaveBeenCalledWith('target-session-2')
+  })
+
   test('inspects a path-free list row before opening its authorized managedRoot', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const inspect = fixture.adapter.inspect
@@ -694,21 +859,6 @@ describe('Client entry integration', () => {
     ]))
     for (const dispose of disposers.reverse()) dispose()
     expect(descriptors).toHaveLength(0)
-  })
-})
-
-describe('Worktree Console Review integration', () => {
-  test('opens the shared compact Chinese Review panel without exposing Diff or Inspect inside the card', async () => {
-    const fixture = createWorktreeConsoleAdapterFixture()
-    renderConsole(fixture.adapter, clientServices(), 'target-session')
-
-    fireEvent.click(await screen.findByRole('button', { name: '验收 checkout-1' }))
-    expect(screen.getByRole('region', { name: 'Worktree 验收' })).toBeTruthy()
-    expect(screen.getByText('第 1 轮修改已准备验收')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Inspect' })).toBeNull()
-    expect(fixture.calls.some(call => call.method === 'reviewDiff')).toBe(false)
   })
 })
 

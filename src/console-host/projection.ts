@@ -37,10 +37,13 @@ export function capabilities(
   record: ManagedCheckoutRecord,
   callerSessionId: string,
   ownerSessionAvailable = true,
+  linkedRead = false,
 ): WorktreeConsoleCapabilities {
   const owner = callerSessionId === record.ownerSessionId
-  const sourceReservation = callerSessionId === record.sourceSessionId && !ownerSessionAvailable
-  const authorized = owner || callerSessionId === record.sourceSessionId
+  const source = callerSessionId === record.sourceSessionId
+  const sourceReservation = source && !ownerSessionAvailable
+  const readAuthorized = owner || source || linkedRead
+  const manageAuthorized = owner || source
   const ready = record.phase === 'ready' && record.delivery.state === 'ready_for_review'
   const previewActive = record.phase === 'ready' && record.delivery.state === 'preview_active'
   const previewDetached = record.phase === 'ready' && record.delivery.state === 'preview_detached'
@@ -52,8 +55,8 @@ export function capabilities(
   const active = record.phase !== 'discarded'
   return {
     create: false,
-    open: authorized && active,
-    inspect: authorized,
+    open: readAuthorized && active && (!linkedRead || ownerSessionAvailable),
+    inspect: readAuthorized,
     discard: (owner || sourceReservation) && active && !cleanup && !previewDetached,
     preflight: owner && ready,
     preview: owner && ready,
@@ -61,8 +64,8 @@ export function capabilities(
     rollbackPreview: owner && (previewActive || previewDetached || previewRecovery),
     finalize: owner && ready,
     finalizePreview: owner && previewActive,
-    setRetention: authorized && record.delivery.state === 'retained',
-    retryCleanup: authorized && cleanup,
+    setRetention: manageAuthorized && record.delivery.state === 'retained',
+    retryCleanup: manageAuthorized && cleanup,
     beginNextIteration: owner && delivered,
   }
 }
@@ -80,6 +83,7 @@ export function projectRecord(
     dirty?: boolean
     summary?: ManagedWorktreeSummaryView
     ownerSessionAvailable?: boolean
+    linkedRead?: boolean
   },
 ): WorktreeConsoleTargetSummary {
   const projectedReview = review(record)
@@ -113,7 +117,12 @@ export function projectRecord(
         attemptedAction: delivery.attemptedAction,
       },
     } : {}),
-    capabilities: capabilities(record, callerSessionId, observed?.ownerSessionAvailable),
+    capabilities: capabilities(
+      record,
+      callerSessionId,
+      observed?.ownerSessionAvailable,
+      observed?.linkedRead,
+    ),
   }
 }
 
@@ -124,10 +133,12 @@ export function projectDetails(
   snapshot?: GitCheckoutSnapshot,
   dirty?: boolean,
   ownerSessionAvailable?: boolean,
+  linkedRead = false,
 ): WorktreeConsoleTargetDetails {
   return {
-    ...projectRecord(record, callerSessionId, { snapshot, dirty, ownerSessionAvailable }),
+    ...projectRecord(record, callerSessionId, { snapshot, dirty, ownerSessionAvailable, linkedRead }),
     managedRoot,
+    sourceRoot: record.localRoot,
     sourceOid: record.baseOid,
     currentBranch: snapshot?.branch ?? null,
   }
@@ -163,6 +174,7 @@ export function projectLocal(target: SessionTargetView, sessionId: string): Work
       beginNextIteration: false,
     },
     managedRoot: null,
+    sourceRoot: null,
     sourceOid: target.source.oid,
     currentBranch: target.current.branch,
   }

@@ -161,7 +161,7 @@ if (!handoff || handoff.id !== manifest.name || typeof handoff.factory !== 'func
   fail(`client bundle must call window.__ModuleLoader__.load with id ${JSON.stringify(manifest.name)} and a factory`)
 }
 const browserRequire = (specifier) => {
-  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null }
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null }
   return require(specifier)
 }
 let clientExports

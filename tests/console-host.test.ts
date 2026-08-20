@@ -309,6 +309,88 @@ describe('Worktree Console Host control plane', () => {
     expect(module.beginNextIteration).toHaveBeenCalledWith('target-session', delivered.revision)
   })
 
+  it('lets an owner list and inspect a same-source sibling without inheriting mutation capabilities', async () => {
+    const first = readyRecord()
+    const sibling: ManagedCheckoutRecord = {
+      ...readyRecord(),
+      checkoutId: 'checkout-2',
+      ownerSessionId: 'target-session-2',
+      managedRoot: '/managed-2',
+      managedGitRoot: '/managed-2',
+      gitDir: '/git/worktrees/two',
+      revision: 8,
+    }
+    const value: ManagedCheckoutsRegistry = {
+      version: 2,
+      revision: 1,
+      sessionBindings: {},
+      managedCheckouts: { [first.checkoutId]: first, [sibling.checkoutId]: sibling },
+    }
+    const registryPort: SessionCheckoutRegistryPort = { read: () => structuredClone(value), write: vi.fn() }
+    const lookup = lookupDouble()
+    lookup.getSession = sessionId => ({
+      id: sessionId,
+      projectId: sessionId === 'target-session'
+        ? 'workspace-target'
+        : sessionId === 'target-session-2' ? 'workspace-target-2' : 'project-1',
+    })
+    lookup.getProject = projectId => ({
+      id: projectId,
+      name: 'Project',
+      root: projectId === 'workspace-target'
+        ? '/managed'
+        : projectId === 'workspace-target-2' ? '/managed-2' : '/local',
+    })
+    const { module, control } = plane(first, { registry: registryPort, lookup })
+    vi.mocked(module.resolveManagedRoot).mockImplementation(async checkoutId => checkoutId === 'checkout-2' ? '/managed-2' : '/managed')
+    vi.mocked(module.listManagedWorktreesForSession).mockResolvedValue([
+      {
+        checkoutId: first.checkoutId, revision: first.revision, ownerSessionId: first.ownerSessionId, ownerSessionTitle: 'Task 1',
+        project: { id: first.projectId, name: first.projectName }, iteration: 1, state: 'ready_for_review', phase: first.phase,
+        dirty: true, commitOid: null, approximateBytes: null, updatedAt: 1, canCleanup: false,
+      },
+      {
+        checkoutId: sibling.checkoutId, revision: sibling.revision, ownerSessionId: sibling.ownerSessionId, ownerSessionTitle: 'Task 2',
+        project: { id: sibling.projectId, name: sibling.projectName }, iteration: 1, state: 'ready_for_review', phase: sibling.phase,
+        dirty: true, commitOid: null, approximateBytes: null, updatedAt: 2, canCleanup: false,
+      },
+    ])
+
+    const listed = await control.list({ sessionId: 'target-session' })
+    expect(listed).toMatchObject({
+      ok: true,
+      value: {
+        worktrees: [
+          expect.objectContaining({ checkoutId: 'checkout-1' }),
+          expect.objectContaining({
+            checkoutId: 'checkout-2',
+            capabilities: expect.objectContaining({
+              open: true,
+              inspect: true,
+              discard: false,
+              preview: false,
+              finalize: false,
+              retryCleanup: false,
+            }),
+          }),
+        ],
+      },
+    })
+    if (!listed.ok) throw new Error('expected linked list success')
+    expect(listed.value.worktrees[1]).not.toHaveProperty('managedRoot')
+
+    const inspected = await control.inspect('target-session', 'checkout-2')
+    expect(inspected).toMatchObject({
+      ok: true,
+      value: { target: { checkoutId: 'checkout-2', managedRoot: '/managed-2' } },
+    })
+
+    const preview = await control.preview({
+      sessionId: 'target-session', checkoutId: 'checkout-2', expectedRevision: 8, expectedReviewId: 'review-1',
+    })
+    expect(preview).toMatchObject({ ok: false, error: { code: 'not_owner' } })
+  })
+
   it('rejects a live same-project Session that is neither source nor owner before revealing managedRoot', async () => {
     const { module, control } = plane()
     const result = await control.inspect('intruder-session', 'checkout-1')
