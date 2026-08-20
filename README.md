@@ -208,7 +208,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定 Git tag：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.3
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.4.0
 ```
 
 使用 pnpm 10 或更高版本时，Git 源安装可能需要先在 profile 的 `pnpm-workspace.yaml` 中允许该包执行 `prepare`：

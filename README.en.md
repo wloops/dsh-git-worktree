@@ -192,7 +192,7 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific Git tag:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.3
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.4.0
 ```
 
 With pnpm 10 or newer, a Git install may require this entry in the profile's `pnpm-workspace.yaml` before retrying:

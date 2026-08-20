@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-20
+
+`0.4.0` 将 Worktree 验收升级为可预检、可恢复、可核验的交付闭环，并把关联 Worktree 的状态与导航入口集中到 Session Header；同时适配 DeepSeek Harness `0.1.0-rc.8` 与新的 Node.js 运行要求。
+
 ### Added
 
 - Ready Review 卡与 composer dock 自动执行共享的严格只读 Preflight，展示 Local/Worktree HEAD、effective base、同步状态、冲突与 acceptance slot；真正 Preview 或 direct Finalize 前仍强制重新检查。
@@ -20,10 +24,6 @@
 - 保持 `conversation.view` 标签页未挂载；管理入口集中在 Header 控制面板，避免与 Review 卡和 composer dock 重复。
 - acceptance slot busy 时仅关闭 Local mutation capability，owner 的只读 Preflight 保持可用；跨 source 的额外 inspect 权限只对当前 Ready owner 的真实 slot holder 生效，且永不继承 mutation capability。
 - Delivery Proof validation 字段以可选形式加入 version-2 registry，继续兼容历史记录。
-
-## [0.3.3] - 2026-08-20
-
-`0.3.3` 将插件更新到已验证的 DeepSeek Harness `0.1.0-rc.8` 包线，并同步新的 Node.js 运行要求与品牌说明。
 
 ### Compatibility
 
@@ -141,7 +141,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
-[0.3.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.2...v0.3.3
+[0.4.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.2.0...v0.3.0
