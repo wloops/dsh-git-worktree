@@ -96,6 +96,12 @@ function isDeliveryProof(value: unknown): boolean {
     && typeof value.localHeadBefore === 'string'
     && typeof value.localHeadAfter === 'string'
     && isStringArray(value.changedFiles)
+    && (value.validationStatus === undefined
+      || value.validationStatus === 'passed'
+      || value.validationStatus === 'failed'
+      || value.validationStatus === 'partial'
+      || value.validationStatus === 'not_run')
+    && (value.validationSummary === undefined || typeof value.validationSummary === 'string')
 }
 
 function isDelivery(value: unknown): boolean {

@@ -34,6 +34,7 @@ import type {
   DirectoryIdentity,
   GitCheckoutSnapshot,
   ManagedCheckoutRecord,
+  ManagedDeliveryProof,
   ManagedPreviewReceipt,
   SessionBindingRecord,
   SessionCheckoutDependencies,
@@ -201,12 +202,14 @@ export function createSessionCheckoutModule(
     commitInLocalHistory: boolean | null = null,
   ): SessionTargetView['delivery'] {
     const delivery = record.delivery
-    const projectProof = (proof: { localBranch: string | null; localHeadBefore: string; localHeadAfter: string; changedFiles: string[] } | undefined): WorktreeDeliveryProofView | undefined => proof
+    const projectProof = (proof: ManagedDeliveryProof | undefined): WorktreeDeliveryProofView | undefined => proof
       ? {
           localBranch: proof.localBranch,
           localHeadBefore: proof.localHeadBefore,
           localHeadAfter: proof.localHeadAfter,
           changedFiles: [...proof.changedFiles],
+          ...(proof.validationStatus === undefined ? {} : { validationStatus: proof.validationStatus }),
+          ...(proof.validationSummary === undefined ? {} : { validationSummary: proof.validationSummary }),
           commitInLocalHistory,
         }
       : undefined
@@ -959,6 +962,10 @@ export function createSessionCheckoutModule(
                     localHeadBefore: current.delivery.preview.localHeadOid,
                     localHeadAfter: current.journal.commitOid,
                     changedFiles: [...current.delivery.preview.changedFiles],
+                    validationStatus: current.delivery.review.validationStatus,
+                    ...(current.delivery.review.validationSummary === undefined
+                      ? {}
+                      : { validationSummary: current.delivery.review.validationSummary }),
                   },
                   isolatedFingerprint: current.delivery.preview.isolatedFingerprint,
                   finalizedAt: recoveredAt,
@@ -982,6 +989,10 @@ export function createSessionCheckoutModule(
                     localHeadBefore: current.delivery.preview.localHeadOid,
                     localHeadAfter: current.journal.commitOid,
                     changedFiles: [...current.delivery.preview.changedFiles],
+                    validationStatus: current.delivery.review.validationStatus,
+                    ...(current.delivery.review.validationSummary === undefined
+                      ? {}
+                      : { validationSummary: current.delivery.review.validationSummary }),
                   },
                   isolatedFingerprint: current.delivery.preview.isolatedFingerprint,
                   retention,
@@ -1418,6 +1429,7 @@ export function createSessionCheckoutModule(
     record: ManagedCheckoutRecord | undefined,
     reason: WorktreeApplyPreflightBlockedReason,
     message: string,
+    blocker?: ManagedCheckoutRecord,
   ): WorktreeApplyPreflightView {
     return {
       status: 'blocked',
@@ -1427,6 +1439,13 @@ export function createSessionCheckoutModule(
       revision: record?.revision ?? 0,
       reason,
       message,
+      ...(blocker === undefined ? {} : {
+        blocker: {
+          checkoutId: blocker.checkoutId,
+          ownerSessionId: blocker.ownerSessionId,
+          state: blocker.delivery.state,
+        },
+      }),
     }
   }
 
@@ -1443,8 +1462,9 @@ export function createSessionCheckoutModule(
     if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
       return blockedPreflight(record, 'not_ready_for_review', '当前 Worktree 尚未处于可验收状态')
     }
-    if (findProjectAcceptanceHolder(record)) {
-      return blockedPreflight(record, 'project_acceptance_busy', '另一个任务正在占用该项目的 Local 验收槽位')
+    const holder = findProjectAcceptanceHolder(record)
+    if (holder) {
+      return blockedPreflight(record, 'project_acceptance_busy', '另一个任务正在占用该项目的 Local 验收槽位', holder)
     }
     const validated = await validateManagedCheckoutDetailed(binding, record, false)
     if (validated.status !== 'valid') {
@@ -1464,7 +1484,12 @@ export function createSessionCheckoutModule(
       || current.delivery.review.reviewId !== review.reviewId
     ) return blockedPreflight(current, 'stale_target', 'Session Target 在预检期间发生变化，请刷新后重试')
     if (result.status === 'error') {
-      return blockedPreflight(current, result.error.code === 'stale_isolated' ? 'stale_isolated' : 'git_error', result.error.message)
+      const reason = result.error.code === 'stale_isolated'
+        ? 'stale_isolated'
+        : result.error.code === 'stale_local'
+          ? 'stale_local'
+          : 'git_error'
+      return blockedPreflight(current, reason, result.error.message)
     }
     const isolatedFingerprint = result.status === 'ready'
       ? result.plan.isolatedFingerprint
@@ -2029,6 +2054,8 @@ export function createSessionCheckoutModule(
           localHeadBefore: preview.localHeadOid,
           localHeadAfter: result.commitOid ?? preview.localHeadOid,
           changedFiles: [...result.changedFiles],
+          validationStatus: review.validationStatus,
+          ...(review.validationSummary === undefined ? {} : { validationSummary: review.validationSummary }),
         },
         isolatedFingerprint: preview.isolatedFingerprint,
         finalizedAt: Date.now(),
@@ -2332,6 +2359,8 @@ export function createSessionCheckoutModule(
           localHeadBefore: receipt.localHeadOid,
           localHeadAfter: finishResult.commitOid ?? receipt.localHeadOid,
           changedFiles: [...finishResult.changedFiles],
+          validationStatus: review.validationStatus,
+          ...(review.validationSummary === undefined ? {} : { validationSummary: review.validationSummary }),
         },
         isolatedFingerprint: receipt.isolatedFingerprint,
         finalizedAt: Date.now(),

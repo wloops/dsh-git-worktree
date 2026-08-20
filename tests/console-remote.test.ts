@@ -85,6 +85,35 @@ describe('manual strict Worktree Console Remote contribution', () => {
     expect(() => commitMessage.codec.mode === 'strict' && commitMessage.codec.schema.parse('x'.repeat(501))).toThrow()
   })
 
+  it('roundtrips path-free acceptance blocker and delivery proof through strict schemas', () => {
+    const current = WORKTREE_CONSOLE_DESCRIPTORS.find((descriptor) => descriptor.method === 'current')!
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const response = {
+      ok: true as const,
+      value: {
+        target: {
+          ...fixture.target,
+          reviewSlot: 'waiting' as const,
+          reviewSlotOwnerSessionId: 'holder-session',
+          reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' as const },
+          deliveryProof: {
+            localBranch: 'main', localHeadBefore: 'a'.repeat(40), localHeadAfter: 'b'.repeat(40),
+            changedFiles: ['src/index.ts'], validationStatus: 'passed' as const,
+            validationSummary: 'full validation passed', commitInLocalHistory: true,
+          },
+        },
+      },
+    }
+
+    expect(current.result.mode).toBe('strict')
+    if (current.result.mode !== 'strict') throw new Error('expected strict current result')
+    expect(current.result.schema.parse(response)).toEqual(response)
+    expect(() => current.result.schema.parse({
+      ...response,
+      value: { target: { ...response.value.target, reviewSlotHolder: { ...response.value.target.reviewSlotHolder, managedRoot: '/secret' } } },
+    })).toThrow()
+  })
+
   it('roundtrips detached recovery reason through the strict target response schema', () => {
     const current = WORKTREE_CONSOLE_DESCRIPTORS.find((descriptor) => descriptor.method === 'current')!
     const fixture = createWorktreeConsoleAdapterFixture()

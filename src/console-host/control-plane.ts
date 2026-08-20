@@ -22,6 +22,7 @@ import type {
   WorktreeConsoleReviewDiffResponse,
   WorktreeConsoleSetRetentionRequest,
   WorktreeConsoleTargetSummary,
+  WorktreeConsoleDeliveryProof,
 } from '../console-contract.js'
 import type {
   GitCheckoutSnapshot,
@@ -89,7 +90,8 @@ function preflightFailure(view: Awaited<ReturnType<NonNullable<SessionCheckoutMo
   if (view === undefined) return failure<never>('git_error', '当前 SessionCheckoutModule 不支持验收预检')
   if (view.status !== 'blocked') return undefined
   const code = view.reason === 'stale_isolated' ? 'stale_isolated'
-    : view.reason === 'stale_target' ? 'stale_target'
+    : view.reason === 'stale_local' ? 'stale_local'
+      : view.reason === 'stale_target' ? 'stale_target'
       : view.reason === 'project_acceptance_busy' ? 'project_acceptance_busy'
         : view.reason === 'not_owner' ? 'not_owner'
           : view.reason === 'not_ready_for_review' ? 'operation_not_allowed'
@@ -181,7 +183,11 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
   async function linkedReadAccess(
     sessionId: string,
     checkoutId: string,
-  ): Promise<{ record: ManagedCheckoutRecord; linkedRead: boolean }> {
+  ): Promise<{
+    record: ManagedCheckoutRecord
+    linkedRead: boolean
+    acceptanceAnchorCheckoutId?: string
+  }> {
     const requested = recordOf(options.registry, checkoutId)
     if (requested.ownerSessionId === sessionId || requested.sourceSessionId === sessionId) {
       return { record: await authorize(sessionId, checkoutId), linkedRead: false }
@@ -193,17 +199,43 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     const anchor = await authorize(sessionId, caller.checkout.id)
     const sourceSessionId = anchor.sourceSessionId ?? anchor.ownerSessionId
     const requestedSourceSessionId = requested.sourceSessionId ?? requested.ownerSessionId
-    if (
-      requested.projectId !== anchor.projectId
-      || requestedSourceSessionId !== sourceSessionId
-      || !sameLocalRoot(requested.localRoot, anchor.localRoot)
-    ) {
+    const sameLinkedGroup = requested.projectId === anchor.projectId
+      && requestedSourceSessionId === sourceSessionId
+      && sameLocalRoot(requested.localRoot, anchor.localRoot)
+    const holder = anchor.ownerSessionId === sessionId
+      && anchor.phase === 'ready'
+      && anchor.delivery.state === 'ready_for_review'
+      ? acceptanceHolder(anchor)
+      : undefined
+    const exactAcceptanceHolder = holder?.checkoutId === requested.checkoutId
+      && requested.projectId === anchor.projectId
+      && sameLocalRoot(requested.localRoot, anchor.localRoot)
+    if (!sameLinkedGroup && !exactAcceptanceHolder) {
       throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
     }
     if (!ownerSessionAvailable(requested)) {
       throw domainError('checkout_missing', '关联 Worktree 的 owner Session 不可用')
     }
     await verifyCallerRoot(requested.ownerSessionId, requested, requested.managedRoot)
+    if (exactAcceptanceHolder) {
+      const currentAnchor = recordOf(options.registry, anchor.checkoutId)
+      const currentRequested = recordOf(options.registry, requested.checkoutId)
+      const currentHolder = currentAnchor.ownerSessionId === sessionId
+        && currentAnchor.phase === 'ready'
+        && currentAnchor.delivery.state === 'ready_for_review'
+        ? acceptanceHolder(currentAnchor)
+        : undefined
+      if (
+        currentHolder?.checkoutId !== currentRequested.checkoutId
+        || currentRequested.ownerSessionId !== requested.ownerSessionId
+        || !sameLocalRoot(currentRequested.localRoot, currentAnchor.localRoot)
+      ) throw domainError('not_owner', '验收槽位占用者已变化，请重新检查')
+      return {
+        record: currentRequested,
+        linkedRead: true,
+        acceptanceAnchorCheckoutId: currentAnchor.checkoutId,
+      }
+    }
     return { record: requested, linkedRead: true }
   }
 
@@ -251,39 +283,93 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       reviewSlot: holder ? 'waiting' : 'available',
       ...(holder ? {
         reviewSlotOwnerSessionId: holder.ownerSessionId,
-        capabilities: { ...target.capabilities, preflight: false, preview: false },
+        reviewSlotHolder: {
+          checkoutId: holder.checkoutId,
+          ownerSessionId: holder.ownerSessionId,
+          state: holder.delivery.state,
+        },
+        capabilities: { ...target.capabilities, preview: false, finalize: false },
       } : {}),
     } as T
   }
 
-  async function details(sessionId: string, checkoutId: string) {
+  function deliveryProofFromTarget(target: SessionTargetView): WorktreeConsoleDeliveryProof | undefined {
+    const delivery = target.delivery
+    if (!delivery || !('proof' in delivery) || !delivery.proof) return undefined
+    return {
+      ...delivery.proof,
+      changedFiles: [...delivery.proof.changedFiles],
+    }
+  }
+
+  async function details(
+    sessionId: string,
+    checkoutId: string,
+    observedDeliveryProof?: WorktreeConsoleDeliveryProof,
+  ) {
     const access = await linkedReadAccess(sessionId, checkoutId)
     const observed = await observe(access.record)
-    return projectReviewSlot(access.record, projectDetails(
-      access.record,
+    let projectedRecord = access.record
+    if (access.acceptanceAnchorCheckoutId !== undefined) {
+      const currentAnchor = recordOf(options.registry, access.acceptanceAnchorCheckoutId)
+      const currentRequested = recordOf(options.registry, checkoutId)
+      const currentHolder = currentAnchor.ownerSessionId === sessionId
+        && currentAnchor.phase === 'ready'
+        && currentAnchor.delivery.state === 'ready_for_review'
+        ? acceptanceHolder(currentAnchor)
+        : undefined
+      if (
+        currentHolder?.checkoutId !== currentRequested.checkoutId
+        || currentRequested.ownerSessionId !== access.record.ownerSessionId
+        || !sameLocalRoot(currentRequested.localRoot, currentAnchor.localRoot)
+        || observed.managedRoot === null
+        || !sameLocalRoot(observed.managedRoot, currentRequested.managedRoot)
+      ) throw domainError('not_owner', '验收槽位占用者已变化，请重新检查')
+      projectedRecord = currentRequested
+    }
+    return projectReviewSlot(projectedRecord, projectDetails(
+      projectedRecord,
       sessionId,
       observed.managedRoot,
       observed.snapshot,
       observed.dirty,
       ownerSessionAvailable(access.record),
       access.linkedRead,
+      observedDeliveryProof,
     ))
   }
 
-  async function mutationResponse(sessionId: string, checkoutId: string): Promise<WorktreeConsoleMutationResponse> {
+  async function mutationResponse(
+    sessionId: string,
+    checkoutId: string,
+    observedDeliveryProof?: WorktreeConsoleDeliveryProof,
+  ): Promise<WorktreeConsoleMutationResponse> {
     const record = recordOf(options.registry, checkoutId)
     if (record.phase === 'discarded') {
-      return { target: projectReviewSlot(record, projectRecord(record, sessionId, { ownerSessionAvailable: ownerSessionAvailable(record) })) }
+      return {
+        target: projectReviewSlot(record, projectRecord(record, sessionId, {
+          ownerSessionAvailable: ownerSessionAvailable(record),
+          deliveryProof: observedDeliveryProof,
+        })),
+      }
     }
     const observed = await observe(record)
-    return { target: projectReviewSlot(record, projectRecord(record, sessionId, { ...observed, ownerSessionAvailable: ownerSessionAvailable(record) })) }
+    return {
+      target: projectReviewSlot(record, projectRecord(record, sessionId, {
+        ...observed,
+        ownerSessionAvailable: ownerSessionAvailable(record),
+        deliveryProof: observedDeliveryProof,
+      })),
+    }
   }
 
   return {
     current: sessionId => outcome(async () => {
       const target = await callerTarget(sessionId)
       if (target.checkout.kind === 'local') return { target: projectLocal(target, sessionId) }
-      return { target: await details(sessionId, target.checkout.id) }
+      return {
+        target: await details(sessionId, target.checkout.id, deliveryProofFromTarget(target)),
+      }
     }),
 
     list: request => outcome(async () => {
@@ -512,7 +598,11 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         return {
           ok: true,
           value: {
-            ...(await mutationResponse(request.sessionId, request.checkoutId)),
+            ...(await mutationResponse(
+              request.sessionId,
+              request.checkoutId,
+              deliveryProofFromTarget(result.target),
+            )),
             changedFiles: [...result.changedFiles],
             commitOid: result.commitOid,
           },
@@ -552,7 +642,11 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         return {
           ok: true,
           value: {
-            ...(await mutationResponse(request.sessionId, request.checkoutId)),
+            ...(await mutationResponse(
+              request.sessionId,
+              request.checkoutId,
+              deliveryProofFromTarget(result.target),
+            )),
             changedFiles: [...result.changedFiles],
             commitOid: result.commitOid,
           },

@@ -5,6 +5,7 @@ import type {
   WorktreeConsoleReviewSummary,
   WorktreeConsoleTargetSummary,
 } from '../../console-contract.js'
+import type { WorktreeClientServices } from '../actions.js'
 import { ReviewActions } from './ReviewActions.js'
 
 export interface WorktreeReviewEvidence extends WorktreeConsoleReviewSummary {
@@ -22,6 +23,7 @@ export interface WorktreeReviewPanelProps {
   review: WorktreeReviewEvidence
   identity?: WorktreeReviewIdentity
   adapter?: WorktreeConsoleAdapter | null
+  services?: WorktreeClientServices
   target?: WorktreeConsoleTargetSummary
   onRefresh?: () => void | Promise<void>
   onTargetChange?: (target: WorktreeConsoleTargetSummary) => void
@@ -58,6 +60,7 @@ function reviewIsStale(
 export function WorktreeReviewPanel({
   review,
   adapter,
+  services,
   identity,
   target,
   onRefresh,
@@ -65,6 +68,11 @@ export function WorktreeReviewPanel({
   unavailableMessage = '实时 Worktree Console 未连接；连接后即可执行验收操作。',
 }: WorktreeReviewPanelProps) {
   const panelId = useId()
+  const actionScope = identity
+    ? [identity.sessionId, identity.checkoutId, identity.expectedRevision, identity.expectedReviewId].join('\u0000')
+    : ''
+  const activeActionScope = useRef(actionScope)
+  activeActionScope.current = actionScope
   const targetKey = target ? [
     target.checkoutId,
     target.revision,
@@ -73,6 +81,16 @@ export function WorktreeReviewPanel({
     target.commitOid,
     target.retention,
     target.cleanupMessage,
+    target.deliveryProof?.localHeadAfter,
+    target.deliveryProof?.commitInLocalHistory,
+    target.deliveryProof?.validationStatus,
+    target.deliveryProof?.validationSummary,
+    target.reviewSlot,
+    target.reviewSlotHolder?.checkoutId,
+    target.reviewSlotHolder?.ownerSessionId,
+    target.reviewSlotHolder?.state,
+    target.capabilities.preflight,
+    target.capabilities.preview,
     target.capabilities.finalize,
     target.capabilities.discard,
   ].join('\u0000') : ''
@@ -106,7 +124,7 @@ export function WorktreeReviewPanel({
     adapter
     && identity
     && currentTarget
-    && ['ready_for_review', 'preview_active', 'preview_detached', 'cleanup_pending', 'recovery_required', 'retained'].includes(currentTarget.state)
+    && ['ready_for_review', 'preview_active', 'preview_detached', 'cleanup_pending', 'recovery_required', 'retained', 'delivered'].includes(currentTarget.state)
     && !invalidReason,
   )
   const hasValidationDetails = Boolean(review.validationSummary || review.tests.length > 0)
@@ -169,10 +187,12 @@ export function WorktreeReviewPanel({
       <ReviewActions
         review={review}
         adapter={adapter}
+        services={services}
         identity={identity}
         target={currentTarget}
         disabled={!liveReady}
         unavailableMessage={unavailableMessage}
+        isActive={() => activeActionScope.current === actionScope}
         onStale={handleStale}
         onTargetChange={handleTargetChange}
       />

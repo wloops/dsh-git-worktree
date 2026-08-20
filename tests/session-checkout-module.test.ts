@@ -728,7 +728,8 @@ describe('SessionCheckoutModule', () => {
     writeFileSync(join(managedRoot, 'tracked.txt'), 'direct finish task\n')
     writeFileSync(join(context.projectRoot, 'local-note.txt'), 'keep local note\n')
     const ready = await context.module.markReadyForReview('session-1', {
-      summary: 'direct finish', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: direct finish',
+      summary: 'direct finish', validationStatus: 'passed', validationSummary: 'full validation passed',
+      tests: [], suggestedCommitMessage: 'test: direct finish',
     })
     if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
     const before = git(context.projectRoot, 'rev-parse', 'HEAD')
@@ -738,7 +739,16 @@ describe('SessionCheckoutModule', () => {
       expectedReviewId: ready.delivery.review.reviewId, commitMessage: 'test: direct finish', retention: 'retain_manual',
     })
 
-    expect(finished).toMatchObject({ status: 'finished', cleanup: 'retained', target: { delivery: { state: 'retained' } } })
+    expect(finished).toMatchObject({
+      status: 'finished',
+      cleanup: 'retained',
+      target: {
+        delivery: {
+          state: 'retained',
+          proof: { validationStatus: 'passed', validationSummary: 'full validation passed' },
+        },
+      },
+    })
     expect(git(context.projectRoot, 'rev-list', '--count', `${before}..HEAD`)).toBe('1')
     expect(git(context.projectRoot, 'show', '-s', '--format=%s', 'HEAD')).toBe('test: direct finish')
     expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
@@ -782,7 +792,8 @@ describe('SessionCheckoutModule', () => {
     const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
     writeFileSync(join(managedRoot, 'tracked.txt'), 'accepted preview\n')
     const ready = await context.module.markReadyForReview('session-1', {
-      summary: 'accepted preview', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: accepted preview',
+      summary: 'accepted preview', validationStatus: 'partial', validationSummary: 'focused tests passed; full suite not run',
+      tests: [], suggestedCommitMessage: 'test: accepted preview',
     })
     const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
     if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
@@ -796,7 +807,16 @@ describe('SessionCheckoutModule', () => {
       retention: 'retain_manual',
     })
 
-    expect(finalized).toMatchObject({ status: 'finished', cleanup: 'retained', target: { delivery: { state: 'retained' } } })
+    expect(finalized).toMatchObject({
+      status: 'finished',
+      cleanup: 'retained',
+      target: {
+        delivery: {
+          state: 'retained',
+          proof: { validationStatus: 'partial', validationSummary: 'focused tests passed; full suite not run' },
+        },
+      },
+    })
     expect(git(context.projectRoot, 'show', '-s', '--format=%s', 'HEAD')).toBe('test: accepted preview')
     expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
     expect(readFileSync(join(context.projectRoot, 'review-note.txt'), 'utf8')).toBe('keep local review work\n')
@@ -927,7 +947,15 @@ describe('SessionCheckoutModule', () => {
 
     const waiting = await context.module.inspect('session-2')
     expect(waiting).toMatchObject({ reviewSlot: 'waiting', reviewSlotOwnerSessionId: 'session-1' })
-    expect(await context.module.preflight?.('session-2', waiting.revision)).toMatchObject({ status: 'blocked', reason: 'project_acceptance_busy' })
+    expect(await context.module.preflight?.('session-2', waiting.revision)).toMatchObject({
+      status: 'blocked',
+      reason: 'project_acceptance_busy',
+      blocker: {
+        checkoutId: first.checkout.id,
+        ownerSessionId: 'session-1',
+        state: 'preview_active',
+      },
+    })
     expect(await context.module.operate({ action: 'preview', sessionId: 'session-2', expectedRevision: waiting.revision })).toMatchObject({
       status: 'error', code: 'project_acceptance_busy',
     })
@@ -1203,7 +1231,8 @@ describe('SessionCheckoutModule', () => {
     const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
     writeFileSync(join(managedRoot, 'tracked.txt'), 'crash finalize\n')
     const ready = await context.module.markReadyForReview('session-1', {
-      summary: 'crash finalize', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: crash finalize',
+      summary: 'crash finalize', validationStatus: 'passed', validationSummary: 'recovery validation passed',
+      tests: [], suggestedCommitMessage: 'test: crash finalize',
     })
     const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
     if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
@@ -1225,20 +1254,30 @@ describe('SessionCheckoutModule', () => {
     const restarted = context.restart()
     await restarted.reconcile()
     const recovered = await restarted.inspect('session-1')
-    expect(recovered).toMatchObject({ checkout: { phase: 'finalized' }, delivery: { state: 'finalized', commitOid, cleanup: 'blocked' } })
+    expect(recovered).toMatchObject({
+      checkout: { phase: 'finalized' },
+      delivery: {
+        state: 'finalized',
+        commitOid,
+        cleanup: 'blocked',
+        proof: { validationStatus: 'passed', validationSummary: 'recovery validation passed' },
+      },
+    })
     expect(existsSync(managedRoot)).toBe(true)
   })
 
   test('Given Apply engine detects stale Local When module returns operation result Then stale_local remains stable for renderer recompute guidance', async () => {
     const staleEngine: SessionCheckoutApplyEngine = {
-      inspectReview: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
+      inspectReview: async () => ({
+        status: 'ready', isolatedFingerprint: 'isolated-ready', isolatedHeadOid: 'c'.repeat(40), changedFiles: ['tracked.txt'],
+      }),
       preflight: async () => ({ status: 'error', error: { code: 'stale_local', message: '不会执行' } }),
       plan: async () => ({
         status: 'ready',
         plan: {
           revision: 'plan-1',
           localFingerprint: 'local-1',
-          isolatedFingerprint: 'isolated-1',
+          isolatedFingerprint: 'isolated-ready',
           effectiveBaseOid: 'a'.repeat(40),
           baseStrategy: 'recorded_base',
           localHeadOid: 'b'.repeat(40),
@@ -1261,11 +1300,20 @@ describe('SessionCheckoutModule', () => {
     }
     const context = createContext({ applyEngine: staleEngine })
     const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'stale local preflight\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'stale local', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: stale local',
+    })
+
+    expect(await context.module.preflight?.('session-1', ready.revision)).toMatchObject({
+      status: 'blocked', reason: 'stale_local', localModified: false,
+    })
 
     const result = await context.module.operate({
       action: 'apply',
       sessionId: 'session-1',
-      expectedRevision: target.revision,
+      expectedRevision: ready.revision,
     })
 
     expect(result).toMatchObject({

@@ -43,7 +43,9 @@
 - **冲突时停止而非覆盖**：重叠修改、Local 漂移、分支变化或无法安全拆分的增量会进入 conflict/recovery，不自动选择一方覆盖。
 - **单任务提交**：验收通过后，只为本次任务创建一个 Commit，并继续保留可分离的 Local 修改。
 - **同一 Session 连续迭代**：本轮成功交付并 cleanup 后，可在原 Session 中开始 iteration + 1，保留完整对话。
-- **Review 可恢复编辑**：尚未同步的验收稿不会阻断普通讨论；后续需要改文件时，Agent 会先安全恢复当前 iteration。
+- **自动只读 Preflight**：Ready 后由 Review 卡与 composer dock 自动展示 Local/Worktree HEAD、effective base、同步条件、冲突与 acceptance slot；自动阶段绝不写入 Local。
+- **Review 可恢复编辑**：尚未同步的验收稿不会阻断普通讨论；stale 或冲突时可以返回当前 Worktree，并预填重新验证、生成新验收稿的请求。
+- **可核验 Delivery Proof**：Finalize 后展示 Commit OID、Local branch/HEAD、文件与验证摘要，以及 cleanup/retention 结果。
 - **保守恢复**：Review 过期、Local 漂移、分支变化、并发 Preview 或清理身份不确定时停止写入，不覆盖用户数据。
 
 > 当前定位是“项目级 Worktree Session 工作流”，不是跨项目全局 Worktree Manager。项目仍处于实验阶段，建议先在可恢复的 Git 仓库中使用。
@@ -94,7 +96,7 @@ Agent 只在隔离 cwd 中读取、修改和验证项目。该 cwd 对应真实 
 - 验证状态与测试命令；
 - 建议 Commit Message。
 
-该操作只保存验收报告，不写入 Local，也不创建 Commit。
+该操作只保存验收报告，不写入 Local，也不创建 Commit。Ready 出现后，专用 Review 卡和 composer dock 会自动执行严格只读 Preflight，展示 Local/Worktree HEAD、effective base、变更数量、冲突和 acceptance slot；Review 卡与 dock 会复用同一检查结果，但真正 Preview 或直接 Finalize 前仍会强制重新检查，不能把缓存当作写入授权。
 
 ### 4. 用户决定如何交付
 
@@ -105,6 +107,8 @@ Agent 只在隔离 cwd 中读取、修改和验证项目。该 cwd 对应真实 
 - **撤回并继续修改**：移除 Preview，返回原 Worktree；
 - **跳过验收直接提交**：显式确认后走受保护的直接交付路径；
 - **放弃任务**：在满足安全条件后清理任务环境。
+
+如果预检发现 `stale_local`、`stale_isolated` 或冲突，旧 Preview/Finalize 操作会立即停用；用户可以重新检查，或返回当前 Worktree 重新验证并生成验收稿。`project_acceptance_busy` 会显示不含路径的占用任务摘要；只有 Host 再次证明 checkout、owner Session 与 canonical cwd 一致后，界面才会导航到该 Session。Finalize 成功后，Review 界面继续保留 Delivery Proof，而不是只显示“成功”。
 
 ### 5. 在原对话开始下一轮
 
@@ -232,7 +236,7 @@ Finish、Discard、Remove 和 Local Preview 不属于模型工具。普通讨论
 
 ### 用户操作
 
-Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续修改和放弃入口。Session Header 的 `Local / Worktree · 状态` 胶囊可直接打开当前目标控制面板与“关联 Worktrees”管理器；source 或任一关联 target Session 都能查看同源任务、打开对应 Session，并在自身权限范围内处理当前 Worktree，无需返回原项目。Manager 只承载状态、导航与 owner lifecycle 操作，验收继续由专用 Review 卡和 composer dock 承担。Host 控制的同类能力也可通过 `/worktree` 命令使用：
+Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续修改和放弃入口。Session Header 的 `Local / Worktree · 状态` 胶囊可直接打开当前目标控制面板与“关联 Worktrees”管理器；source 或任一关联 target Session 都能查看同源任务、打开对应 Session，并在自身权限范围内处理当前 Worktree，无需返回原项目。Manager 只承载状态、导航与 owner lifecycle 操作，不恢复检查或验收展开；自动 Preflight、stale/conflict 恢复、acceptance slot 导航和 Delivery Proof 继续由专用 Review 卡与 composer dock 承担。Host 控制的同类能力也可通过 `/worktree` 命令使用：
 
 ```text
 /worktree status
@@ -255,12 +259,15 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 
 - Local source 与 Isolated target 使用不同 Session ID；
 - active target 的 Workspace 必须 canonicalize 到 registry 记录的 managed root；
-- 同一 canonical Local 项目同时最多存在一个 active Preview；
+- 同一 canonical Local 项目同时最多存在一个 active Preview；等待中的 owner 仍可执行只读 Preflight，但 Preview/Finalize capability 会关闭；
+- acceptance slot blocker 只返回 path-free checkout/Session/state 摘要；打开占用任务前必须重新 inspect 并复验 owner 与 canonical cwd；
+- 自动 Preflight 不创建 plan、slot、Git ref 或 Local 写入；Preview 与 direct Finalize 前必须 bypass 缓存重新检查；
 - Preview receipt 和 internal refs 在写入 Local 前持久化；
 - Preview、Rollback、Finalize、Discard 和继续修改都绑定 checkout、revision、review 与 fingerprint；
 - Rollback 只移除可以证明属于本次 Preview 的增量，并尽量保留验收期间新增的无关 Local 修改；
 - branch switch、non-fast-forward、重叠冲突、Preview 已进入 Commit 或额外漂移会进入 recovery，而不是强行覆盖；
 - cleanup 前验证 managed path、Git metadata 和最终 fingerprint；未知残余会保留或 quarantine；
+- Finalize 的 durable Delivery Proof 绑定准确 Review，并保存 Commit、Local branch/HEAD、changed files 与 validation 摘要；动态历史证据不授予新的写权限；
 - 历史不可逆 Apply 记录不会被自动 Finish 或 Discard。
 
 更完整的状态机和权限矩阵见 [Worktree Console 架构](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)。

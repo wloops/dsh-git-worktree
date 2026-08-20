@@ -64,6 +64,9 @@ export interface WorktreeDeliveryProofView {
   localHeadBefore: string
   localHeadAfter: string
   changedFiles: string[]
+  /** Validation evidence copied from the exact Review that authorized this delivery. */
+  validationStatus?: WorktreeValidationStatus
+  validationSummary?: string
   /** Whether this round's commit is still an ancestor of Local HEAD at view time. null when there is no commit. */
   commitInLocalHistory: boolean | null
 }
@@ -105,6 +108,7 @@ export type WorktreeApplyPreflightBlockedReason =
   | 'not_owner'
   | 'not_ready_for_review'
   | 'stale_target'
+  | 'stale_local'
   | 'stale_isolated'
   | 'project_acceptance_busy'
   | 'checkout_unavailable'
@@ -123,6 +127,12 @@ export interface WorktreeApplyPreflightFacts {
   changedFiles: string[]
 }
 
+export interface WorktreeAcceptanceBlockerView {
+  checkoutId: string
+  ownerSessionId: string
+  state: 'preview_active' | 'preview_detached' | 'finalized' | 'retained' | 'working' | 'ready_for_review' | 'delivered'
+}
+
 export type WorktreeApplyPreflightView =
   | ({ status: 'ready' | 'local_advanced' | 'already_in_local'; localModified: false } & WorktreeApplyPreflightFacts)
   | ({ status: 'conflict'; localModified: false; conflictingFiles: string[] } & WorktreeApplyPreflightFacts)
@@ -134,6 +144,8 @@ export type WorktreeApplyPreflightView =
       revision: number
       reason: WorktreeApplyPreflightBlockedReason
       message: string
+      /** Path-free identity for the exact Worktree holding this project's acceptance slot. */
+      blocker?: WorktreeAcceptanceBlockerView
     }
 
 export interface SessionTargetProjectView {

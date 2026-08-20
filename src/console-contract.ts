@@ -14,6 +14,8 @@ import {
   type SessionCheckoutPhase,
   type WorktreeRetentionMode,
   type WorktreeApplyPreflightView,
+  type WorktreeAcceptanceBlockerView,
+  type WorktreeDeliveryProofView,
   type WorktreeValidationItem,
   type WorktreeValidationStatus,
 } from './types.js'
@@ -92,6 +94,8 @@ export interface WorktreeConsolePreviewRecovery {
   attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard'
 }
 
+export type WorktreeConsoleDeliveryProof = WorktreeDeliveryProofView
+
 export interface WorktreeConsoleReviewSummary {
   reviewId: string
   revision: number
@@ -123,9 +127,11 @@ export interface WorktreeConsoleTargetSummary {
   retainedAt?: number
   expiresAt?: number | null
   cleanupMessage?: string
+  deliveryProof?: WorktreeConsoleDeliveryProof
   review?: WorktreeConsoleReviewSummary
   reviewSlot?: 'available' | 'waiting'
   reviewSlotOwnerSessionId?: string
+  reviewSlotHolder?: WorktreeAcceptanceBlockerView
   previewRecovery?: WorktreeConsolePreviewRecovery
   capabilities: WorktreeConsoleCapabilities
 }

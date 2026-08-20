@@ -391,6 +391,158 @@ describe('Worktree Console Host control plane', () => {
     expect(preview).toMatchObject({ ok: false, error: { code: 'not_owner' } })
   })
 
+  it('keeps read-only Preflight available while exposing a path-free acceptance holder and disabling Local mutations', async () => {
+    const waiting = readyRecord()
+    waiting.checkoutId = 'checkout-waiting'
+    waiting.ownerSessionId = 'target-session'
+    waiting.managedRoot = '/managed'
+    waiting.managedGitRoot = '/managed'
+    waiting.gitDir = '/git/worktrees/waiting'
+    const holderReviewRecord = readyRecord()
+    if (holderReviewRecord.delivery.state !== 'ready_for_review') throw new Error('expected ready review fixture')
+    const holder: ManagedCheckoutRecord = {
+      ...holderReviewRecord,
+      checkoutId: 'checkout-holder',
+      ownerSessionId: 'holder-session',
+      sourceSessionId: 'other-source',
+      managedRoot: '/holder',
+      managedGitRoot: '/holder',
+      gitDir: '/git/worktrees/holder',
+      revision: 9,
+      delivery: {
+        state: 'preview_active',
+        review: holderReviewRecord.delivery.review,
+        preview: {
+          previewId: 'preview-1', reviewId: 'review-1', iteration: 1, previewedAt: 1,
+          configuredBaseOid: A, effectiveBaseOid: A, baseStrategy: 'recorded_base',
+          localHeadOid: A, localHeadRef: 'refs/heads/main', localFingerprintBefore: 'local-before',
+          localFingerprintPreview: 'local-preview', localWorkingTreeOid: A, localIndexTreeOid: A,
+          previewWorkingTreeOid: B, isolatedHeadOid: B, isolatedFingerprint: 'fingerprint-1',
+          isolatedSnapshotOid: B, changedFiles: ['src/index.ts'],
+        },
+      },
+    }
+    const value: ManagedCheckoutsRegistry = {
+      version: 2, revision: 1, sessionBindings: {},
+      managedCheckouts: { [waiting.checkoutId]: waiting, [holder.checkoutId]: holder },
+    }
+    const lookup = lookupDouble()
+    lookup.getSession = sessionId => ({
+      id: sessionId,
+      projectId: sessionId === 'target-session' ? 'workspace-target'
+        : sessionId === 'holder-session' ? 'workspace-holder' : 'project-1',
+    })
+    lookup.getProject = projectId => ({
+      id: projectId, name: 'Project',
+      root: projectId === 'workspace-target' ? '/managed'
+        : projectId === 'workspace-holder' ? '/holder' : '/local',
+    })
+    const { module, control } = plane(waiting, {
+      registry: { read: () => structuredClone(value), write: vi.fn() },
+      lookup,
+    })
+    vi.mocked(module.resolveManagedRoot).mockImplementation(async checkoutId => checkoutId === holder.checkoutId ? '/holder' : '/managed')
+    vi.mocked(module.preflight!).mockResolvedValue({
+      status: 'blocked', localModified: false, checkoutId: waiting.checkoutId, reviewId: 'review-1', revision: waiting.revision,
+      reason: 'project_acceptance_busy', message: 'busy',
+      blocker: { checkoutId: holder.checkoutId, ownerSessionId: holder.ownerSessionId, state: 'preview_active' },
+    })
+
+    const current = await control.current('target-session')
+    expect(current).toMatchObject({
+      ok: true,
+      value: {
+        target: {
+          reviewSlot: 'waiting',
+          reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' },
+          capabilities: { preflight: true, preview: false, finalize: false },
+        },
+      },
+    })
+    expect(JSON.stringify(current)).not.toContain('/holder')
+    expect(await control.preflight({
+      sessionId: 'target-session', checkoutId: waiting.checkoutId, expectedRevision: waiting.revision, expectedReviewId: 'review-1',
+    })).toMatchObject({
+      ok: true,
+      value: { preflight: { reason: 'project_acceptance_busy', blocker: { checkoutId: 'checkout-holder' } } },
+    })
+
+    const opened = await control.inspect('target-session', holder.checkoutId)
+    expect(opened).toMatchObject({
+      ok: true,
+      value: {
+        target: {
+          checkoutId: holder.checkoutId,
+          managedRoot: '/holder',
+          capabilities: { open: true, inspect: true, preview: false, finalize: false },
+        },
+      },
+    })
+
+    vi.mocked(module.resolveManagedRoot).mockImplementationOnce(async () => {
+      value.managedCheckouts[holder.checkoutId]!.delivery = { state: 'working', iteration: 1 }
+      return '/holder'
+    })
+    const releasedDuringObserve = await control.inspect('target-session', holder.checkoutId)
+    expect(releasedDuringObserve).toMatchObject({ ok: false, error: { code: 'not_owner' } })
+    expect(JSON.stringify(releasedDuringObserve)).not.toContain('/holder')
+  })
+
+  it('does not extend acceptance-holder read access to another cross-source Worktree', async () => {
+    const anchor = readyRecord()
+    const unrelated: ManagedCheckoutRecord = {
+      ...readyRecord(), checkoutId: 'checkout-unrelated', ownerSessionId: 'other-owner', sourceSessionId: 'other-source',
+      managedRoot: '/other', managedGitRoot: '/other', gitDir: '/git/worktrees/other',
+    }
+    const value: ManagedCheckoutsRegistry = {
+      version: 2, revision: 1, sessionBindings: {},
+      managedCheckouts: { [anchor.checkoutId]: anchor, [unrelated.checkoutId]: unrelated },
+    }
+    const { control } = plane(anchor, { registry: { read: () => structuredClone(value), write: vi.fn() } })
+    expect(await control.inspect('target-session', unrelated.checkoutId)).toMatchObject({ ok: false, error: { code: 'not_owner' } })
+  })
+
+  it('projects durable delivery proof while preserving dynamic Local-history evidence', async () => {
+    const delivered = readyRecord()
+    delivered.phase = 'discarded'
+    delivered.revision = 9
+    delivered.delivery = {
+      state: 'delivered', iteration: 1, commitOid: B, deliveredAt: 10,
+      proof: {
+        localBranch: 'main', localHeadBefore: A, localHeadAfter: B, changedFiles: ['src/index.ts'],
+        validationStatus: 'passed', validationSummary: 'full validation passed',
+      },
+    }
+    const { module, control } = plane(delivered)
+    vi.mocked(module.inspect).mockResolvedValue({
+      project: { id: delivered.projectId, name: delivered.projectName },
+      checkout: { id: delivered.checkoutId, kind: 'isolated', label: 'Task', phase: 'discarded' },
+      source: { ref: delivered.sourceRef, oid: delivered.baseOid }, current: { branch: 'main', oid: B },
+      ownership: 'owner', dirty: false, revision: delivered.revision,
+      delivery: {
+        state: 'delivered', iteration: 1, commitOid: B, deliveredAt: 10,
+        proof: {
+          ...delivered.delivery.proof,
+          commitInLocalHistory: true,
+        },
+      },
+    })
+
+    expect(await control.current('target-session')).toMatchObject({
+      ok: true,
+      value: {
+        target: {
+          state: 'delivered',
+          deliveryProof: {
+            localBranch: 'main', localHeadBefore: A, localHeadAfter: B,
+            changedFiles: ['src/index.ts'], validationStatus: 'passed',
+            validationSummary: 'full validation passed', commitInLocalHistory: true,
+          },
+        },
+      },
+    })
+  })
+
   it('rejects a live same-project Session that is neither source nor owner before revealing managedRoot', async () => {
     const { module, control } = plane()
     const result = await control.inspect('intruder-session', 'checkout-1')

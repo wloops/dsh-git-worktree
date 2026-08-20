@@ -10,7 +10,11 @@ import {
   type WorktreeConsoleTargetState,
   type WorktreeConsoleTargetSummary,
 } from '../../console-contract.js'
-import { openIsolatedTarget, type WorktreeClientServices } from '../actions.js'
+import {
+  openAuthorizedWorktreeTarget,
+  openIsolatedTarget,
+  type WorktreeClientServices,
+} from '../actions.js'
 
 export interface WorktreeConsoleViewProps {
   sessionId: string
@@ -300,32 +304,9 @@ export function WorktreeConsoleView({
     setPendingAction(`open:${target.checkoutId}`)
     setError(null)
     try {
-      const outcome = await adapter.inspect({ sessionId, checkoutId: target.checkoutId })
-      if (!isActive(generation)) return
-      if (!outcome.ok) {
-        mutationError(outcome.error.code, outcome.error.message, generation)
-        return
-      }
-      const detail = outcome.value.target
-      if (!detail.capabilities.open) {
-        throw new Error('最新 Host 状态已不允许打开该 Worktree。')
-      }
-      if (
-        detail.checkoutId !== target.checkoutId
-        || detail.project.id !== target.project.id
-        || detail.sourceSessionId !== target.sourceSessionId
-        || detail.ownerSessionId !== target.ownerSessionId
-        || detail.targetSessionId !== target.targetSessionId
-        || detail.targetSessionId !== detail.ownerSessionId
-      ) {
-        throw new Error('检查结果中的 target 身份不一致。')
-      }
-      if (detail.managedRoot === null || detail.targetSessionId === null) {
-        throw new Error('已授权的 target 路径或 Session 身份不可用。')
-      }
-      await openIsolatedTarget(services, {
-        managedRoot: detail.managedRoot,
-        targetSessionId: detail.targetSessionId,
+      await openAuthorizedWorktreeTarget(adapter, services, sessionId, {
+        checkoutId: target.checkoutId,
+        ownerSessionId: target.ownerSessionId,
       }, () => isActive(generation))
     } catch (reason) {
       if (isActive(generation)) {

@@ -1,5 +1,7 @@
 /** Browser-side orchestration over Harness Workspace and Session runtime faces. */
 
+import type { WorktreeConsoleAdapter } from '../console-contract.js'
+
 export interface IsolatedTargetLocation {
   managedRoot: string
   targetSessionId: string
@@ -41,6 +43,12 @@ export interface ClientWorkspaces {
 export interface WorktreeClientServices {
   sessions: ClientSessions
   workspaces: ClientWorkspaces
+  /** Optional public composer face; recovery may prefill text but never auto-send it. */
+  conversation?: {
+    input: {
+      for(ctx: unknown): PreSessionInput
+    }
+  }
 }
 
 export interface PreSessionInput {
@@ -57,12 +65,12 @@ export interface PreSessionWorktreeServices extends WorktreeClientServices {
     delete(workspaceId: string): Promise<void>
   }
   conversation: {
+    input: {
+      for(ctx: unknown): PreSessionInput
+    }
     blocks: {
       set(sessionId: string, block: { reason: string } | undefined): void
       storeFor(sessionId: string): { getSnapshot(): { reason: string } | undefined }
-    }
-    input: {
-      for(ctx: unknown): PreSessionInput
     }
   }
 }
@@ -134,8 +142,10 @@ export async function openIsolatedTarget(
   payload: IsolatedTargetLocation,
   isActive: () => boolean = () => true,
 ): Promise<void> {
+  if (!isActive()) return
   const existing = services.sessions.list.getSnapshot().byId[payload.targetSessionId]
   if (existing !== undefined) {
+    if (!isActive()) return
     if (!openExistingSession(services, payload.targetSessionId, payload.managedRoot)) {
       throw new Error(`Harness 现有 Session ${payload.targetSessionId} 的 cwd 与 Host 记录不一致。`)
     }
@@ -156,6 +166,49 @@ export async function openIsolatedTarget(
   if (!await waitForProjectedSessionPath(services, sessionId, payload.managedRoot, isActive)) return
   if (!isActive()) return
   services.sessions.open(sessionId)
+}
+
+/**
+ * Inspect a path-free Host authorization, verify exact checkout/owner identity,
+ * then reuse the cwd-validated Session navigation path.
+ */
+export async function openAuthorizedWorktreeTarget(
+  adapter: Pick<WorktreeConsoleAdapter, 'inspect'>,
+  services: WorktreeClientServices,
+  callerSessionId: string,
+  expected: { checkoutId: string; ownerSessionId: string },
+  isActive: () => boolean = () => true,
+): Promise<void> {
+  const outcome = await adapter.inspect({ sessionId: callerSessionId, checkoutId: expected.checkoutId })
+  if (!isActive()) return
+  if (!outcome.ok) throw new Error(`${outcome.error.code}: ${outcome.error.message}`)
+  const target = outcome.value.target
+  if (!target.capabilities.inspect || !target.capabilities.open) {
+    throw new Error('最新 Host 状态已不允许打开该 Worktree。')
+  }
+  if (
+    target.checkoutId !== expected.checkoutId
+    || target.ownerSessionId !== expected.ownerSessionId
+    || target.targetSessionId !== expected.ownerSessionId
+  ) throw new Error('Host 检查结果中的 Worktree 身份不一致。')
+  if (target.managedRoot === null) throw new Error('Host 未提供可验证的 Worktree 路径。')
+  if (!isActive()) return
+  await openIsolatedTarget(services, {
+    managedRoot: target.managedRoot,
+    targetSessionId: expected.ownerSessionId,
+  }, isActive)
+}
+
+/** Prefill a visible recovery request. This never invokes command/send/followup. */
+export function prefillSessionDraft(
+  services: WorktreeClientServices,
+  sessionId: string,
+  text: string,
+): boolean {
+  const binding = services.sessions.binding(sessionId)
+  if (binding?.ctx === undefined || services.conversation === undefined) return false
+  services.conversation.input.for(binding.ctx).setDraft(text)
+  return true
 }
 
 /** Submit an exact review-card acceptance as an explicit user command. */

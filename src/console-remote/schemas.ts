@@ -61,6 +61,20 @@ const capabilitiesSchema = strict({
   retryCleanup: z.boolean(),
   beginNextIteration: z.boolean(),
 })
+const acceptanceBlockerSchema = strict({
+  checkoutId: checkoutIdSchema,
+  ownerSessionId: sessionIdSchema,
+  state: z.enum(['preview_active', 'preview_detached', 'finalized', 'retained', 'working', 'ready_for_review', 'delivered']),
+})
+const deliveryProofSchema = strict({
+  localBranch: z.string().nullable(),
+  localHeadBefore: oidSchema,
+  localHeadAfter: oidSchema,
+  changedFiles: z.array(z.string()),
+  validationStatus: z.enum(['passed', 'failed', 'partial', 'not_run']).optional(),
+  validationSummary: z.string().optional(),
+  commitInLocalHistory: z.boolean().nullable(),
+})
 const targetSummarySchema = strict({
   project: projectSchema,
   checkoutId: checkoutIdSchema.nullable(),
@@ -78,9 +92,11 @@ const targetSummarySchema = strict({
   retainedAt: z.number().finite().optional(),
   expiresAt: z.number().finite().nullable().optional(),
   cleanupMessage: z.string().optional(),
+  deliveryProof: deliveryProofSchema.optional(),
   review: reviewSchema.optional(),
   reviewSlot: z.enum(['available', 'waiting']).optional(),
   reviewSlotOwnerSessionId: sessionIdSchema.optional(),
+  reviewSlotHolder: acceptanceBlockerSchema.optional(),
   previewRecovery: strict({
     reason: z.enum(['stale_local', 'preview_modified']),
     attemptedAction: z.enum(['rollback_preview', 'finalize_preview', 'discard']),
@@ -149,8 +165,9 @@ const preflightSchema = z.union([
     checkoutId: z.string(),
     reviewId: reviewIdSchema.nullable(),
     revision: revisionSchema,
-    reason: z.enum(['not_owner', 'not_ready_for_review', 'stale_target', 'stale_isolated', 'project_acceptance_busy', 'checkout_unavailable', 'git_error']),
+    reason: z.enum(['not_owner', 'not_ready_for_review', 'stale_target', 'stale_local', 'stale_isolated', 'project_acceptance_busy', 'checkout_unavailable', 'git_error']),
     message: z.string(),
+    blocker: acceptanceBlockerSchema.optional(),
   }),
 ])
 export const preflightResponseSchema: z.ZodType<WorktreeConsolePreflightResponse> = strict({ preflight: preflightSchema })

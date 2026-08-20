@@ -279,6 +279,61 @@ describe('Harness-native Session Target slots', () => {
     }))
   })
 
+  test('Dock 切换 Session 时丢弃旧 current 请求，避免跨 Session 注入 Review', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    let resolveA!: (value: Awaited<ReturnType<typeof fixture.adapter.current>>) => void
+    let resolveB!: (value: Awaited<ReturnType<typeof fixture.adapter.current>>) => void
+    fixture.adapter.current = vi.fn(async ({ sessionId }) => new Promise(resolve => {
+      if (sessionId === 'session-a') resolveA = resolve
+      else resolveB = resolve
+    }))
+    const slots = new SlotsDouble()
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+    const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+    const rendered = render(<Dock session={{ sessionId: 'session-a' }} input={{}} />)
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-a' }))
+
+    rendered.rerender(<Dock session={{ sessionId: 'session-b' }} input={{}} />)
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-b' }))
+    resolveA({ ok: true, value: { target: fixture.target } })
+    resolveB({ ok: true, value: { target: {
+      ...fixture.target, checkoutId: null, targetSessionId: null, state: 'local', phase: 'local', review: undefined,
+      managedRoot: null, sourceRoot: null, capabilities: { ...fixture.target.capabilities, create: true, preflight: false, preview: false },
+    } } })
+
+    await waitFor(() => expect(screen.queryByText('Worktree 已准备好同步到 Local 验收')).toBeNull())
+  })
+
+  test('Dock 切换 Session 时丢弃旧 mutation 结果，不把 A 的 Preview 注入 B', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const localTarget = {
+      ...fixture.target, checkoutId: null, targetSessionId: null, state: 'local' as const, phase: 'local' as const,
+      review: undefined, managedRoot: null, sourceRoot: null,
+      capabilities: { ...fixture.target.capabilities, create: true, preflight: false, preview: false, finalize: false },
+    }
+    fixture.adapter.current = vi.fn(async ({ sessionId }) => ({
+      ok: true, value: { target: sessionId === 'session-a' ? fixture.target : localTarget },
+    }))
+    let resolvePreview!: (value: Awaited<ReturnType<typeof fixture.adapter.preview>>) => void
+    fixture.adapter.preview = vi.fn(async () => new Promise(resolve => { resolvePreview = resolve }))
+    const slots = new SlotsDouble()
+    registerTargetConsole({ slots }, fixture.adapter, clientServices())
+    const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+    const rendered = render(<Dock session={{ sessionId: 'session-a' }} input={{}} />)
+
+    await waitFor(() => expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    await waitFor(() => expect(fixture.adapter.preview).toHaveBeenCalled())
+    rendered.rerender(<Dock session={{ sessionId: 'session-b' }} input={{}} />)
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-b' }))
+    resolvePreview(await createWorktreeConsoleAdapterFixture().adapter.preview({
+      sessionId: 'session-a', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    }))
+
+    await waitFor(() => expect(screen.queryByText('本轮修改正在 Local 等待验收')).toBeNull())
+    expect(screen.queryByText('已同步为可撤回的 Local Preview；请在 Local 中验收。')).toBeNull()
+  })
+
   test('在 input dock 注册 Domi 式待验收状态条，并只显示一个主操作与更多菜单', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const slots = new SlotsDouble()
@@ -391,6 +446,11 @@ describe('Harness-native Session Target slots', () => {
       revision: 9,
       dirty: false,
       commitOid: 'c'.repeat(40),
+      deliveryProof: {
+        localBranch: 'main', localHeadBefore: 'a'.repeat(40), localHeadAfter: 'c'.repeat(40),
+        changedFiles: ['src/index.ts'], validationStatus: 'passed' as const,
+        validationSummary: 'full validation passed', commitInLocalHistory: true,
+      },
       capabilities: {
         ...fixture.target.capabilities,
         open: false,
@@ -409,6 +469,7 @@ describe('Harness-native Session Target slots', () => {
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
     await waitFor(() => expect(screen.getByText('本轮已交付，可在原会话继续下一轮修改')).toBeTruthy())
+    expect(screen.getByText(/Commit cccccccc · main@cccccccc · 1 个文件 · 环境已清理/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '开始下一轮修改' }))
     await waitFor(() => expect(fixture.calls).toContainEqual({
       method: 'beginNextIteration',

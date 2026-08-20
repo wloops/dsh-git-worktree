@@ -107,6 +107,15 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         phase: 'discarded',
         dirty: false,
         commitOid: 'c'.repeat(40),
+        deliveryProof: {
+          localBranch: 'main',
+          localHeadBefore: 'a'.repeat(40),
+          localHeadAfter: 'c'.repeat(40),
+          changedFiles: ['src/index.ts'],
+          validationStatus: target.review?.validationStatus,
+          validationSummary: target.review?.validationSummary,
+          commitInLocalHistory: true,
+        },
         capabilities: {
           create: false,
           open: false,

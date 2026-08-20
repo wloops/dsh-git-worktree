@@ -29,6 +29,19 @@ function identity(revision = 7) {
   return { sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: revision, expectedReviewId: 'review-1' }
 }
 
+function clientServices(byId: Record<string, { cwd?: string } | undefined> = {}): WorktreeClientServices {
+  const setDraft = vi.fn()
+  return {
+    workspaces: { create: vi.fn(), openPath: vi.fn() },
+    sessions: {
+      create: vi.fn(), open: vi.fn(),
+      list: { getSnapshot: () => ({ current: 'target-session', ids: Object.keys(byId), byId }), subscribe: () => () => undefined },
+      binding: vi.fn(() => ({ ctx: {}, session: { command: vi.fn() } })),
+    },
+    conversation: { input: { for: vi.fn(() => ({ setDraft, addImages: vi.fn(), removeImage: vi.fn() })) } },
+  }
+}
+
 function previewTarget() {
   const fixture = createWorktreeConsoleAdapterFixture()
   return {
@@ -134,22 +147,38 @@ describe('Domi-style Worktree Review', () => {
     expect(fixture.calls).toEqual([])
   })
 
-  test('Ready 主操作先只读预检，再创建可撤回 Local Preview', async () => {
+  test('Ready 自动只读预检，主操作写入前强制重检再创建可撤回 Local Preview', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const onTargetChange = vi.fn()
     fixture.adapter.preflight = vi.fn(fixture.adapter.preflight)
     fixture.adapter.preview = vi.fn(fixture.adapter.preview)
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} onTargetChange={onTargetChange} />)
 
+    await waitFor(() => expect(fixture.adapter.preflight).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('同步条件已确认')).toBeTruthy()
+    expect(fixture.adapter.preview).not.toHaveBeenCalled()
+
     fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
 
-    await waitFor(() => expect(fixture.adapter.preflight).toHaveBeenCalledWith(identity()))
+    await waitFor(() => expect(fixture.adapter.preflight).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(fixture.adapter.preview).toHaveBeenCalledWith(identity()))
     expect(onTargetChange).toHaveBeenCalledWith(expect.objectContaining({ state: 'preview_active' }))
     expect(screen.getByText(/已同步为可撤回的 Local Preview/)).toBeTruthy()
   })
 
-  test('预检冲突时 Local 未修改且不会自动调用 Preview', async () => {
+  test('Review 卡与 composer 表面共享同一 identity 的自动只读预检', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.preflight = vi.fn(fixture.adapter.preflight)
+    render(<>
+      <WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} />
+      <WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} />
+    </>)
+
+    await waitFor(() => expect(screen.getAllByText('同步条件已确认')).toHaveLength(2))
+    expect(fixture.adapter.preflight).toHaveBeenCalledTimes(1)
+  })
+
+  test('自动预检冲突时展示 HEAD/冲突恢复且 Local 未修改，不调用 Preview', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     fixture.adapter.preflight = vi.fn(async () => ({ ok: true as const, value: { preflight: {
       status: 'conflict' as const, localModified: false as const, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
@@ -159,9 +188,10 @@ describe('Domi-style Worktree Review', () => {
     fixture.adapter.preview = vi.fn(fixture.adapter.preview)
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
-
-    await waitFor(() => expect(screen.getAllByText(/同步预检发现 1 个冲突文件；Local 未修改/)).toHaveLength(2))
+    await waitFor(() => expect(screen.getByText('发现 1 个冲突文件')).toBeTruthy())
+    expect(screen.getByText('x.ts')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '返回 Worktree 重新生成验收稿' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(true)
     expect(fixture.adapter.preview).not.toHaveBeenCalled()
   })
 
@@ -176,7 +206,7 @@ describe('Domi-style Worktree Review', () => {
 
     await waitFor(() => expect(fixture.adapter.resumeRevision).toHaveBeenCalledWith(identity()))
     expect(onTargetChange).toHaveBeenCalledWith(expect.objectContaining({ state: 'working', iteration: 1 }))
-    expect(screen.getByText(/已恢复编辑；继续发送修改要求即可/)).toBeTruthy()
+    expect(screen.getByText(/已恢复编辑；请重新检查、验证并生成新的验收稿/)).toBeTruthy()
   })
 
   test('Ready 更多菜单提供跳过验收直接提交，并保持 Commit Message/Retention 确认', async () => {
@@ -184,6 +214,7 @@ describe('Domi-style Worktree Review', () => {
     fixture.adapter.finalize = vi.fn(fixture.adapter.finalize)
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} />)
 
+    await waitFor(() => expect(screen.getByText('同步条件已确认')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('更多交付操作'))
     fireEvent.click(screen.getByRole('menuitem', { name: '跳过验收，直接提交' }))
     expect(screen.getByRole('dialog', { name: '跳过 Local 验收，直接提交？' })).toBeTruthy()
@@ -240,19 +271,89 @@ describe('Domi-style Worktree Review', () => {
     }))
   })
 
-  test('stale review 只失效并刷新一次，不自动重放 Preview', async () => {
+  test('Preview 遇到 stale_local 时停止写操作并刷新只读预检，不废弃 Review', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
-    const onRefresh = vi.fn(async () => undefined)
-    fixture.adapter.preflight = vi.fn(async () => ({ ok: false as const, error: { code: 'stale_isolated', message: 'stale review' } }))
-    fixture.adapter.preview = vi.fn(fixture.adapter.preview)
+    fixture.adapter.preflight = vi.fn(fixture.adapter.preflight)
+    fixture.adapter.preview = vi.fn(async () => ({ ok: false as const, error: { code: 'stale_local' as const, message: 'Local advanced' } }))
+    const onRefresh = vi.fn()
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} onRefresh={onRefresh} />)
 
+    await waitFor(() => expect(screen.getByText('同步条件已确认')).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
 
-    await waitFor(() => expect(screen.getByText(/验收结果已过期，请刷新/)).toBeTruthy())
-    expect(fixture.adapter.preflight).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(fixture.adapter.preflight).toHaveBeenCalledTimes(3))
+    expect(fixture.adapter.preview).toHaveBeenCalledTimes(1)
+    expect(onRefresh).not.toHaveBeenCalled()
+    expect(screen.queryByText(/验收结果已过期/)).toBeNull()
+    expect(screen.getByText(/状态在写入前发生变化/)).toBeTruthy()
+  })
+
+  test('stale isolated 自动失效旧写操作，并可返回 Worktree 预填重新验收请求', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    fixture.adapter.preflight = vi.fn(async () => ({ ok: true as const, value: { preflight: {
+      status: 'blocked' as const, localModified: false as const, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
+      reason: 'stale_isolated' as const, message: 'stale review',
+    } } }))
+    fixture.adapter.resumeRevision = vi.fn(fixture.adapter.resumeRevision)
+    fixture.adapter.preview = vi.fn(fixture.adapter.preview)
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} services={services} identity={identity()} target={fixture.target} />)
+
+    await waitFor(() => expect(screen.getByText('stale review')).toBeTruthy())
+    expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '返回 Worktree 重新生成验收稿' }))
+
+    await waitFor(() => expect(fixture.adapter.resumeRevision).toHaveBeenCalledWith(identity()))
+    const input = services.conversation!.input.for({})
+    expect(input.setDraft).toHaveBeenCalledWith(expect.stringMatching(/重新检查当前 Worktree.*重新生成验收/))
     expect(fixture.adapter.preview).not.toHaveBeenCalled()
-    expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  test('acceptance slot busy 时展示 path-free 摘要并经 inspect/cwd 验证打开占用 Session', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices({ 'holder-session': { cwd: '/fixture/holder' } })
+    const waiting = {
+      ...fixture.target,
+      reviewSlot: 'waiting' as const,
+      reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' as const },
+      capabilities: { ...fixture.target.capabilities, preview: false, finalize: false },
+    }
+    fixture.adapter.preflight = vi.fn(async () => ({ ok: true as const, value: { preflight: {
+      status: 'blocked' as const, localModified: false as const, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
+      reason: 'project_acceptance_busy' as const, message: 'busy', blocker: waiting.reviewSlotHolder,
+    } } }))
+    fixture.adapter.inspect = vi.fn(async () => ({ ok: true as const, value: { target: {
+      ...fixture.target, checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', targetSessionId: 'holder-session',
+      managedRoot: '/fixture/holder', capabilities: { ...fixture.target.capabilities, open: true, inspect: true, preview: false, finalize: false },
+    } } }))
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} services={services} identity={identity()} target={waiting} />)
+
+    await waitFor(() => expect(screen.getByText((_, element) => element?.tagName === 'P' && element.textContent?.includes('占用任务：checkout') === true)).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '打开占用任务' }))
+    await waitFor(() => expect(fixture.adapter.inspect).toHaveBeenCalledWith({ sessionId: 'target-session', checkoutId: 'checkout-holder' }))
+    expect(services.sessions.open).toHaveBeenCalledWith('holder-session')
+  })
+
+  test('Finalize 后展示 Commit、Local HEAD、验证与 cleanup delivery proof', () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const delivered = {
+      ...fixture.target,
+      state: 'delivered' as const,
+      phase: 'discarded' as const,
+      commitOid: 'c'.repeat(40),
+      deliveryProof: {
+        localBranch: 'main', localHeadBefore: 'a'.repeat(40), localHeadAfter: 'c'.repeat(40),
+        changedFiles: ['src/index.ts'], validationStatus: 'passed' as const,
+        validationSummary: 'focused tests passed', commitInLocalHistory: true,
+      },
+      capabilities: { ...fixture.target.capabilities, preview: false, finalize: false },
+    }
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={delivered} />)
+
+    expect(screen.getByText('Delivery Proof')).toBeTruthy()
+    expect(screen.getByText(/环境已清理/)).toBeTruthy()
+    expect(screen.getByText(/focused tests passed/)).toBeTruthy()
+    expect(screen.getByText(/Commit 仍在 Local 历史中/)).toBeTruthy()
   })
 
   test('logged ToolView 在 Remote 可用时可连续 Preview 再按最新 revision 提交', async () => {

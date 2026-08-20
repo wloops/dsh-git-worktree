@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails, WorktreeConsoleTargetSummary } from '../../console-contract.js'
+import type { WorktreeClientServices } from '../actions.js'
+import { DeliveryProof } from '../review-console/DeliveryProof.js'
 import { ReviewActions } from '../review-console/ReviewActions.js'
 import { reviewEvidenceFromTarget, reviewIdentityFromTarget } from '../review-console/index.js'
 import { WORKTREE_REVIEW_REFRESH_EVENT } from '../review-console/status-events.js'
@@ -7,16 +9,20 @@ import { WORKTREE_REVIEW_REFRESH_EVENT } from '../review-console/status-events.j
 export interface WorktreeReviewStatusProps {
   session: { sessionId: string }
   adapter: WorktreeConsoleAdapter
+  services: WorktreeClientServices
 }
 
 /** Domi-style compact delivery status above the native Harness composer. */
-export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusProps) {
+export function WorktreeReviewStatus({ session, adapter, services }: WorktreeReviewStatusProps) {
   const sessionId = session.sessionId
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [startingIteration, setStartingIteration] = useState(false)
   const mounted = useRef(true)
-  const refreshing = useRef(false)
+  const requestToken = useRef(0)
+  const sessionGeneration = useRef(0)
+  const currentSessionId = useRef(sessionId)
+  currentSessionId.current = sessionId
 
   useEffect(() => {
     mounted.current = true
@@ -24,11 +30,10 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
   }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (refreshing.current) return
-    refreshing.current = true
+    const token = ++requestToken.current
     try {
       const outcome = await adapter.current({ sessionId })
-      if (!mounted.current) return
+      if (!mounted.current || currentSessionId.current !== sessionId || token !== requestToken.current) return
       if (outcome.ok) {
         setTarget(outcome.value.target)
         setError(null)
@@ -36,13 +41,17 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
         setError(outcome.error.message)
       }
     } catch (reason) {
-      if (mounted.current) setError(reason instanceof Error ? reason.message : String(reason))
-    } finally {
-      refreshing.current = false
+      if (mounted.current && currentSessionId.current === sessionId && token === requestToken.current) {
+        setError(reason instanceof Error ? reason.message : String(reason))
+      }
     }
   }, [adapter, sessionId])
 
   useEffect(() => {
+    sessionGeneration.current += 1
+    requestToken.current += 1
+    setTarget(null)
+    setError(null)
     void refresh()
     const listener = (event: Event): void => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail
@@ -59,6 +68,7 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
   if (target?.state === 'delivered' && target.checkoutId !== null && target.capabilities.beginNextIteration) {
     const beginNextIteration = async (): Promise<void> => {
       if (startingIteration) return
+      const generation = sessionGeneration.current
       setStartingIteration(true)
       setError(null)
       try {
@@ -67,7 +77,7 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
           checkoutId: target.checkoutId!,
           expectedRevision: target.revision,
         })
-        if (!mounted.current) return
+        if (!mounted.current || currentSessionId.current !== sessionId || generation !== sessionGeneration.current) return
         if (!outcome.ok) {
           setError(outcome.error.message)
           if (outcome.error.code === 'stale_target') void refresh()
@@ -75,9 +85,11 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
         }
         setTarget(current => current ? { ...current, ...outcome.value.target } : current)
       } catch (reason) {
-        if (mounted.current) setError(reason instanceof Error ? reason.message : String(reason))
+        if (mounted.current && currentSessionId.current === sessionId && generation === sessionGeneration.current) {
+          setError(reason instanceof Error ? reason.message : String(reason))
+        }
       } finally {
-        if (mounted.current) setStartingIteration(false)
+        if (mounted.current && currentSessionId.current === sessionId && generation === sessionGeneration.current) setStartingIteration(false)
       }
     }
     return (
@@ -86,6 +98,7 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
         <span className="dsh-wt-review-dock-copy">
           <strong>本轮已交付，可在原会话继续下一轮修改</strong>
           <span>将安全重建已清理的 Worktree 路径，并保留当前对话。</span>
+          <DeliveryProof target={target} compact />
         </span>
         {error ? <span className="dsh-wt-error">{error}</span> : null}
         <button
@@ -109,6 +122,7 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
   const review = reviewEvidenceFromTarget(target)
   const identity = reviewIdentityFromTarget(sessionId, target)
   if (!review || !identity) return null
+  const actionGeneration = sessionGeneration.current
 
   const focusReview = (): void => {
     document.querySelector<HTMLElement>(`[data-worktree-review-id="${CSS.escape(review.reviewId)}"]`)
@@ -148,11 +162,13 @@ export function WorktreeReviewStatus({ session, adapter }: WorktreeReviewStatusP
       <ReviewActions
         review={review}
         adapter={adapter}
+        services={services}
         identity={identity}
         target={target}
         disabled={false}
         unavailableMessage="实时 Worktree Console 未连接。"
         focusReview={focusReview}
+        isActive={() => mounted.current && currentSessionId.current === sessionId && sessionGeneration.current === actionGeneration}
         onStale={() => { void refresh() }}
         onTargetChange={applyTarget}
       />

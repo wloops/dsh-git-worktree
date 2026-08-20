@@ -1,6 +1,7 @@
 import {
   consoleStateFromDomain,
   type WorktreeConsoleCapabilities,
+  type WorktreeConsoleDeliveryProof,
   type WorktreeConsoleReviewSummary,
   type WorktreeConsoleTargetDetails,
   type WorktreeConsoleTargetSummary,
@@ -27,6 +28,27 @@ function review(record: ManagedCheckoutRecord): WorktreeConsoleReviewSummary | u
 
 function commitOid(record: ManagedCheckoutRecord): string | null {
   return 'commitOid' in record.delivery ? record.delivery.commitOid : null
+}
+
+function deliveryProof(
+  record: ManagedCheckoutRecord,
+  observed?: WorktreeConsoleDeliveryProof,
+): WorktreeConsoleDeliveryProof | undefined {
+  if (observed) return {
+    ...observed,
+    changedFiles: [...observed.changedFiles],
+  }
+  if (!('proof' in record.delivery) || !record.delivery.proof) return undefined
+  const proof = record.delivery.proof
+  return {
+    localBranch: proof.localBranch,
+    localHeadBefore: proof.localHeadBefore,
+    localHeadAfter: proof.localHeadAfter,
+    changedFiles: [...proof.changedFiles],
+    ...(proof.validationStatus === undefined ? {} : { validationStatus: proof.validationStatus }),
+    ...(proof.validationSummary === undefined ? {} : { validationSummary: proof.validationSummary }),
+    commitInLocalHistory: null,
+  }
 }
 
 function iteration(record: ManagedCheckoutRecord): number {
@@ -84,9 +106,13 @@ export function projectRecord(
     summary?: ManagedWorktreeSummaryView
     ownerSessionAvailable?: boolean
     linkedRead?: boolean
+    deliveryProof?: WorktreeConsoleDeliveryProof
   },
 ): WorktreeConsoleTargetSummary {
   const projectedReview = review(record)
+  const projectedProof = observed?.linkedRead === true
+    ? undefined
+    : deliveryProof(record, observed?.deliveryProof)
   const delivery = record.delivery
   return {
     project: { id: record.projectId, name: record.projectName },
@@ -109,6 +135,7 @@ export function projectRecord(
     ...((delivery.state === 'retained' || delivery.state === 'finalized') && delivery.cleanupMessage !== undefined
       ? { cleanupMessage: delivery.cleanupMessage }
       : {}),
+    ...(projectedProof === undefined ? {} : { deliveryProof: projectedProof }),
     ...(projectedReview === undefined ? {} : { review: projectedReview }),
     ...(delivery.state === 'ready_for_review' ? { reviewSlot: 'available' as const } : {}),
     ...(delivery.state === 'preview_detached' ? {
@@ -134,9 +161,16 @@ export function projectDetails(
   dirty?: boolean,
   ownerSessionAvailable?: boolean,
   linkedRead = false,
+  observedDeliveryProof?: WorktreeConsoleDeliveryProof,
 ): WorktreeConsoleTargetDetails {
   return {
-    ...projectRecord(record, callerSessionId, { snapshot, dirty, ownerSessionAvailable, linkedRead }),
+    ...projectRecord(record, callerSessionId, {
+      snapshot,
+      dirty,
+      ownerSessionAvailable,
+      linkedRead,
+      deliveryProof: observedDeliveryProof,
+    }),
     managedRoot,
     sourceRoot: record.localRoot,
     sourceOid: record.baseOid,

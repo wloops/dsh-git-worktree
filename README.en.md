@@ -43,7 +43,9 @@ This plugin separates a coding task into two explicit boundaries:
 - **Stop on conflict instead of overwriting** — overlapping changes, Local drift, branch movement, or an inseparable delta enters conflict/recovery rather than silently choosing one side.
 - **Task-only commit** — acceptance creates one commit for the isolated task while preserving separable Local work.
 - **Continuous Session iterations** — after delivery and cleanup, iteration + 1 can start in the same Session with the full conversation intact.
-- **Review-to-edit recovery** — an unsynced review does not block discussion; a later file change safely resumes the current iteration first.
+- **Automatic read-only Preflight** — once Ready, the Review card and composer dock show Local/Worktree HEAD, effective base, sync conditions, conflicts, and the acceptance slot without writing Local.
+- **Review-to-edit recovery** — an unsynced review does not block discussion; stale or conflicting reviews can return to the current Worktree with a prefilled request to revalidate and prepare a new review.
+- **Verifiable Delivery Proof** — after Finalize, the UI shows the Commit OID, Local branch/HEAD, file and validation summaries, and cleanup/retention results.
 - **Fail-closed recovery** — stale reviews, Local drift, branch changes, concurrent Previews, and uncertain cleanup stop instead of overwriting data.
 
 > The current scope is a project-scoped Worktree Session workflow, not a cross-project global Worktree Manager. The project is still experimental; use it first in Git repositories that you can recover independently.
@@ -94,7 +96,7 @@ When implementation and validation are complete, the agent calls `worktree_ready
 - validation status and test commands;
 - a suggested commit message.
 
-This stores a review report. It does not write to Local and does not create a commit.
+This stores a review report. It does not write to Local and does not create a commit. Once Ready appears, the dedicated Review card and composer dock automatically run a strictly read-only Preflight that shows Local/Worktree HEAD, effective base, changed-file count, conflicts, and the acceptance slot. Both surfaces share the same read result, but Preview and direct Finalize always force a fresh check; cached display state is never write authorization.
 
 ### 4. Choose how to deliver
 
@@ -105,6 +107,8 @@ The user can then:
 - **Roll back and continue editing** — remove the Preview and return to the Worktree;
 - **Skip review and commit directly** — use the guarded direct-delivery path after explicit confirmation;
 - **Discard** — clean up the task environment when all safety conditions pass.
+
+If Preflight reports `stale_local`, `stale_isolated`, or a conflict, old Preview/Finalize actions are disabled immediately. The user can check again or return to the current Worktree to revalidate and prepare a new review. `project_acceptance_busy` exposes only a path-free holder summary; navigation happens only after the Host re-proves checkout, owner Session, and canonical cwd identity. After Finalize, the Review surface retains a Delivery Proof rather than collapsing to a generic success message.
 
 ### 5. Start the next round in the same conversation
 
@@ -216,7 +220,7 @@ Finish, Discard, Remove, and Local Preview are not model tools. Ordinary discuss
 
 ### User controls
 
-The Web UI provides the normal create, Preview, rollback, commit, retention, continue-editing, and discard actions. The `Local / Worktree · status` capsule in the Session Header opens the current-target controls and the Linked Worktrees manager directly; a source Session or any linked target Session can view the same source-linked tasks, navigate to their Sessions, and manage its own Worktree without returning to the original project. The manager stays focused on status, navigation, and owner lifecycle actions; review remains in the dedicated Review card and composer dock. Equivalent Host-controlled operations are also available through `/worktree` commands:
+The Web UI provides the normal create, Preview, rollback, commit, retention, continue-editing, and discard actions. The `Local / Worktree · status` capsule in the Session Header opens the current-target controls and the Linked Worktrees manager directly; a source Session or any linked target Session can view the same source-linked tasks, navigate to their Sessions, and manage its own Worktree without returning to the original project. The manager stays focused on status, navigation, and owner lifecycle actions and does not regain inspect/review expansion. Automatic Preflight, stale/conflict recovery, acceptance-slot navigation, and Delivery Proof remain in the dedicated Review card and composer dock. Equivalent Host-controlled operations are also available through `/worktree` commands:
 
 ```text
 /worktree status
@@ -239,12 +243,15 @@ Important rules include:
 
 - Local source and Isolated target use different Session IDs;
 - an active target Workspace must canonicalize to the managed root recorded by the Host;
-- one canonical Local project can have only one active Preview;
+- one canonical Local project can have only one active Preview; a waiting owner keeps read-only Preflight but loses Preview/Finalize capability;
+- an acceptance-slot blocker exposes only a path-free checkout/Session/state summary; opening it requires a fresh inspect plus owner and canonical-cwd verification;
+- automatic Preflight creates no plan, slot, Git ref, or Local write; Preview and direct Finalize bypass display caches and check again;
 - Preview receipts and internal refs are persisted before Local writes;
 - Preview, Rollback, Finalize, Discard, and resume-editing paths bind checkout, revision, review, and fingerprint identity;
 - Rollback removes only the delta proven to belong to the Preview and preserves separable Local changes made during review;
 - branch switches, non-fast-forward history, overlapping conflicts, committed Preview bytes, or additional drift enter recovery instead of being overwritten;
 - cleanup verifies managed-path identity, Git metadata, and the final fingerprint; uncertain residue is retained or quarantined;
+- durable Delivery Proof is bound to the exact Review and records Commit, Local branch/HEAD, changed files, and validation evidence; dynamic history evidence grants no mutation capability;
 - historical records from the old irreversible Apply flow are not automatically finished or discarded.
 
 See [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md) for the complete state model and authorization matrix.

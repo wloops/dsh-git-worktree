@@ -168,6 +168,9 @@ export interface ManagedDeliveryProof {
   localHeadBefore: string
   localHeadAfter: string
   changedFiles: string[]
+  /** Optional for backward compatibility with historical version-2 registries. */
+  validationStatus?: WorktreeValidationStatus
+  validationSummary?: string
 }
 
 export type ManagedCheckoutDelivery =

@@ -55,16 +55,40 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
 .dsh-wt-retention-check { display:flex; align-items:center; gap:8px; border:1px solid var(--wt-line); border-radius:8px; padding:8px 9px; font-size:12px; }
 .dsh-wt-retention-select { display:grid; gap:5px; padding:9px; border-radius:8px; background:var(--wt-panel); font-size:11px; }
 .dsh-wt-retention-select select { min-height:32px; border:1px solid var(--wt-line); border-radius:7px; padding:0 8px; background:Canvas; color:inherit; }
-.dsh-wt-preflight { margin-top:7px; padding:7px 9px; border-radius:8px; background:var(--wt-panel); color:var(--wt-muted); font-size:11px; }
+.dsh-wt-preflight { display:grid; gap:7px; margin-top:7px; padding:8px 9px; border-radius:8px; background:var(--wt-panel); color:var(--wt-muted); font-size:11px; }
 .dsh-wt-preflight[data-preflight="conflict"],
-.dsh-wt-preflight[data-preflight="blocked"] { color:var(--wt-amber); }
+.dsh-wt-preflight[data-preflight="blocked"],
+.dsh-wt-preflight[data-preflight="error"] { color:var(--wt-amber); }
+.dsh-wt-preflight-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.dsh-wt-preflight-head strong { color:var(--wt-ink); }
+.dsh-wt-preflight-facts,
+.dsh-wt-delivery-proof dl { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px 12px; margin:0; }
+.dsh-wt-preflight-facts > div,
+.dsh-wt-delivery-proof dl > div { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:5px; min-width:0; }
+.dsh-wt-preflight-facts dt,
+.dsh-wt-delivery-proof dt { color:var(--wt-muted); }
+.dsh-wt-preflight-facts dd,
+.dsh-wt-delivery-proof dd { min-width:0; margin:0; overflow-wrap:anywhere; }
+.dsh-wt-conflict-list { display:grid; gap:3px; max-height:116px; margin:0; padding-left:18px; overflow:auto; }
+.dsh-wt-recovery-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.dsh-wt-inline-action { border:0; padding:0; background:transparent; color:inherit; font:inherit; text-decoration:underline; cursor:pointer; }
+.dsh-wt-inline-action:disabled { opacity:.5; cursor:not-allowed; }
+.dsh-wt-delivery-proof { display:grid; gap:7px; margin-top:8px; padding:8px 9px; border:1px solid color-mix(in srgb, var(--wt-green) 26%, transparent); border-radius:8px; background:color-mix(in srgb, var(--wt-green) 6%, transparent); font-size:11px; }
+.dsh-wt-delivery-proof header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.dsh-wt-delivery-proof header span { color:var(--wt-muted); }
+.dsh-wt-delivery-proof-compact { display:block; margin:1px 0 0; padding:0; border:0; background:transparent; color:var(--wt-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-wt-action-status { min-height:1.35em; margin-top:7px; color:var(--wt-muted); font-size:11px; }
 .dsh-wt-review-dock { box-sizing:border-box; display:flex; flex:none; align-items:center; gap:9px; width:calc(100% - 2 * var(--dsh-composer-side-clearance, 16px) - 2 * var(--dsh-composer-dock-inset, 0px)); max-width:calc(var(--dsh-composer-card-max-width, 780px) - 2 * var(--dsh-composer-dock-inset, 0px)); margin:0 auto 8px; padding:7px 9px; border:1px solid color-mix(in srgb, #3275db 22%, transparent); border-radius:9px; background:color-mix(in srgb, #3275db 6%, transparent); color:var(--wt-ink); font-size:12px; }
 .dsh-wt-review-dock-copy { display:grid; min-width:0; flex:1; gap:1px; }
 .dsh-wt-review-dock-copy strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-wt-review-dock-copy span { color:var(--wt-muted); font-size:10px; }
 .dsh-wt-review-dock .dsh-wt-review-actions { padding:0; }
-.dsh-wt-review-dock .dsh-wt-action-status { display:none; }
+.dsh-wt-review-dock .dsh-wt-action-status,
+.dsh-wt-review-dock .dsh-wt-preflight-facts,
+.dsh-wt-review-dock .dsh-wt-conflict-list,
+.dsh-wt-review-dock .dsh-wt-delivery-proof:not(.dsh-wt-delivery-proof-compact) { display:none; }
+.dsh-wt-review-dock .dsh-wt-preflight { margin:0; padding:4px 6px; }
+.dsh-wt-review-dock .dsh-wt-preflight-head > span { display:none; }
 .dsh-wt-review-dock .dsh-wt-button { padding:5px 9px; font-size:11px; }
 .dsh-wt-review-dock .dsh-wt-more-trigger { width:29px; height:27px; }
 @media (max-width: 620px) {

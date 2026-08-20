@@ -7,22 +7,32 @@ import type {
 } from '../../console-contract.js'
 import { worktreeConsoleErrorMeta } from '../../console-contract.js'
 import type { WorktreeApplyPreflightView, WorktreeRetentionMode } from '../../types.js'
+import {
+  openAuthorizedWorktreeTarget,
+  prefillSessionDraft,
+  type WorktreeClientServices,
+} from '../actions.js'
 import type { WorktreeReviewEvidence, WorktreeReviewIdentity } from './WorktreeReviewPanel.js'
+import { DeliveryProof } from './DeliveryProof.js'
+import { PreflightStatus } from './PreflightStatus.js'
+import { readReviewPreflight, useReviewPreflight } from './preflight-cache.js'
 import { requestWorktreeReviewRefresh } from './status-events.js'
 
 interface ReviewActionsProps {
   review: WorktreeReviewEvidence
   adapter?: WorktreeConsoleAdapter | null
+  services?: WorktreeClientServices
   identity?: WorktreeReviewIdentity
   target?: WorktreeConsoleTargetSummary
   disabled: boolean
   unavailableMessage: string
   focusReview?: () => void
+  isActive?: () => boolean
   onStale: (error: WorktreeConsoleError) => void
   onTargetChange: (target: WorktreeConsoleTargetSummary) => void
 }
 
-type Mutation = 'preview' | 'resume_revision' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
+type Mutation = 'preview' | 'resume_revision' | 'open_holder' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
 type CommitMode = 'finish' | 'finalize_preview'
 
 function isStale(error: WorktreeConsoleError): boolean {
@@ -41,11 +51,13 @@ function preflightMessage(preflight: WorktreeApplyPreflightView): string {
 export function ReviewActions({
   review,
   adapter,
+  services,
   identity,
   target,
   disabled,
   unavailableMessage,
   focusReview,
+  isActive = () => true,
   onStale,
   onTargetChange,
 }: ReviewActionsProps) {
@@ -58,15 +70,28 @@ export function ReviewActions({
   const [retention, setRetention] = useState<Exclude<WorktreeRetentionMode, 'cleanup'>>('retain_24h')
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<WorktreeConsoleError | null>(null)
-  const [preflight, setPreflight] = useState<WorktreeApplyPreflightView | null>(null)
   const mutationLock = useRef(false)
   const observedTargetRevision = useRef(target?.revision)
+  const autoPreflightEnabled = Boolean(
+    adapter
+    && identity
+    && !disabled
+    && target?.state === 'ready_for_review'
+    && target.capabilities.preflight,
+  )
+  const { snapshot: preflightSnapshot, refresh: refreshPreflight } = useReviewPreflight(
+    adapter,
+    identity,
+    autoPreflightEnabled,
+  )
+  const safeReadyPreflight = preflightSnapshot.status === 'success'
+    && preflightSnapshot.preflight.status !== 'blocked'
+    && preflightSnapshot.preflight.status !== 'conflict'
 
   useEffect(() => {
     setCommitMessage(review.suggestedCommitMessage)
     setRetainEnvironment(false)
     setRetention('retain_24h')
-    setPreflight(null)
   }, [review.reviewId, review.suggestedCommitMessage])
 
   useEffect(() => {
@@ -76,7 +101,6 @@ export function ReviewActions({
     if (submitting !== null) return
     setMessage(null)
     setError(null)
-    setPreflight(null)
   }, [submitting, target?.revision])
 
   const begin = (mutation: Mutation): boolean => {
@@ -95,11 +119,16 @@ export function ReviewActions({
 
   const finishError = (nextError: WorktreeConsoleError): void => {
     setError(nextError)
-    if (isStale(nextError)) onStale(nextError)
+    if (nextError.code === 'stale_target') onStale(nextError)
+    if (nextError.code === 'stale_local' || nextError.code === 'stale_isolated') {
+      setMessage('状态在写入前发生变化；已停止操作，请按最新只读预检恢复。')
+      void refreshPreflight()
+    }
     finish()
   }
 
   const applyTarget = (nextTarget: WorktreeConsoleTargetSummary): void => {
+    if (!isActive()) return
     observedTargetRevision.current = nextTarget.revision
     onTargetChange(nextTarget)
     if (identity) requestWorktreeReviewRefresh(identity.sessionId)
@@ -107,18 +136,29 @@ export function ReviewActions({
 
   const previewLocal = async (): Promise<void> => {
     if (!begin('preview') || !adapter || !identity) return
-    const inspected = await adapter.preflight(identity)
-    if (!inspected.ok) {
+    const inspected = await readReviewPreflight(adapter, identity, true)
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (inspected.status === 'error') {
       finishError(inspected.error)
       return
     }
-    setPreflight(inspected.value.preflight)
-    setMessage(preflightMessage(inspected.value.preflight))
-    if (inspected.value.preflight.status === 'conflict' || inspected.value.preflight.status === 'blocked') {
+    if (inspected.status !== 'success') {
+      finish()
+      return
+    }
+    setMessage(preflightMessage(inspected.preflight))
+    if (inspected.preflight.status === 'conflict' || inspected.preflight.status === 'blocked') {
       finish()
       return
     }
     const outcome = await adapter.preview(identity)
+    if (!isActive()) {
+      finish()
+      return
+    }
     if (!outcome.ok) {
       finishError(outcome.error)
       return
@@ -131,18 +171,35 @@ export function ReviewActions({
   const resumeRevision = async (): Promise<void> => {
     if (!begin('resume_revision') || !adapter || !identity) return
     const outcome = await adapter.resumeRevision(identity)
+    if (!isActive()) {
+      finish()
+      return
+    }
     if (!outcome.ok) {
       finishError(outcome.error)
       return
     }
     applyTarget(outcome.value.target)
-    setMessage('已恢复编辑；继续发送修改要求即可。Local 未受影响。')
+    const drafted = services
+      ? prefillSessionDraft(
+          services,
+          identity.sessionId,
+          '请重新检查当前 Worktree 的修改，重新运行必要验证，并重新生成验收稿。',
+        )
+      : false
+    setMessage(drafted
+      ? '已恢复编辑并预填重新验收请求；Local 未受影响。'
+      : '已恢复编辑；请重新检查、验证并生成新的验收稿。Local 未受影响。')
     finish()
   }
 
   const rollbackPreview = async (resumeRevision = false): Promise<void> => {
     if (!begin('rollback') || !adapter || !identity) return
     const outcome = await adapter.rollbackPreview({ ...identity, resumeRevision })
+    if (!isActive()) {
+      finish()
+      return
+    }
     if (!outcome.ok) {
       finishError(outcome.error)
       return
@@ -162,9 +219,29 @@ export function ReviewActions({
     if (!mode || !value || value.length > 500 || !begin(mode) || !adapter || !identity) return
     const selectedRetention: WorktreeRetentionMode = retainEnvironment ? retention : 'cleanup'
     const request = { ...identity, commitMessage: value, retention: selectedRetention }
+    if (mode === 'finish') {
+      const inspected = await readReviewPreflight(adapter, identity, true)
+      if (!isActive()) {
+        finish()
+        return
+      }
+      if (inspected.status === 'error') {
+        finishError(inspected.error)
+        return
+      }
+      if (inspected.status !== 'success' || inspected.preflight.status === 'blocked' || inspected.preflight.status === 'conflict') {
+        setMessage(inspected.status === 'success' ? preflightMessage(inspected.preflight) : '同步预检未完成。')
+        finish()
+        return
+      }
+    }
     const outcome = mode === 'finalize_preview'
       ? await adapter.finalizePreview(request)
       : await adapter.finalize(request)
+    if (!isActive()) {
+      finish()
+      return
+    }
     if (!outcome.ok) {
       finishError(outcome.error)
       return
@@ -188,6 +265,10 @@ export function ReviewActions({
       confirmDirty: true,
       ...(target.state === 'preview_active' || target.capabilities.rollbackPreview ? { rollbackPreview: true } : {}),
     })
+    if (!isActive()) {
+      finish()
+      return
+    }
     if (!outcome.ok) {
       finishError(outcome.error)
       return
@@ -207,6 +288,10 @@ export function ReviewActions({
       checkoutId: identity.checkoutId,
       expectedRevision: identity.expectedRevision,
     })
+    if (!isActive()) {
+      finish()
+      return
+    }
     if (!outcome.ok) {
       finishError(outcome.error)
       return
@@ -214,6 +299,25 @@ export function ReviewActions({
     applyTarget(outcome.value.target)
     setMessage(outcome.value.target.state === 'delivered' ? 'Worktree 环境已清理。' : '清理仍未完成，已保留恢复信息。')
     finish()
+  }
+
+  const openHolder = async (): Promise<void> => {
+    const holder = preflightSnapshot.status === 'success'
+      && preflightSnapshot.preflight.status === 'blocked'
+      && preflightSnapshot.preflight.reason === 'project_acceptance_busy'
+      ? preflightSnapshot.preflight.blocker ?? target?.reviewSlotHolder
+      : target?.reviewSlotHolder
+    if (!holder || !adapter || !identity || !services || mutationLock.current) return
+    mutationLock.current = true
+    setSubmitting('open_holder')
+    setError(null)
+    try {
+      await openAuthorizedWorktreeTarget(adapter, services, identity.sessionId, holder, isActive)
+    } catch (reason) {
+      setError({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) })
+    } finally {
+      finish()
+    }
   }
 
   const live = Boolean(adapter && identity && target)
@@ -236,7 +340,7 @@ export function ReviewActions({
   }
 
   const primary = ready ? (
-    <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.preview} onClick={() => { void previewLocal() }}>
+    <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.preview || !safeReadyPreflight} onClick={() => { void previewLocal() }}>
       {submitting === 'preview' ? '同步中…' : '同步到 Local 验收'}
     </button>
   ) : previewActive ? (
@@ -280,7 +384,7 @@ export function ReviewActions({
                     void resumeRevision()
                     event.currentTarget.closest('details')?.removeAttribute('open')
                   }}>{submitting === 'resume_revision' ? '恢复中…' : '继续修改'}</button>
-                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize} onClick={(event) => {
+                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize || !safeReadyPreflight} onClick={(event) => {
                     setCommitMode('finish')
                     event.currentTarget.closest('details')?.removeAttribute('open')
                   }}>跳过验收，直接提交</button>
@@ -361,7 +465,17 @@ export function ReviewActions({
         )}
       />
 
-      {preflight ? <div className="dsh-wt-preflight" data-preflight={preflight.status}>{preflightMessage(preflight)}</div> : null}
+      {ready ? (
+        <PreflightStatus
+          snapshot={preflightSnapshot}
+          target={target}
+          onRefresh={() => { void refreshPreflight() }}
+          onResume={() => { void resumeRevision() }}
+          onOpenHolder={() => { void openHolder() }}
+          busy={submitting !== null}
+        />
+      ) : null}
+      {target && (target.state === 'cleanup_pending' || terminal) ? <DeliveryProof target={target} /> : null}
       <div className="dsh-wt-action-status" aria-live="polite">
         {submitting ? '正在处理 Worktree，请稍候…' : message}
       </div>

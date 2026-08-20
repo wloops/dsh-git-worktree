@@ -16,7 +16,7 @@ interface Props extends ToolCallViewPropsLike {
   adapter?: WorktreeConsoleAdapter
 }
 
-export function WorktreeReviewRow({ block, sessionId, adapter }: Props) {
+export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props) {
   const model = parseReviewTool(block)
   const payload = model.payload
   const args = model.args
@@ -79,6 +79,7 @@ export function WorktreeReviewRow({ block, sessionId, adapter }: Props) {
         <WorktreeReviewPanel
           review={review}
           adapter={adapter}
+          services={services}
           identity={identity}
           target={liveTarget}
           unavailableMessage={unavailableMessage}

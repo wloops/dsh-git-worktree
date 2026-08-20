@@ -23,7 +23,7 @@ export function registerTargetConsole(
   const HeaderAction = ({ sessionId }: { sessionId: string }) =>
     createElement(TargetStatusAction, { sessionId, adapter, services })
   const ReviewStatus = ({ session }: { session: { sessionId: string } }) =>
-    createElement(WorktreeReviewStatus, { session, adapter })
+    createElement(WorktreeReviewStatus, { session, adapter, services })
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions',
     id: 'worktree-target',

@@ -46,7 +46,7 @@
 - Header action 显示 `Local / Worktree · Working / Ready / Recovery`，点击后提供当前目标详情、工作位置、来源 Session、关联 Manager 与 capability 驱动的 lifecycle 操作；
 - Worktree Console 通过 Header 打开的 Modal 承载同一 `sourceSessionId + projectId + canonical localRoot` 关联组，暂不挂载 `conversation.view` 页签；
 - source 与任一 owner target 都可查看关联组；兄弟 target 只有 path-free list 与 identity-validated open（Client 内部仍通过 inspect 取得当次授权路径），mutation 继续由各自 owner/source 特例控制；
-- Manager 行只展示状态、导航和 owner lifecycle 操作，不重复挂载 Inspect 展开详情或 Review 面板；验收由专用 Review 卡和 composer dock 承担；
+- Manager 行只展示状态、导航和 owner lifecycle 操作，不重复挂载 Inspect 展开详情或 Review 面板；自动 Preflight、stale/conflict 恢复、slot-holder 导航与 Delivery Proof 由专用 Review 卡和 composer dock 承担；
 - 只有真实使用证明需要常驻工作台时，才重新评估 view tab；跨项目全局入口仍是长期能力；
 - ToolView 继续承担这次调用的上下文记录，不承担全局发现入口。
 
@@ -106,13 +106,15 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 - `list` 返回 path-free summary；
 - `managedRoot` 只在 caller 已通过身份验证的 create/current/inspect detail 中出现；
 - create request 只带 source Session ID，target Session ID 必须由 Host 分配；
-- preflight 是严格只读操作，绑定 checkout ID、expected revision 和 expected review ID；不得创建可执行 plan、slot 或 Local 写入；
+- preflight 是严格只读操作，绑定 checkout ID、expected revision 和 expected review ID；不得创建可执行 plan、slot、Git ref 或 Local 写入；Ready 后 Client 可以自动运行并在 Review 卡/dock 间按 identity 复用结果，但任何 Preview/direct Finalize 前都必须 bypass 缓存重新检查；
+- `project_acceptance_busy` 的 blocker 只包含 checkout ID、owner Session ID 与状态，不含路径；等待 owner 保留 `preflight`，但 `preview`/`finalize` capability 关闭；
+- slot-holder 导航必须调用 Host `inspect`，且跨 source 窄授权只对“当前 Ready owner 的真实 acceptance holder”开放；Client 随后复验 checkout/owner/target/canonical cwd，兄弟仍不获得 mutation capability；
 - preview 必须在同一 Host mutation lock 下重新 plan/CAS，先持久化 receipt 和 internal refs，再写 Local；同一 canonical localRoot 只能有一个 active slot；
 - rollbackPreview/finalizePreview 必须绑定最新 revision，并复验 receipt 中的 Local HEAD/ref/fingerprint 与 Preview tree；rollback 只可跨越同一 ref 的可证明 fast-forward：先将 Preview 前 Local 层三方重放到新 HEAD，再证明新 HEAD 未包含 Preview 增量，最后反向移除 Preview并执行写前/写后 CAS；切分支、non-fast-forward、Preview 已入历史或 hunk 冲突继续 fail closed；
 - discard 必须带 checkout ID、expected revision 和显式 `confirmDirty`；active Preview 还必须带 `rollbackPreview: true`，且 Host 只在 rollback 成功后删除 Worktree；
 - finalize/finalizePreview 必须带 checkout ID、expected revision、expected review ID、1–500 字符用户确认 Commit Message 和 retention；Commit Message 不是授权材料，Host 必须重新做长度/空白校验并继续执行完整 review/CAS 校验；
 - reviewDiff 绑定 expected revision + expected review ID，若 fingerprint/head 已变则返回 stale，不展示未审阅 bytes；该能力保留在高级控制面，不进入普通验收卡；
-- 所有 mutation response 返回新的 summary/revision，Client 不乐观伪造 durable 状态。
+- 所有 mutation response 返回新的 summary/revision，Client 不乐观伪造 durable 状态；Finalize 后 summary 可带 Delivery Proof，包括 Commit、Local branch/HEAD、changed files、validation evidence 和动态 `commitInLocalHistory`，但 proof 不构成后续写权限。
 
 ## 5. 权限与 CAS 矩阵
 
@@ -121,9 +123,9 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 | current | 精确 Session | lookup 与持久项目一致 | 当前 binding | read-only identity check |
 | list | 精确 Session | 同一 project/source/canonical localRoot 关联组 | source、owner target；兄弟仅只读投影 | 无 mutation 授权复用 |
 | create | source Session | canonical Git project | source 必须 Local | Host 分配 target ID；幂等/并发锁 |
-| inspect | caller Session | checkout 属于已证明的关联组；目标 root identity 重验 | owner/source，或 linked target 只读 | 返回当次 revision |
+| inspect | caller Session | checkout 属于已证明的关联组；目标 root identity 重验 | owner/source、同源 linked target 只读，或当前 Ready owner 的精确 slot holder 窄只读 | 返回当次 revision；Client 再验 cwd |
 | reviewDiff | owner/source 规则由 Backend 明确；默认 owner | 同上 | review 必须仍为当前 | revision + reviewId + fingerprint/head |
-| preflight/preview | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；项目单槽位 | revision + reviewId + isolated fingerprint/head + Local CAS |
+| preflight/preview | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；busy 时 preflight 仍只读可用，preview/finalize 关闭 | revision + reviewId + isolated fingerprint/head + Local CAS；写前强制重检 |
 | rollbackPreview | isolated owner | receipt 的 canonical Local boundary | 仅 owner | revision + Preview receipt + same-ref ancestry + Local HEAD/ref/fingerprint + post-write tree/index |
 | discard | owner；未打开 reservation 可允许 source | 同上 | 不信任 persisted owner ID 作为 caller 证明；active Preview 先 rollback | expectedRevision + confirmDirty + rollback intent |
 | finalize | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；Ready direct finish | revision + reviewId + fingerprint/head + Local CAS |
@@ -155,6 +157,14 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 - 不支持 hunk acceptance；Preview/rollback 使用 Host 内部 tree/receipt，不使用浏览器提供的 patch bytes。
 
 建议初始预算：最多 200 files、单文件 100 KiB、总响应 1 MiB；Backend Track 可根据 Harness Gateway 限制下调，但必须记录并测试。
+
+### 7.1 Review / Recovery P1-A
+
+- 自动 Preflight 的共享缓存键是 `sessionId + checkoutId + revision + reviewId`，只用于避免 Review 卡与 composer dock 重复读取；强制重检会覆盖该只读快照。
+- `stale_local` 表示 Local 事实已变化，不自动废弃 Review；Client 停止当前写操作并刷新 Preflight。`stale_isolated` 或 review/revision 身份变化会使旧 Preview/Finalize 立即失效。
+- “返回 Worktree 重新生成验收稿”先调用 owner-only `resumeRevision`，再通过公开 composer input 只预填重新验证请求；不得自动发送、伪造测试结果或自动调用 Ready 工具。
+- Delivery Proof 在 direct Finish、Finalize Preview 和 branch-CAS crash reconcile 中复制准确 Review 的 validation evidence；历史 version-2 proof 可缺少新增字段。
+- `commitInLocalHistory` 是读取时动态证据：`true` 表示 Commit 仍是当前 Local HEAD 祖先，`false` 显示警告，`null` 表示当前无法确认。三者都不改变 capability。
 
 ## 8. 并行文件所有权
 
