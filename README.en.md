@@ -8,6 +8,8 @@
 
 `dsh-git-worktree` is an experimental Session Target plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness). Each coding task runs in its own checkout and Session, so the Local workspace controlled by the user does not become the agent's construction site.
 
+This is an independent community plugin. It is not an official DeepSeek project and does not imply endorsement, partnership, or authorization.
+
 This is more than a wrapper around `git worktree`. It provides a complete delivery lifecycle: create an isolated environment, iterate safely, prepare a review, preview the task in Local without committing, finalize one task-only commit, and preserve recovery evidence when safety cannot be proven.
 
 > Its Worktree safety foundation originates from workflows used in the author's internal desktop project **Domi**. This plugin is independently adapted for Harness and does not require Domi to install or run.
@@ -170,8 +172,8 @@ See [Session Target porting notes](docs/PORTING.md) for the detailed identity, s
 
 ## Requirements
 
-- Node.js 20 or newer;
-- DeepSeek Harness `0.1.0-rc.7` package line;
+- Node.js `^22.19.0 || >=24.0.0`;
+- DeepSeek Harness `0.1.0-rc.8` package line;
 - Harness Web Client for the complete Worktree creation and acceptance UI;
 - a Git repository as the current Workspace.
 
@@ -186,7 +188,7 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific Git tag:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.2
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.3
 ```
 
 With pnpm 10 or newer, a Git install may require this entry in the profile's `pnpm-workspace.yaml` before retrying:
@@ -250,8 +252,8 @@ See [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md) for t
 ## Current limitations
 
 - There is no cross-project global Worktree Manager yet.
-- The project-scoped Worktree Console Host capabilities and components remain available, but the visible `conversation.view` tab is not mounted in `v0.3.2`.
-- Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.0-rc.7` line.
+- The project-scoped Worktree Console Host capabilities and components remain available, but the visible `conversation.view` tab is not mounted in `v0.3.3`.
+- Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.0-rc.8` line.
 - Subagents inherit their parent Session cwd; they share the isolated boundary only when the parent is already a Worktree Session.
 - Dependency snapshot/restore and the complete collaborator handoff UI have not yet been implemented.
 - A reviewed stage cannot yet be saved as an internal checkpoint before continuing development.

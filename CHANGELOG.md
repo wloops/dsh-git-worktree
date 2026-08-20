@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-20
+
+`0.3.3` 将插件更新到已验证的 DeepSeek Harness `0.1.0-rc.8` 包线，并同步新的 Node.js 运行要求与品牌说明。
+
+### Compatibility
+
+- 将 DeepSeek Harness 依赖与已验证兼容包线更新到 `0.1.0-rc.8`，并把 Node.js 运行要求同步为 `^22.19.0 || >=24.0.0`。
+- 从干净安装重建纯 rc.8 DSH peer 图，避免 rc.7/rc.8 混用；已使用的 Session、Subprocess、Tool 与 Typert Remote 接口保持兼容。
+- 补充独立社区插件声明，明确本项目不代表 DeepSeek 官方背书、合作或授权。
+
 ## [0.3.2] - 2026-08-19
 
 `0.3.2` 将插件更新到已验证的 DeepSeek Harness `0.1.0-rc.7` 包线，并保持现有 Worktree Session Target 与验收交付接口兼容。
@@ -114,6 +124,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.3.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.2.0...v0.3.0

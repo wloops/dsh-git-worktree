@@ -8,6 +8,8 @@
 
 `dsh-git-worktree` 是面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的实验性 Session Target 插件。每个编码任务都在独立 checkout 和独立 Session 中运行，用户正在使用的 Local 工作区不会直接变成 Agent 的施工现场。
 
+本项目是独立社区插件，并非 DeepSeek 官方项目，也不代表官方背书、合作或授权。
+
 它不是一个简单的 `git worktree` 命令包装器，而是一套完整的任务交付流程：创建隔离环境、持续修改、生成验收报告、可撤回地同步到 Local、确认后创建单个提交，以及失败时保留恢复证据。
 
 > Worktree 安全基础源自作者内部桌面项目 **Domi** 的实际工作流；本插件已针对 Harness 独立适配，安装和使用均不依赖 Domi。
@@ -186,8 +188,8 @@ DeepSeek Harness 与原桌面端宿主模型不同，因此本插件对产品和
 
 ## 环境要求
 
-- Node.js 20 或更高版本；
-- DeepSeek Harness `0.1.0-rc.7` 包线；
+- Node.js `^22.19.0 || >=24.0.0`；
+- DeepSeek Harness `0.1.0-rc.8` 包线；
 - Harness Web Client，用于完整的 Worktree 创建和验收界面；
 - 当前 Workspace 是 Git 仓库。
 
@@ -202,7 +204,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定 Git tag：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.2
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.3.3
 ```
 
 使用 pnpm 10 或更高版本时，Git 源安装可能需要先在 profile 的 `pnpm-workspace.yaml` 中允许该包执行 `prepare`：
@@ -266,8 +268,8 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 ## 当前限制
 
 - 暂无跨项目全局 Worktree Manager（Worktree 管理器）；
-- 项目级 Worktree Console（Worktree 管理面板）的 Host 能力和组件仍保留，但 `v0.3.2` 暂不挂载可见的 `conversation.view` 标签页；
-- 在已验证的 Harness `0.1.0-rc.7` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
+- 项目级 Worktree Console（Worktree 管理面板）的 Host 能力和组件仍保留，但 `v0.3.3` 暂不挂载可见的 `conversation.view` 标签页；
+- 在已验证的 Harness `0.1.0-rc.8` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
 - 子 Agent 继承父 Session cwd；只有父 Session 已经位于 Worktree Session 时，子 Agent 才处于相同隔离边界；
 - dependency snapshot/restore（依赖快照与恢复）与完整 collaborator handoff UI（协作者交接界面）尚未实现；
 - 暂不支持把已验收阶段固化为内部检查点后继续开发；
