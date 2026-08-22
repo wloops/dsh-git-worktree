@@ -61,7 +61,16 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): W
     reviewDiff: request => invoke<WorktreeConsoleReviewDiffResponse>('reviewDiff', () => remote.reviewDiff(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
     preflight: request => invoke<WorktreeConsolePreflightResponse>('preflight', () => remote.preflight(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
     preview: request => invoke<WorktreeConsoleMutationResponse>('preview', () => remote.preview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
-    resumeRevision: request => invoke<WorktreeConsoleMutationResponse>('resumeRevision', () => remote.resumeRevision(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
+    resumeRevision: request => invoke<WorktreeConsoleMutationResponse>('resumeRevision', () => request.conflictContinuation
+      ? remote.resumeRevision(
+          request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.conflictContinuation,
+        )
+      : remote.resumeRevision(
+          request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId,
+        )),
+    prepareReviewRegeneration: request => invoke<WorktreeConsoleMutationResponse>('prepareReviewRegeneration', () => remote.prepareReviewRegeneration(
+      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId,
+    )),
     rollbackPreview: request => invoke<WorktreeConsoleMutationResponse>('rollbackPreview', () => remote.rollbackPreview(request.sessionId, request.checkoutId, request.expectedRevision, request.resumeRevision)),
     discard: request => invoke<WorktreeConsoleMutationResponse>('discard', () => remote.discard(request.sessionId, request.checkoutId, request.expectedRevision, request.confirmDirty, request.rollbackPreview)),
     finalize: request => invoke<WorktreeConsoleMutationResponse>('finalize', () => remote.finalize(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention)),

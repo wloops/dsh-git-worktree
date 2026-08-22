@@ -505,6 +505,79 @@ describe('SessionCheckoutModule', () => {
     expect(context.module.runtimeContext('session-1')).toContain('worktree_ready_for_review')
   })
 
+  test('Given an exact apply conflict When recovery resumes Then Host CAS persists a proof for the new Working revision without touching Local', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'task version\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'conflicting draft', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: conflict recovery',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+    writeFileSync(join(context.projectRoot, 'tracked.txt'), 'local version\n')
+    const localBytes = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+    const preflight = await context.module.preflight?.('session-1', ready.revision)
+    if (!preflight || preflight.status !== 'conflict') throw new Error('expected conflict preflight')
+
+    const resumed = await context.module.resumeRevision(
+      'session-1',
+      ready.revision,
+      ready.delivery.review.reviewId,
+      {
+        kind: 'worktree_apply_conflict',
+        requestId: 'host-conflict-proof-1',
+        reviewId: ready.delivery.review.reviewId,
+        readyRevision: ready.revision,
+        localHeadOid: preflight.localHeadOid,
+        conflictingFiles: [...preflight.conflictingFiles],
+      },
+    )
+
+    expect(resumed).toMatchObject({ revision: ready.revision + 1, delivery: { state: 'working' } })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBytes)
+    const registry = JSON.parse(readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')) as any
+    expect(registry.managedCheckouts[target.checkout.id].recoveryContinuation).toEqual({
+      kind: 'worktree_apply_conflict',
+      requestId: 'host-conflict-proof-1',
+      reviewId: ready.delivery.review.reviewId,
+      readyRevision: ready.revision,
+      workingRevision: ready.revision + 1,
+      localHeadOid: preflight.localHeadOid,
+      conflictingFiles: preflight.conflictingFiles,
+    })
+  })
+
+  test('Given stale isolated bytes When regeneration is prepared Then Ready remains read-only and Host persists the exact proof', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'reviewed version\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'stale draft', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: regenerate review',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'changed after review\n')
+    const localBytes = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+
+    const proof = await context.module.prepareReviewRegeneration?.(
+      'session-1', ready.revision, ready.delivery.review.reviewId, 'host-regeneration-proof-1',
+    )
+
+    expect(proof).toEqual({
+      kind: 'worktree_review_regeneration',
+      requestId: 'host-regeneration-proof-1',
+      reviewId: ready.delivery.review.reviewId,
+      revision: ready.revision,
+    })
+    expect(await context.module.inspect('session-1')).toMatchObject({
+      revision: ready.revision,
+      delivery: { state: 'ready_for_review', review: { reviewId: ready.delivery.review.reviewId } },
+    })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBytes)
+    const registry = JSON.parse(readFileSync(join(context.configDir, 'managed-checkouts.json'), 'utf8')) as any
+    expect(registry.managedCheckouts[target.checkout.id].recoveryContinuation).toEqual(proof)
+  })
+
   test('Given a stale or foreign Ready review When resume is requested Then it fails closed and preserves the review', async () => {
     const context = createContext()
     const target = await context.module.bind('session-1', { kind: 'isolated' })

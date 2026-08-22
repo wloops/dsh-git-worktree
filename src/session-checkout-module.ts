@@ -36,6 +36,8 @@ import type {
   ManagedCheckoutRecord,
   ManagedDeliveryProof,
   ManagedPreviewReceipt,
+  ManagedApplyConflictRecoveryContinuation,
+  ManagedReviewRegenerationContinuation,
   SessionBindingRecord,
   SessionCheckoutDependencies,
   SessionCheckoutProjectRecord,
@@ -1163,8 +1165,10 @@ export function createSessionCheckoutModule(
       throw new SessionCheckoutError(snapshot.error.code, snapshot.error.message)
     }
     const reviewId = dependencies.createCheckoutId()
-    updateManagedCheckout(record.checkoutId, (current) => ({
-      ...current,
+    updateManagedCheckout(record.checkoutId, (current) => {
+      const { recoveryContinuation: _recovery, ...withoutRecovery } = current
+      return {
+      ...withoutRecovery,
       delivery: {
         state: 'ready_for_review',
         review: {
@@ -1191,7 +1195,8 @@ export function createSessionCheckoutModule(
         },
       },
       revision: current.revision + 1,
-    }))
+    }
+    })
     return inspectIsolated(binding)
   }
 
@@ -1199,6 +1204,7 @@ export function createSessionCheckoutModule(
     sessionId: string,
     expectedRevision: number,
     expectedReviewId: string,
+    recovery?: Omit<ManagedApplyConflictRecoveryContinuation, 'workingRevision'>,
   ): Promise<SessionTargetView> {
     const binding = await resolveBinding(sessionId)
     if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
@@ -1229,13 +1235,73 @@ export function createSessionCheckoutModule(
     ) {
       throw new SessionCheckoutError('stale_target', '验收状态在恢复编辑前发生变化，请刷新后重试')
     }
+    if (recovery) {
+      const preflight = await preflightTarget(sessionId, expectedRevision)
+      const sameFiles = preflight.status === 'conflict'
+        && preflight.conflictingFiles.length === recovery.conflictingFiles.length
+        && preflight.conflictingFiles.every((file, index) => file === recovery.conflictingFiles[index])
+      if (
+        recovery.kind !== 'worktree_apply_conflict'
+        || recovery.reviewId !== expectedReviewId
+        || recovery.readyRevision !== expectedRevision
+        || preflight.status !== 'conflict'
+        || preflight.localHeadOid !== recovery.localHeadOid
+        || !sameFiles
+      ) throw new SessionCheckoutError('stale_target', '冲突恢复身份在 Host CAS 前已变化，请重新预检')
+      record = dependencies.registry.read().managedCheckouts[record.checkoutId]
+      if (
+        !record
+        || record.revision !== expectedRevision
+        || record.delivery.state !== 'ready_for_review'
+        || record.delivery.review.reviewId !== expectedReviewId
+      ) throw new SessionCheckoutError('stale_target', '验收状态在冲突恢复前发生变化，请刷新后重试')
+    }
     const iteration = record.delivery.review.iteration
-    updateManagedCheckout(record.checkoutId, (current) => ({
-      ...current,
-      delivery: { state: 'working', iteration },
-      revision: current.revision + 1,
-    }))
+    updateManagedCheckout(record.checkoutId, (current) => {
+      const { recoveryContinuation: _previousRecovery, ...withoutRecovery } = current
+      return {
+        ...withoutRecovery,
+        ...(recovery ? {
+          recoveryContinuation: { ...recovery, workingRevision: current.revision + 1 },
+        } : {}),
+        delivery: { state: 'working', iteration },
+        revision: current.revision + 1,
+      }
+    })
     return inspectIsolated(binding)
+  }
+
+  async function prepareReviewRegenerationTarget(
+    sessionId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    requestId: string,
+  ): Promise<ManagedReviewRegenerationContinuation> {
+    const binding = await resolveBinding(sessionId)
+    if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
+      throw new SessionCheckoutError('not_owner', '只有 owner Isolated 会话可以请求重新生成验收结果')
+    }
+    const preflight = await preflightTarget(sessionId, expectedRevision)
+    if (
+      preflight.status !== 'blocked'
+      || preflight.reason !== 'stale_isolated'
+      || preflight.checkoutId !== binding.target.checkoutId
+      || preflight.reviewId !== expectedReviewId
+      || preflight.revision !== expectedRevision
+    ) throw new SessionCheckoutError('stale_target', '只读验收再生成身份在 Host 授权前已变化')
+    const continuation: ManagedReviewRegenerationContinuation = {
+      kind: 'worktree_review_regeneration', requestId, reviewId: expectedReviewId, revision: expectedRevision,
+    }
+    const updated = updateManagedCheckout(binding.target.checkoutId, (current) => {
+      if (
+        current.revision !== expectedRevision
+        || current.delivery.state !== 'ready_for_review'
+        || current.delivery.review.reviewId !== expectedReviewId
+      ) throw new SessionCheckoutError('stale_target', 'Ready Review 在只读授权前发生变化')
+      return { ...current, recoveryContinuation: continuation }
+    })
+    if (!updated) throw new SessionCheckoutError('checkout_missing', 'Isolated Checkout 记录不存在')
+    return continuation
   }
 
   async function operateApply(
@@ -3408,8 +3474,11 @@ export function createSessionCheckoutModule(
     beginNextIteration: (sessionId, expectedRevision) => withBindingLock(
       () => beginNextIterationTarget(sessionId, expectedRevision),
     ),
-    resumeRevision: (sessionId, expectedRevision, expectedReviewId) => withBindingLock(
-      () => resumeRevisionTarget(sessionId, expectedRevision, expectedReviewId),
+    resumeRevision: (sessionId, expectedRevision, expectedReviewId, recovery) => withBindingLock(
+      () => resumeRevisionTarget(sessionId, expectedRevision, expectedReviewId, recovery),
+    ),
+    prepareReviewRegeneration: (sessionId, expectedRevision, expectedReviewId, requestId) => withBindingLock(
+      () => prepareReviewRegenerationTarget(sessionId, expectedRevision, expectedReviewId, requestId),
     ),
     markReadyForReview: (sessionId, input) => withBindingLock(
       () => markReadyForReviewTarget(sessionId, input),

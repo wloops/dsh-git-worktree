@@ -44,7 +44,7 @@
 - **单任务提交**：验收通过后，只为本次任务创建一个 Commit，并继续保留可分离的 Local 修改。
 - **同一 Session 连续迭代**：本轮成功交付并 cleanup 后，可在原 Session 中开始 iteration + 1，保留完整对话。
 - **自动只读 Preflight**：Ready 后由 Review 卡与 composer dock 自动展示 Local/Worktree HEAD、effective base、同步条件、冲突与 acceptance slot；自动阶段绝不写入 Local。
-- **Review 可恢复编辑**：尚未同步的验收稿不会阻断普通讨论；stale 或冲突时可以返回当前 Worktree，并预填重新验证、生成新验收稿的请求。
+- **Agent Recovery continuation**：冲突只在用户明确点击后恢复 Working，并通过 Harness 官方 Session API 把 Local HEAD 与冲突文件交给精确 owner Agent；`stale_isolated` 则保持严格只读，只重新验证并生成新验收稿。
 - **可核验 Delivery Proof**：Finalize 后展示 Commit OID、Local branch/HEAD、文件与验证摘要，以及 cleanup/retention 结果。
 - **保守恢复**：Review 过期、Local 漂移、分支变化、并发 Preview 或清理身份不确定时停止写入，不覆盖用户数据。
 
@@ -108,7 +108,7 @@ Agent 只在隔离 cwd 中读取、修改和验证项目。该 cwd 对应真实 
 - **跳过验收直接提交**：显式确认后走受保护的直接交付路径；
 - **放弃任务**：在满足安全条件后清理任务环境。
 
-如果预检发现 `stale_local`、`stale_isolated` 或冲突，旧 Preview/Finalize 操作会立即停用；用户可以重新检查，或返回当前 Worktree 重新验证并生成验收稿。`project_acceptance_busy` 会显示不含路径的占用任务摘要；只有 Host 再次证明 checkout、owner Session 与 canonical cwd 一致后，界面才会导航到该 Session。Finalize 成功后，Review 界面继续保留 Delivery Proof，而不是只显示“成功”。
+如果预检发现 `stale_local`、`stale_isolated` 或冲突，旧 Preview/Finalize 操作会立即停用。`stale_local` 只刷新只读事实；冲突仅在用户点击“让 Agent 解决冲突”后，才由 Host 在锁内重跑 conflict Preflight/CAS、生成并持久化精确恢复凭证、恢复 Working，再通过 Harness 官方 `ISession.prompt()` 将结构化上下文发送给精确 owner Session；`stale_isolated` 的“重新生成验收结果”保持 Ready 与严格 Read Only，由 Host 只读复核并持久化另一种不可互换的凭证，不恢复 Working 或修改文件。发送会等待 Session 加载完成并停止 streaming，并在真正发送前重新逐字段核验 Host proof、checkout/review/revision/cwd；重复点击单飞。未发送请求可在页面刷新后恢复，但浏览器存储只是不可信上下文，必须通过 kind、字段、OID、相对路径预算和 Host 权威复验；发送结果未知或明确失败时由用户显式重试。`project_acceptance_busy` 会显示不含路径的占用任务摘要；只有 Host 再次证明 checkout、owner Session 与 canonical cwd 一致后，界面才会导航到该 Session。Finalize 成功后，Review 界面继续保留 Delivery Proof，而不是只显示“成功”。
 
 ### 5. 在原对话开始下一轮
 
@@ -186,7 +186,7 @@ DeepSeek Harness 与原桌面端宿主模型不同，因此本插件对产品和
 - Host 能力通过 strict Typert Remote 暴露，浏览器 UI 使用 Harness 的公开 Client Slots；
 - Local source Session 与 Isolated target Session 始终分离；
 - cleanup 后不修改 Harness 已持久化的 Session cwd，而是在下一轮严格校验后重建同一路径；
-- 模型只负责创建、恢复编辑和准备验收，最终写入 Local、提交与清理由用户入口控制。
+- 模型只负责创建、显式授权后的冲突修复、只读验收再生成和准备验收；最终写入 Local、提交与清理由用户入口控制。
 
 详细的身份、状态与恢复边界见 [Session Target 迁移说明](docs/PORTING.md)。
 
@@ -261,7 +261,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 - active target 的 Workspace 必须 canonicalize 到 registry 记录的 managed root；
 - 同一 canonical Local 项目同时最多存在一个 active Preview；等待中的 owner 仍可执行只读 Preflight，但 Preview/Finalize capability 会关闭；
 - acceptance slot blocker 只返回 path-free checkout/Session/state 摘要；打开占用任务前必须重新 inspect 并复验 owner 与 canonical cwd；
-- 自动 Preflight 不创建 plan、slot、Git ref 或 Local 写入；Preview 与 direct Finalize 前必须 bypass 缓存重新检查；
+- 自动 Preflight 不创建 plan、slot、Git ref 或 Local 写入；Preview 与 direct Finalize 前必须 bypass 缓存重新检查；slot 从 waiting 释放时废弃旧 busy 结果，自动错误只允许显式重试；
 - Preview receipt 和 internal refs 在写入 Local 前持久化；
 - Preview、Rollback、Finalize、Discard 和继续修改都绑定 checkout、revision、review 与 fingerprint；
 - Rollback 只移除可以证明属于本次 Preview 的增量，并尽量保留验收期间新增的无关 Local 修改；

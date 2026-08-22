@@ -8,6 +8,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { ManagedApplyConflictRecoveryContinuation, ManagedReviewRegenerationContinuation } from './ports.js'
 import type {
   ManagedWorktreeSummaryView,
   BulkCleanupManagedWorktreeCandidate,
@@ -95,7 +96,19 @@ export interface SessionCheckoutModule {
   /** Recreate a cleaned delivered owner's immutable cwd as the next isolated iteration. */
   beginNextIteration(sessionId: string, expectedRevision: number): Promise<SessionTargetView>
   /** Invalidate an unsynced review and resume the same iteration without touching Local. */
-  resumeRevision(sessionId: string, expectedRevision: number, expectedReviewId: string): Promise<SessionTargetView>
+  resumeRevision(
+    sessionId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    recovery?: Omit<ManagedApplyConflictRecoveryContinuation, 'workingRevision'>,
+  ): Promise<SessionTargetView>
+  /** Persist a Host-authoritative one-shot Read Only review-regeneration request. */
+  prepareReviewRegeneration(
+    sessionId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    requestId: string,
+  ): Promise<ManagedReviewRegenerationContinuation>
   markReadyForReview(sessionId: string, input: MarkReadyForReviewInput): Promise<SessionTargetView>
   operate(input: SessionCheckoutOperation): Promise<SessionCheckoutOperationResult>
   listManagedWorktrees(input?: ListManagedWorktreesInput): Promise<ManagedWorktreeSummaryView[]>

@@ -21,7 +21,7 @@ export function PreflightStatus({
   target,
   compact = false,
   onRefresh,
-  onResume,
+  onRecovery,
   onOpenHolder,
   busy,
 }: {
@@ -29,7 +29,7 @@ export function PreflightStatus({
   target?: WorktreeConsoleTargetSummary
   compact?: boolean
   onRefresh(): void
-  onResume(): void
+  onRecovery(preflight: WorktreeApplyPreflightView): void
   onOpenHolder(): void
   busy: boolean
 }) {
@@ -48,7 +48,7 @@ export function PreflightStatus({
 
   const preflight = snapshot.preflight
   const blocked = preflight.status === 'blocked'
-  const stale = blocked && (preflight.reason === 'stale_isolated' || preflight.reason === 'stale_target')
+  const staleIsolated = blocked && preflight.reason === 'stale_isolated' && preflight.reviewId !== null
   const holder = blocked && preflight.reason === 'project_acceptance_busy'
     ? preflight.blocker ?? target?.reviewSlotHolder
     : undefined
@@ -75,9 +75,13 @@ export function PreflightStatus({
       {preflight.status === 'conflict' || blocked ? (
         <div className="dsh-wt-recovery-actions">
           <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}>重新检查</button>
-          {stale || preflight.status === 'conflict' ? (
-            <button type="button" className="dsh-wt-inline-action" disabled={busy || !target?.capabilities.resumeRevision} onClick={onResume}>
-              返回 Worktree 重新生成验收稿
+          {preflight.status === 'conflict' ? (
+            <button type="button" className="dsh-wt-inline-action" disabled={busy || !target?.capabilities.resumeRevision} onClick={() => onRecovery(preflight)}>
+              让 Agent 解决冲突
+            </button>
+          ) : staleIsolated ? (
+            <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={() => onRecovery(preflight)}>
+              重新生成验收结果
             </button>
           ) : null}
           {holder ? (

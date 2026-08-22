@@ -184,6 +184,33 @@ function isJournal(value: unknown): boolean {
     && (value.changedFiles === undefined || isStringArray(value.changedFiles))
 }
 
+function safeRecoveryString(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= max && !/[\0\r\n]/u.test(value)
+}
+
+function safeRecoveryRevision(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
+function safeConflictFile(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.length > 1000 || /[\0-\x1f\x7f]/u.test(value)) return false
+  if (/^(?:[A-Za-z]:[\\/]|[\\/])/u.test(value)) return false
+  return !value.split(/[\\/]/u).some(segment => segment === '' || segment === '.' || segment === '..')
+}
+
+function isRecoveryContinuation(value: unknown): boolean {
+  if (!isRecord(value) || !safeRecoveryString(value.requestId, 500) || !safeRecoveryString(value.reviewId, 200)) return false
+  if (value.kind === 'worktree_review_regeneration') return safeRecoveryRevision(value.revision)
+  return value.kind === 'worktree_apply_conflict'
+    && safeRecoveryRevision(value.readyRevision)
+    && safeRecoveryRevision(value.workingRevision)
+    && typeof value.localHeadOid === 'string'
+    && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(value.localHeadOid)
+    && Array.isArray(value.conflictingFiles)
+    && value.conflictingFiles.length <= 500
+    && value.conflictingFiles.every(safeConflictFile)
+}
+
 function isManagedCheckout(value: unknown): boolean {
   return isRecord(value)
     && typeof value.checkoutId === 'string'
@@ -199,6 +226,7 @@ function isManagedCheckout(value: unknown): boolean {
     && typeof value.gitDir === 'string'
     && typeof value.baseOid === 'string'
     && (value.applyBaseOid === undefined || typeof value.applyBaseOid === 'string')
+    && (value.recoveryContinuation === undefined || isRecoveryContinuation(value.recoveryContinuation))
     && typeof value.sourceRef === 'string'
     && (value.phase === 'preparing' || value.phase === 'ready' || value.phase === 'mutating' || value.phase === 'recovery_required' || value.phase === 'finalized' || value.phase === 'retained' || value.phase === 'discarded')
     && isDelivery(value.delivery)

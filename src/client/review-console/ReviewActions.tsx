@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
+  WorktreeApplyConflictContinuation,
   WorktreeConsoleAdapter,
   WorktreeConsoleError,
   WorktreeConsoleTargetSummary,
@@ -15,7 +16,14 @@ import {
 import type { WorktreeReviewEvidence, WorktreeReviewIdentity } from './WorktreeReviewPanel.js'
 import { DeliveryProof } from './DeliveryProof.js'
 import { PreflightStatus } from './PreflightStatus.js'
-import { readReviewPreflight, useReviewPreflight } from './preflight-cache.js'
+import { invalidateReviewPreflight, readReviewPreflight, useReviewPreflight } from './preflight-cache.js'
+import {
+  enqueueWorktreeRecovery,
+  restoreWorktreeRecovery,
+  retryWorktreeRecovery,
+  useWorktreeRecoverySnapshot,
+  type WorktreeRecoveryRequest,
+} from './recovery-continuation.js'
 import { requestWorktreeReviewRefresh } from './status-events.js'
 
 interface ReviewActionsProps {
@@ -32,11 +40,15 @@ interface ReviewActionsProps {
   onTargetChange: (target: WorktreeConsoleTargetSummary) => void
 }
 
-type Mutation = 'preview' | 'resume_revision' | 'open_holder' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
+type Mutation = 'preview' | 'resume_revision' | 'recovery' | 'open_holder' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
 type CommitMode = 'finish' | 'finalize_preview'
 
 function isStale(error: WorktreeConsoleError): boolean {
   return error.code === 'stale_target' || error.code === 'stale_isolated' || error.code === 'stale_local'
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function preflightMessage(preflight: WorktreeApplyPreflightView): string {
@@ -70,8 +82,11 @@ export function ReviewActions({
   const [retention, setRetention] = useState<Exclude<WorktreeRetentionMode, 'cleanup'>>('retain_24h')
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<WorktreeConsoleError | null>(null)
+  const [runtimeConflict, setRuntimeConflict] = useState<WorktreeApplyConflictContinuation | null>(null)
   const mutationLock = useRef(false)
   const observedTargetRevision = useRef(target?.revision)
+  const observedReviewSlot = useRef(target?.reviewSlot)
+  const recoverySnapshot = useWorktreeRecoverySnapshot(identity?.sessionId)
   const autoPreflightEnabled = Boolean(
     adapter
     && identity
@@ -87,6 +102,17 @@ export function ReviewActions({
   const safeReadyPreflight = preflightSnapshot.status === 'success'
     && preflightSnapshot.preflight.status !== 'blocked'
     && preflightSnapshot.preflight.status !== 'conflict'
+  const activeRecovery = recoverySnapshot
+    && identity
+    && recoverySnapshot.request.checkoutId === identity.checkoutId
+    && recoverySnapshot.request.reviewId === identity.expectedReviewId
+    ? recoverySnapshot
+    : null
+
+  useEffect(() => {
+    if (!adapter || !services || !identity) return
+    restoreWorktreeRecovery({ sessionId: identity.sessionId, adapter, services, isActive })
+  }, [adapter, services, identity?.sessionId])
 
   useEffect(() => {
     setCommitMessage(review.suggestedCommitMessage)
@@ -101,7 +127,22 @@ export function ReviewActions({
     if (submitting !== null) return
     setMessage(null)
     setError(null)
+    setRuntimeConflict(null)
   }, [submitting, target?.revision])
+
+  useEffect(() => {
+    const previous = observedReviewSlot.current
+    observedReviewSlot.current = target?.reviewSlot
+    if (
+      previous === 'waiting'
+      && target?.reviewSlot === 'available'
+      && adapter
+      && identity
+    ) {
+      invalidateReviewPreflight(adapter, identity)
+      void readReviewPreflight(adapter, identity)
+    }
+  }, [adapter, identity?.checkoutId, identity?.expectedReviewId, identity?.expectedRevision, target?.reviewSlot])
 
   const begin = (mutation: Mutation): boolean => {
     if (disabled || !adapter || !identity || !target || mutationLock.current) return false
@@ -118,6 +159,14 @@ export function ReviewActions({
   }
 
   const finishError = (nextError: WorktreeConsoleError): void => {
+    if (nextError.code === 'apply_conflict' && nextError.continuation?.kind === 'worktree_apply_conflict') {
+      setRuntimeConflict(nextError.continuation)
+      setCommitMode(null)
+      setError(null)
+      setMessage('实时写入校验发现冲突；Local 未修改。请明确让 Agent 在 managed Worktree 中解决。')
+      finish()
+      return
+    }
     setError(nextError)
     if (nextError.code === 'stale_target') onStale(nextError)
     if (nextError.code === 'stale_local' || nextError.code === 'stale_isolated') {
@@ -132,6 +181,199 @@ export function ReviewActions({
     observedTargetRevision.current = nextTarget.revision
     onTargetChange(nextTarget)
     if (identity) requestWorktreeReviewRefresh(identity.sessionId)
+  }
+
+  const enqueueRecovery = (request: WorktreeRecoveryRequest): void => {
+    if (!adapter || !services) return
+    enqueueWorktreeRecovery({ adapter, services, request, isActive })
+  }
+
+  const startConflictRecovery = async (
+    preflight: Extract<WorktreeApplyPreflightView, { status: 'conflict' }>,
+    requestId = `preflight-conflict:${preflight.checkoutId}:${preflight.reviewId}:${preflight.revision}:${preflight.localHeadOid}`,
+  ): Promise<void> => {
+    if (!services || !begin('recovery') || !adapter || !identity) return
+    const resumeIdentity = {
+      sessionId: identity.sessionId,
+      checkoutId: preflight.checkoutId,
+      expectedRevision: preflight.revision,
+      expectedReviewId: preflight.reviewId,
+    }
+    const latest = await readReviewPreflight(adapter, resumeIdentity, true)
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (latest.status === 'error') {
+      finishError(latest.error)
+      return
+    }
+    if (latest.status !== 'success' || latest.preflight.status !== 'conflict') {
+      setMessage(latest.status === 'success' ? preflightMessage(latest.preflight) : '冲突预检未完成。')
+      finish()
+      return
+    }
+    if (
+      latest.preflight.checkoutId !== preflight.checkoutId
+      || latest.preflight.reviewId !== preflight.reviewId
+      || latest.preflight.revision !== preflight.revision
+      || latest.preflight.localHeadOid !== preflight.localHeadOid
+      || !sameStrings(latest.preflight.conflictingFiles, preflight.conflictingFiles)
+    ) {
+      setError({ code: 'stale_target', message: '冲突身份在恢复前已变化，请按最新预检重试。' })
+      finish()
+      return
+    }
+    const outcome = await adapter.resumeRevision({ ...resumeIdentity, conflictContinuation: {
+      kind: 'worktree_apply_conflict',
+      requestId,
+      checkoutId: preflight.checkoutId,
+      reviewId: preflight.reviewId,
+      revision: preflight.revision,
+      localHeadOid: preflight.localHeadOid,
+      conflictingFiles: [...preflight.conflictingFiles],
+    } })
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (!outcome.ok) {
+      finishError(outcome.error)
+      return
+    }
+    const nextTarget = outcome.value.target
+    if (
+      nextTarget.checkoutId !== preflight.checkoutId
+      || nextTarget.ownerSessionId !== identity.sessionId
+      || nextTarget.targetSessionId !== identity.sessionId
+      || nextTarget.state !== 'working'
+      || nextTarget.revision !== preflight.revision + 1
+    ) {
+      setError({ code: 'checkout_mismatch', message: '恢复编辑后 Host 返回的 Working 身份不一致。' })
+      finish()
+      return
+    }
+    const recovery = outcome.value.recoveryContinuation
+    if (
+      !recovery
+      || recovery.kind !== 'worktree_apply_conflict'
+      || recovery.checkoutId !== preflight.checkoutId
+      || recovery.reviewId !== preflight.reviewId
+      || recovery.revision !== nextTarget.revision
+      || recovery.localHeadOid !== preflight.localHeadOid
+      || !sameStrings(recovery.conflictingFiles, preflight.conflictingFiles)
+    ) {
+      setError({ code: 'checkout_mismatch', message: 'Host 未返回精确的冲突恢复凭证。' })
+      finish()
+      return
+    }
+    applyTarget(nextTarget)
+    setRuntimeConflict(null)
+    enqueueRecovery({
+      kind: recovery.kind,
+      sessionId: identity.sessionId,
+      requestId: recovery.requestId,
+      checkoutId: recovery.checkoutId,
+      reviewId: recovery.reviewId,
+      revision: recovery.revision,
+      localHeadOid: recovery.localHeadOid,
+      conflictingFiles: [...recovery.conflictingFiles],
+    })
+    setMessage('已安全恢复 Working，冲突解决请求正在等待精确 owner Session 空闲。Local 未修改。')
+    finish()
+  }
+
+  const startReviewRegeneration = async (
+    preflight: Extract<WorktreeApplyPreflightView, { status: 'blocked' }> & { reason: 'stale_isolated'; reviewId: string },
+  ): Promise<void> => {
+    if (!services || !begin('recovery') || !adapter || !identity) return
+    const regenerationIdentity = {
+      sessionId: identity.sessionId,
+      checkoutId: preflight.checkoutId,
+      expectedRevision: preflight.revision,
+      expectedReviewId: preflight.reviewId,
+    }
+    const latest = await readReviewPreflight(adapter, regenerationIdentity, true)
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (latest.status === 'error') {
+      finishError(latest.error)
+      return
+    }
+    if (
+      latest.status !== 'success'
+      || latest.preflight.status !== 'blocked'
+      || latest.preflight.reason !== 'stale_isolated'
+      || latest.preflight.checkoutId !== preflight.checkoutId
+      || latest.preflight.reviewId !== preflight.reviewId
+      || latest.preflight.revision !== preflight.revision
+    ) {
+      setMessage(latest.status === 'success' ? preflightMessage(latest.preflight) : '只读复核未完成。')
+      finish()
+      return
+    }
+    const prepared = await adapter.prepareReviewRegeneration(regenerationIdentity)
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (!prepared.ok) {
+      finishError(prepared.error)
+      return
+    }
+    const recovery = prepared.value.recoveryContinuation
+    if (
+      !recovery
+      || recovery.kind !== 'worktree_review_regeneration'
+      || recovery.checkoutId !== preflight.checkoutId
+      || recovery.reviewId !== preflight.reviewId
+      || recovery.revision !== preflight.revision
+    ) {
+      setError({ code: 'checkout_mismatch', message: 'Host 未返回精确的只读验收再生成凭证。' })
+      finish()
+      return
+    }
+    enqueueRecovery({
+      kind: recovery.kind,
+      sessionId: identity.sessionId,
+      requestId: recovery.requestId,
+      checkoutId: recovery.checkoutId,
+      reviewId: recovery.reviewId,
+      revision: recovery.revision,
+    })
+    setMessage('只读验收再生成请求正在等待精确 owner Session 空闲；不会恢复 Working 或修改文件。')
+    finish()
+  }
+
+  const recoverPreflight = (preflight: WorktreeApplyPreflightView): void => {
+    if (preflight.status === 'conflict') {
+      void startConflictRecovery(preflight)
+      return
+    }
+    if (preflight.status === 'blocked' && preflight.reason === 'stale_isolated' && preflight.reviewId !== null) {
+      void startReviewRegeneration({ ...preflight, reason: 'stale_isolated', reviewId: preflight.reviewId })
+    }
+  }
+
+  const recoverRuntimeConflict = (): void => {
+    if (!runtimeConflict) return
+    void startConflictRecovery({
+      status: 'conflict',
+      localModified: false,
+      checkoutId: runtimeConflict.checkoutId,
+      reviewId: runtimeConflict.reviewId,
+      revision: runtimeConflict.revision,
+      configuredBaseOid: runtimeConflict.localHeadOid,
+      effectiveBaseOid: runtimeConflict.localHeadOid,
+      baseStrategy: 'recorded_base',
+      localBranch: null,
+      localHeadOid: runtimeConflict.localHeadOid,
+      isolatedHeadOid: target?.currentOid ?? runtimeConflict.localHeadOid,
+      changedFiles: [],
+      conflictingFiles: runtimeConflict.conflictingFiles,
+    }, runtimeConflict.requestId)
   }
 
   const previewLocal = async (): Promise<void> => {
@@ -470,10 +712,35 @@ export function ReviewActions({
           snapshot={preflightSnapshot}
           target={target}
           onRefresh={() => { void refreshPreflight() }}
-          onResume={() => { void resumeRevision() }}
+          onRecovery={recoverPreflight}
           onOpenHolder={() => { void openHolder() }}
-          busy={submitting !== null}
+          busy={submitting !== null || activeRecovery?.status === 'queued' || activeRecovery?.status === 'sending' || activeRecovery?.status === 'sent'}
         />
+      ) : null}
+      {runtimeConflict ? (
+        <div className="dsh-wt-recovery-actions">
+          <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={recoverRuntimeConflict}>
+            让 Agent 解决冲突
+          </button>
+        </div>
+      ) : null}
+      {activeRecovery ? (
+        <div className="dsh-wt-action-status" data-recovery-status={activeRecovery.status}>
+          {activeRecovery.status === 'queued' ? '恢复请求已排队，等待 owner Session 加载完成且停止 streaming。' : null}
+          {activeRecovery.status === 'sending' ? '正在通过 Harness 官方 Session API 发送恢复请求…' : null}
+          {activeRecovery.status === 'sent'
+            ? activeRecovery.request.kind === 'worktree_apply_conflict'
+              ? '已交给 Agent 解决冲突；完成后必须生成新的验收卡。'
+              : '已交给 Agent 只读重新生成验收结果；不会修改 Worktree。'
+            : null}
+          {activeRecovery.status === 'cancelled' ? 'Session/checkout 已切换，旧恢复请求已取消。' : null}
+          {activeRecovery.status === 'failed' ? (
+            <>
+              <span>恢复请求发送失败：{activeRecovery.error}</span>
+              <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null} onClick={() => retryWorktreeRecovery(activeRecovery.request.sessionId)}>重新发送</button>
+            </>
+          ) : null}
+        </div>
       ) : null}
       {target && (target.state === 'cleanup_pending' || terminal) ? <DeliveryProof target={target} /> : null}
       <div className="dsh-wt-action-status" aria-live="polite">

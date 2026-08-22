@@ -1,4 +1,4 @@
-import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type {
   WorktreeConsoleAdapter,
   WorktreeConsoleError,
@@ -68,6 +68,7 @@ export function WorktreeReviewPanel({
   unavailableMessage = '实时 Worktree Console 未连接；连接后即可执行验收操作。',
 }: WorktreeReviewPanelProps) {
   const panelId = useId()
+  const mounted = useRef(true)
   const actionScope = identity
     ? [identity.sessionId, identity.checkoutId, identity.expectedRevision, identity.expectedReviewId].join('\u0000')
     : ''
@@ -100,6 +101,11 @@ export function WorktreeReviewPanel({
     reviewIsStale(target, identity, review) ? '验收结果已过期，请刷新。' : null,
   )
   const refreshRequested = useRef(false)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   useLayoutEffect(() => {
     setCurrentTarget(target)
@@ -192,7 +198,7 @@ export function WorktreeReviewPanel({
         target={currentTarget}
         disabled={!liveReady}
         unavailableMessage={unavailableMessage}
-        isActive={() => activeActionScope.current === actionScope}
+        isActive={() => mounted.current && activeActionScope.current === actionScope}
         onStale={handleStale}
         onTargetChange={handleTargetChange}
       />

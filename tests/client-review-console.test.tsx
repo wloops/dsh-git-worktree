@@ -6,9 +6,13 @@ import { WorktreeReviewRow } from '../src/client/WorktreeReviewRow.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
 import { WORKTREE_STYLES } from '../src/client/styles.js'
 import { WorktreeReviewPanel, type WorktreeReviewEvidence } from '../src/client/review-console/WorktreeReviewPanel.js'
+import { clearWorktreeRecovery } from '../src/client/review-console/recovery-continuation.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  clearWorktreeRecovery('target-session')
+})
 
 function review(overrides: Partial<WorktreeReviewEvidence> = {}): WorktreeReviewEvidence {
   return {
@@ -29,14 +33,21 @@ function identity(revision = 7) {
   return { sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: revision, expectedReviewId: 'review-1' }
 }
 
-function clientServices(byId: Record<string, { cwd?: string } | undefined> = {}): WorktreeClientServices {
+function clientServices(byId: Record<string, { cwd?: string } | undefined> = {
+  'target-session': { cwd: '/fixture/project-worktrees/checkout-1' },
+}): WorktreeClientServices {
   const setDraft = vi.fn()
+  const prompt = vi.fn(async () => ({ ok: true as const, value: { accepted: true as const } }))
   return {
     workspaces: { create: vi.fn(), openPath: vi.fn() },
     sessions: {
       create: vi.fn(), open: vi.fn(),
       list: { getSnapshot: () => ({ current: 'target-session', ids: Object.keys(byId), byId }), subscribe: () => () => undefined },
-      binding: vi.fn(() => ({ ctx: {}, session: { command: vi.fn() } })),
+      binding: vi.fn(() => ({ ctx: {}, session: {
+        sessionId: 'target-session', command: vi.fn(), prompt,
+        getSnapshot: () => ({ running: false, openState: 'open' as const, removed: false }),
+        subscribe: () => () => undefined,
+      } })),
     },
     conversation: { input: { for: vi.fn(() => ({ setDraft, addImages: vi.fn(), removeImage: vi.fn() })) } },
   }
@@ -178,21 +189,103 @@ describe('Domi-style Worktree Review', () => {
     expect(fixture.adapter.preflight).toHaveBeenCalledTimes(1)
   })
 
-  test('自动预检冲突时展示 HEAD/冲突恢复且 Local 未修改，不调用 Preview', async () => {
+  test('自动预检冲突仅在用户明确点击后恢复 Working 并通过 Session.prompt 单飞续跑', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
-    fixture.adapter.preflight = vi.fn(async () => ({ ok: true as const, value: { preflight: {
+    const services = clientServices()
+    const conflict = {
       status: 'conflict' as const, localModified: false as const, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
       configuredBaseOid: 'a'.repeat(40), effectiveBaseOid: 'a'.repeat(40), baseStrategy: 'recorded_base' as const,
       localBranch: 'main', localHeadOid: 'a'.repeat(40), isolatedHeadOid: 'b'.repeat(40), changedFiles: ['x.ts'], conflictingFiles: ['x.ts'],
-    } } }))
+    }
+    fixture.adapter.preflight = vi.fn(async () => ({ ok: true as const, value: { preflight: conflict } }))
     fixture.adapter.preview = vi.fn(fixture.adapter.preview)
-    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} />)
+    fixture.adapter.resumeRevision = vi.fn(fixture.adapter.resumeRevision)
+    const workingOutcome = await fixture.adapter.resumeRevision({
+      ...identity(),
+      conflictContinuation: {
+        kind: 'worktree_apply_conflict',
+        requestId: `preflight-conflict:checkout-1:review-1:7:${'a'.repeat(40)}`,
+        checkoutId: 'checkout-1',
+        reviewId: 'review-1',
+        revision: 7,
+        localHeadOid: 'a'.repeat(40),
+        conflictingFiles: ['x.ts'],
+      },
+    })
+    if (!workingOutcome.ok) throw new Error('expected working fixture')
+    const working = workingOutcome.value
+    vi.mocked(fixture.adapter.resumeRevision).mockClear()
+    fixture.adapter.inspect = vi.fn(async () => ({ ok: true as const, value: { target: {
+      ...fixture.target, ...working.target, review: undefined, managedRoot: fixture.target.managedRoot, sourceRoot: fixture.target.sourceRoot,
+      sourceOid: fixture.target.sourceOid, currentBranch: fixture.target.currentBranch,
+    } } }))
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} services={services} identity={identity()} target={fixture.target} />)
 
     await waitFor(() => expect(screen.getByText('发现 1 个冲突文件')).toBeTruthy())
     expect(screen.getByText('x.ts')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '返回 Worktree 重新生成验收稿' })).toBeTruthy()
-    expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(fixture.adapter.resumeRevision).not.toHaveBeenCalled()
+    expect(services.sessions.binding('target-session')?.session.prompt).not.toHaveBeenCalled()
+
+    const resolveConflict = screen.getByRole('button', { name: '让 Agent 解决冲突' })
+    fireEvent.click(resolveConflict)
+    fireEvent.click(resolveConflict)
+
+    await waitFor(() => expect(fixture.adapter.resumeRevision).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(services.sessions.binding('target-session')?.session.prompt).toHaveBeenCalledTimes(1))
+    expect(services.sessions.binding('target-session')?.session.prompt).toHaveBeenCalledWith([
+      { type: 'text', text: expect.stringMatching(/Local HEAD.*x\.ts/s) },
+    ], 'queue', expect.any(AbortSignal))
     expect(fixture.adapter.preview).not.toHaveBeenCalled()
+  })
+
+  test('Preview 写前竞态返回结构化 continuation，等待用户再次明确授权后才续跑 Agent', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    fixture.adapter.preflight = vi.fn(async request => ({ ok: true as const, value: { preflight: request.expectedRevision === 9 ? {
+      status: 'conflict' as const, localModified: false as const, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 9,
+      configuredBaseOid: 'a'.repeat(40), effectiveBaseOid: 'a'.repeat(40), baseStrategy: 'recorded_base' as const,
+      localBranch: 'main', localHeadOid: 'c'.repeat(40), isolatedHeadOid: 'b'.repeat(40), changedFiles: ['x.ts'], conflictingFiles: ['x.ts'],
+    } : {
+      status: 'ready' as const, localModified: false as const, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
+      configuredBaseOid: 'a'.repeat(40), effectiveBaseOid: 'a'.repeat(40), baseStrategy: 'recorded_base' as const,
+      localBranch: 'main', localHeadOid: 'a'.repeat(40), isolatedHeadOid: 'b'.repeat(40), changedFiles: ['x.ts'],
+    } } }))
+    fixture.adapter.preview = vi.fn(async () => ({ ok: false as const, error: {
+      code: 'apply_conflict' as const, message: 'race conflict', continuation: {
+        kind: 'worktree_apply_conflict' as const,
+        requestId: `apply-conflict:checkout-1:review-1:9:${'c'.repeat(40)}`,
+        checkoutId: 'checkout-1', reviewId: 'review-1', revision: 9,
+        localHeadOid: 'c'.repeat(40), conflictingFiles: ['x.ts'],
+      },
+    } }))
+    const recoveryContinuation = {
+      kind: 'worktree_apply_conflict' as const,
+      requestId: `conflict-recovery:${'d'.repeat(32)}`,
+      checkoutId: 'checkout-1', reviewId: 'review-1', revision: 10,
+      localHeadOid: 'c'.repeat(40), conflictingFiles: ['x.ts'],
+    }
+    const working = { ...fixture.target, state: 'working' as const, revision: 10, review: undefined, recoveryContinuation }
+    fixture.adapter.resumeRevision = vi.fn(async () => ({ ok: true as const, value: { target: working, recoveryContinuation } }))
+    fixture.adapter.inspect = vi.fn(async () => ({ ok: true as const, value: { target: working } }))
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} services={services} identity={identity()} target={fixture.target} />)
+
+    await waitFor(() => expect(screen.getByText('同步条件已确认')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    await waitFor(() => expect(screen.getByText(/实时写入校验发现冲突/)).toBeTruthy())
+    expect(fixture.adapter.resumeRevision).not.toHaveBeenCalled()
+    expect(services.sessions.binding('target-session')?.session.prompt).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '让 Agent 解决冲突' }))
+    await waitFor(() => expect(fixture.adapter.resumeRevision).toHaveBeenCalledWith({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 9, expectedReviewId: 'review-1',
+      conflictContinuation: {
+        kind: 'worktree_apply_conflict',
+        requestId: `apply-conflict:checkout-1:review-1:9:${'c'.repeat(40)}`,
+        checkoutId: 'checkout-1', reviewId: 'review-1', revision: 9,
+        localHeadOid: 'c'.repeat(40), conflictingFiles: ['x.ts'],
+      },
+    }))
+    await waitFor(() => expect(services.sessions.binding('target-session')?.session.prompt).toHaveBeenCalledTimes(1))
   })
 
   test('Ready 更多菜单可手动继续修改，但正常 follow-up 不依赖该入口', async () => {
@@ -288,7 +381,7 @@ describe('Domi-style Worktree Review', () => {
     expect(screen.getByText(/状态在写入前发生变化/)).toBeTruthy()
   })
 
-  test('stale isolated 自动失效旧写操作，并可返回 Worktree 预填重新验收请求', async () => {
+  test('stale isolated 保持 Ready/Read Only，并通过 Session.prompt 重新生成验收结果', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const services = clientServices()
     fixture.adapter.preflight = vi.fn(async () => ({ ok: true as const, value: { preflight: {
@@ -296,17 +389,60 @@ describe('Domi-style Worktree Review', () => {
       reason: 'stale_isolated' as const, message: 'stale review',
     } } }))
     fixture.adapter.resumeRevision = vi.fn(fixture.adapter.resumeRevision)
+    let ready = fixture.target
+    fixture.adapter.prepareReviewRegeneration = vi.fn(async request => {
+      const recoveryContinuation = {
+        kind: 'worktree_review_regeneration' as const,
+        requestId: 'host-authority-regeneration-1',
+        checkoutId: request.checkoutId,
+        reviewId: request.expectedReviewId,
+        revision: request.expectedRevision,
+      }
+      ready = { ...ready, recoveryContinuation }
+      return { ok: true as const, value: { target: ready, recoveryContinuation } }
+    })
+    fixture.adapter.inspect = vi.fn(async () => ({ ok: true as const, value: { target: ready } }))
     fixture.adapter.preview = vi.fn(fixture.adapter.preview)
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} services={services} identity={identity()} target={fixture.target} />)
 
     await waitFor(() => expect(screen.getByText('stale review')).toBeTruthy())
     expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: '返回 Worktree 重新生成验收稿' }))
+    fireEvent.click(screen.getByRole('button', { name: '重新生成验收结果' }))
 
-    await waitFor(() => expect(fixture.adapter.resumeRevision).toHaveBeenCalledWith(identity()))
-    const input = services.conversation!.input.for({})
-    expect(input.setDraft).toHaveBeenCalledWith(expect.stringMatching(/重新检查当前 Worktree.*重新生成验收/))
+    await waitFor(() => expect(services.sessions.binding('target-session')?.session.prompt).toHaveBeenCalledTimes(1))
+    expect(services.sessions.binding('target-session')?.session.prompt).toHaveBeenCalledWith([
+      { type: 'text', text: expect.stringMatching(/严格 Read Only.*不要修改任何文件/s) },
+    ], 'queue', expect.any(AbortSignal))
+    expect(fixture.adapter.resumeRevision).not.toHaveBeenCalled()
     expect(fixture.adapter.preview).not.toHaveBeenCalled()
+  })
+
+  test('acceptance slot 从 waiting 释放为 available 时废弃旧 busy 预检并自动重检', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const waiting = {
+      ...fixture.target,
+      reviewSlot: 'waiting' as const,
+      reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' as const },
+      capabilities: { ...fixture.target.capabilities, preview: false, finalize: false },
+    }
+    const available = {
+      ...fixture.target,
+      reviewSlot: 'available' as const,
+      reviewSlotHolder: undefined,
+    }
+    fixture.adapter.preflight = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { preflight: {
+        status: 'blocked', localModified: false, checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
+        reason: 'project_acceptance_busy', message: 'busy', blocker: waiting.reviewSlotHolder,
+      } } })
+      .mockImplementation(fixture.adapter.preflight)
+    const view = render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={waiting} />)
+
+    await waitFor(() => expect(screen.getByText('busy')).toBeTruthy())
+    view.rerender(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={available} />)
+
+    await waitFor(() => expect(screen.getByText('同步条件已确认')).toBeTruthy())
+    expect(fixture.adapter.preflight).toHaveBeenCalledTimes(2)
   })
 
   test('acceptance slot busy 时展示 path-free 摘要并经 inspect/cwd 验证打开占用 Session', async () => {

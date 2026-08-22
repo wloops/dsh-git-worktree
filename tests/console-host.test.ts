@@ -86,7 +86,8 @@ function moduleDouble(record = readyRecord()): SessionCheckoutModule {
       configuredBaseOid: A, effectiveBaseOid: A, baseStrategy: 'recorded_base', localBranch: 'main',
       localHeadOid: A, isolatedHeadOid: B, changedFiles: ['src/index.ts'],
     })),
-    runExclusiveSessionMutation: vi.fn(), bind: vi.fn(), beginNextIteration: vi.fn(), resumeRevision: vi.fn(), markReadyForReview: vi.fn(),
+    runExclusiveSessionMutation: vi.fn(), bind: vi.fn(), beginNextIteration: vi.fn(), resumeRevision: vi.fn(),
+    prepareReviewRegeneration: vi.fn(), markReadyForReview: vi.fn(),
     createIsolatedTarget: vi.fn(async (sourceSessionId, targetSessionId) => ({ targetSessionId, managedRoot: '/managed', target: isolated })),
     operate: vi.fn(), listManagedWorktrees: vi.fn(), inspectManagedWorktreeCleanup: vi.fn(), bulkCleanupManagedWorktrees: vi.fn(),
     listManagedWorktreesForSession: vi.fn(async sessionId => sessionId === 'intruder-session' ? [] : [{
@@ -241,6 +242,135 @@ describe('Worktree Console Host control plane', () => {
       value: { target: { checkoutId: 'checkout-1', state: 'working', iteration: 1, revision: 8 } },
     })
     expect(module.resumeRevision).toHaveBeenCalledWith('target-session', 7, 'review-1')
+  })
+
+  it('persists and returns an exact Host conflict proof before renderer continuation', async () => {
+    const record = readyRecord()
+    let value: ManagedCheckoutsRegistry = {
+      version: 2, revision: 1, sessionBindings: {}, managedCheckouts: { [record.checkoutId]: record },
+    }
+    const registryPort: SessionCheckoutRegistryPort = {
+      read: () => structuredClone(value),
+      write: nextValue => { value = structuredClone(nextValue) },
+    }
+    const { module, control } = plane(record, { registry: registryPort })
+    vi.mocked(module.preflight!).mockResolvedValue({
+      status: 'conflict', localModified: false, checkoutId: record.checkoutId, reviewId: 'review-1', revision: 7,
+      configuredBaseOid: A, effectiveBaseOid: A, baseStrategy: 'recorded_base', localBranch: 'main',
+      localHeadOid: A, isolatedHeadOid: B, changedFiles: ['src/index.ts'], conflictingFiles: ['src/index.ts'],
+    })
+    vi.mocked(module.resumeRevision).mockImplementation(async (_sessionId, _revision, _reviewId, recovery) => {
+      if (!recovery) throw new Error('expected recovery')
+      const current = value.managedCheckouts[record.checkoutId]!
+      value = {
+        ...value,
+        revision: value.revision + 1,
+        managedCheckouts: {
+          ...value.managedCheckouts,
+          [record.checkoutId]: {
+            ...current,
+            revision: 8,
+            delivery: { state: 'working', iteration: 1 },
+            recoveryContinuation: { ...recovery, workingRevision: 8 },
+          },
+        },
+      }
+      return {
+        project: { id: record.projectId, name: record.projectName },
+        checkout: { id: record.checkoutId, kind: 'isolated', label: 'Task', phase: 'ready' },
+        source: { ref: record.sourceRef, oid: record.baseOid }, current: { branch: null, oid: B },
+        ownership: 'owner', dirty: true, revision: 8, delivery: { state: 'working', iteration: 1 },
+      }
+    })
+
+    const result = await control.resumeRevision({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+      conflictContinuation: {
+        kind: 'worktree_apply_conflict', requestId: 'renderer-context-only', checkoutId: 'checkout-1',
+        reviewId: 'review-1', revision: 7, localHeadOid: A, conflictingFiles: ['src/index.ts'],
+      },
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        target: { state: 'working', revision: 8 },
+        recoveryContinuation: {
+          kind: 'worktree_apply_conflict', checkoutId: 'checkout-1', reviewId: 'review-1', revision: 8,
+          localHeadOid: A, conflictingFiles: ['src/index.ts'], requestId: expect.stringMatching(/^conflict-recovery:/),
+        },
+      },
+    })
+    expect(module.resumeRevision).toHaveBeenCalledWith(
+      'target-session', 7, 'review-1', expect.objectContaining({
+        kind: 'worktree_apply_conflict', requestId: expect.stringMatching(/^conflict-recovery:/), readyRevision: 7,
+      }),
+    )
+  })
+
+  it('persists a separate read-only regeneration proof without resuming Working', async () => {
+    const record = readyRecord()
+    let value: ManagedCheckoutsRegistry = {
+      version: 2, revision: 1, sessionBindings: {}, managedCheckouts: { [record.checkoutId]: record },
+    }
+    const registryPort: SessionCheckoutRegistryPort = {
+      read: () => structuredClone(value),
+      write: nextValue => { value = structuredClone(nextValue) },
+    }
+    const { module, control } = plane(record, { registry: registryPort })
+    vi.mocked(module.prepareReviewRegeneration!).mockImplementation(async (_sessionId, revision, reviewId, requestId) => {
+      const proof = { kind: 'worktree_review_regeneration' as const, requestId, reviewId, revision }
+      value = {
+        ...value,
+        revision: value.revision + 1,
+        managedCheckouts: { ...value.managedCheckouts, [record.checkoutId]: { ...record, recoveryContinuation: proof } },
+      }
+      return proof
+    })
+
+    const result = await control.prepareReviewRegeneration({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        target: { state: 'ready_for_review', revision: 7 },
+        recoveryContinuation: {
+          kind: 'worktree_review_regeneration', checkoutId: 'checkout-1', reviewId: 'review-1', revision: 7,
+          requestId: expect.stringMatching(/^review-regeneration:/),
+        },
+      },
+    })
+    expect(module.resumeRevision).not.toHaveBeenCalled()
+  })
+
+  it('returns a structured apply-conflict continuation from a Preview race', async () => {
+    const { module, control } = plane()
+    vi.mocked(module.operate).mockResolvedValue({
+      status: 'conflict', code: 'apply_conflict', reason: 'content_conflict',
+      target: { ...(await module.inspect('target-session')), revision: 9 },
+      baseStrategy: 'recorded_base', effectiveBaseOid: A, localHeadOid: A, isolatedHeadOid: B,
+      canRetryAfterRefresh: false, conflictingFiles: ['src/index.ts'],
+    })
+
+    const result = await control.preview({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: 'apply_conflict',
+        message: 'Local Preview 预检发现内容冲突',
+        continuation: {
+          kind: 'worktree_apply_conflict',
+          requestId: `apply-conflict:checkout-1:review-1:9:${A}`,
+          checkoutId: 'checkout-1', reviewId: 'review-1', revision: 9,
+          localHeadOid: A, conflictingFiles: ['src/index.ts'],
+        },
+      },
+    })
   })
 
   it('rejects a stale review identity before resuming revision', async () => {
@@ -583,6 +713,32 @@ describe('Worktree Console Host control plane', () => {
     expect(module.operate).toHaveBeenCalledWith({
       sessionId: 'target-session', expectedRevision: 7, action: 'finish', expectedReviewId: 'review-1',
       commitMessage: 'feat(review): user confirmed', retention: 'cleanup',
+    })
+  })
+
+  it('returns the same structured continuation when direct Finalize races into a conflict', async () => {
+    const { module, control } = plane()
+    vi.mocked(module.operate).mockResolvedValue({
+      status: 'conflict', code: 'apply_conflict', reason: 'content_conflict',
+      target: { ...(await module.inspect('target-session')), revision: 9 },
+      baseStrategy: 'recorded_base', effectiveBaseOid: A, localHeadOid: A, isolatedHeadOid: B,
+      canRetryAfterRefresh: false, conflictingFiles: ['src/index.ts'],
+    })
+
+    const result = await control.finalize({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7,
+      expectedReviewId: 'review-1', commitMessage: 'feat: finish', retention: 'cleanup',
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'apply_conflict',
+        continuation: {
+          kind: 'worktree_apply_conflict', checkoutId: 'checkout-1', reviewId: 'review-1', revision: 9,
+          localHeadOid: A, conflictingFiles: ['src/index.ts'],
+        },
+      },
     })
   })
 

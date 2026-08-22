@@ -143,6 +143,8 @@ export interface WorktreeConsoleTargetDetails extends WorktreeConsoleTargetSumma
   sourceRoot: string | null
   sourceOid: string
   currentBranch: string | null
+  /** Owner-only Host proof for one explicitly authorized recovery continuation. */
+  recoveryContinuation?: WorktreeRecoveryProof
 }
 
 export interface WorktreeConsoleCurrentRequest {
@@ -215,6 +217,8 @@ export interface WorktreeConsoleResumeRevisionRequest {
   checkoutId: string
   expectedRevision: number
   expectedReviewId: string
+  /** Present only for the explicit conflict-recovery action; Host re-runs conflict preflight under CAS. */
+  conflictContinuation?: WorktreeApplyConflictContinuation
 }
 
 export interface WorktreeConsoleRollbackPreviewRequest {
@@ -266,6 +270,14 @@ export interface WorktreeConsoleMutationResponse {
   target: WorktreeConsoleTargetSummary
   changedFiles?: string[]
   commitOid?: string | null
+  recoveryContinuation?: WorktreeRecoveryProof
+}
+
+export interface WorktreeConsolePrepareRegenerationRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  expectedReviewId: string
 }
 
 export type WorktreeConsoleFileStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'binary'
@@ -311,10 +323,46 @@ export type WorktreeConsoleErrorCategory =
   | 'internal'
 export type WorktreeConsoleRecovery = 'none' | 'refresh' | 'confirm_dirty' | 'open_recovery' | 'retry'
 
+export interface WorktreeApplyConflictContinuation {
+  kind: 'worktree_apply_conflict'
+  /** Stable identity for Client single-flight and retry within this renderer lifetime. */
+  requestId: string
+  checkoutId: string
+  /** Review that remains Ready until the user explicitly resumes it for conflict resolution. */
+  reviewId: string
+  /** Authoritative revision after the failed real-time write attempt returned to Ready. */
+  revision: number
+  localHeadOid: string
+  conflictingFiles: string[]
+}
+
+export interface WorktreeApplyConflictRecoveryProof {
+  kind: 'worktree_apply_conflict'
+  requestId: string
+  checkoutId: string
+  reviewId: string
+  /** Exact Working revision produced by the Host conflict-resume CAS. */
+  revision: number
+  localHeadOid: string
+  conflictingFiles: string[]
+}
+
+export interface WorktreeReviewRegenerationProof {
+  kind: 'worktree_review_regeneration'
+  requestId: string
+  checkoutId: string
+  reviewId: string
+  revision: number
+}
+
+export type WorktreeRecoveryProof = WorktreeApplyConflictRecoveryProof | WorktreeReviewRegenerationProof
+export type WorktreeConsoleContinuation = WorktreeApplyConflictContinuation
+
 export interface WorktreeConsoleError {
   code: WorktreeConsoleErrorCode
   message: string
   details?: Record<string, string | number | boolean | null>
+  continuation?: WorktreeConsoleContinuation
 }
 
 export type WorktreeConsoleOutcome<T> =
@@ -375,6 +423,7 @@ export interface WorktreeConsoleAdapter {
   preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  prepareReviewRegeneration(request: WorktreeConsolePrepareRegenerationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>

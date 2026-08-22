@@ -44,7 +44,7 @@ This plugin separates a coding task into two explicit boundaries:
 - **Task-only commit** — acceptance creates one commit for the isolated task while preserving separable Local work.
 - **Continuous Session iterations** — after delivery and cleanup, iteration + 1 can start in the same Session with the full conversation intact.
 - **Automatic read-only Preflight** — once Ready, the Review card and composer dock show Local/Worktree HEAD, effective base, sync conditions, conflicts, and the acceptance slot without writing Local.
-- **Review-to-edit recovery** — an unsynced review does not block discussion; stale or conflicting reviews can return to the current Worktree with a prefilled request to revalidate and prepare a new review.
+- **Agent recovery continuation** — a conflict resumes Working only after an explicit user click, then sends the Local HEAD and conflict files to the exact owner Agent through the official Harness Session API; `stale_isolated` stays strictly read-only and only regenerates the review.
 - **Verifiable Delivery Proof** — after Finalize, the UI shows the Commit OID, Local branch/HEAD, file and validation summaries, and cleanup/retention results.
 - **Fail-closed recovery** — stale reviews, Local drift, branch changes, concurrent Previews, and uncertain cleanup stop instead of overwriting data.
 
@@ -108,7 +108,7 @@ The user can then:
 - **Skip review and commit directly** — use the guarded direct-delivery path after explicit confirmation;
 - **Discard** — clean up the task environment when all safety conditions pass.
 
-If Preflight reports `stale_local`, `stale_isolated`, or a conflict, old Preview/Finalize actions are disabled immediately. The user can check again or return to the current Worktree to revalidate and prepare a new review. `project_acceptance_busy` exposes only a path-free holder summary; navigation happens only after the Host re-proves checkout, owner Session, and canonical cwd identity. After Finalize, the Review surface retains a Delivery Proof rather than collapsing to a generic success message.
+If Preflight reports `stale_local`, `stale_isolated`, or a conflict, old Preview/Finalize actions are disabled immediately. `stale_local` only refreshes read-only facts. A conflict resumes Working only after the user clicks **Let Agent resolve conflicts**: under the mutation lock, the Host reruns conflict Preflight/CAS, generates and persists an exact recovery proof, and only then lets the Client use the official Harness `ISession.prompt()` face to send structured Local HEAD and conflict-file context to the exact owner Session. **Regenerate review result** for `stale_isolated` keeps the target Ready and strictly read-only; the Host performs another read-only check and persists a separate, non-interchangeable proof without resuming Working or modifying files. Sending waits for the Session to load and stop streaming, then rechecks the Host proof field by field together with checkout/review/revision/cwd; duplicate clicks remain single-flight. Unsent requests survive a page refresh, but browser storage is untrusted context and must pass exhaustive kind, exact-field, OID, safe-relative-path, and Host-authority validation. An unknown in-flight result or an explicit failure requires a user-triggered retry. `project_acceptance_busy` exposes only a path-free holder summary; navigation happens only after the Host re-proves checkout, owner Session, and canonical cwd identity. After Finalize, the Review surface retains a Delivery Proof rather than collapsing to a generic success message.
 
 ### 5. Start the next round in the same conversation
 
@@ -170,7 +170,7 @@ DeepSeek Harness has a different Host and Session model from the original deskto
 - Host capabilities are exposed through strict Typert Remote, while browser UI uses public Harness Client Slots;
 - Local source and Isolated target always use separate Sessions;
 - cleanup does not mutate Harness's persisted Session cwd; the next iteration recreates the same path only after strict identity checks;
-- the model creates targets, resumes editing, and prepares reviews, while user-controlled surfaces own Local writes, commits, and cleanup.
+- the model creates targets, resolves conflicts only after explicit authorization, regenerates stale reviews read-only, and prepares reviews, while user-controlled surfaces own Local writes, commits, and cleanup.
 
 See [Session Target porting notes](docs/PORTING.md) for the detailed identity, state, and recovery boundary mapping.
 
@@ -245,7 +245,7 @@ Important rules include:
 - an active target Workspace must canonicalize to the managed root recorded by the Host;
 - one canonical Local project can have only one active Preview; a waiting owner keeps read-only Preflight but loses Preview/Finalize capability;
 - an acceptance-slot blocker exposes only a path-free checkout/Session/state summary; opening it requires a fresh inspect plus owner and canonical-cwd verification;
-- automatic Preflight creates no plan, slot, Git ref, or Local write; Preview and direct Finalize bypass display caches and check again;
+- automatic Preflight creates no plan, slot, Git ref, or Local write; Preview and direct Finalize bypass display caches and check again; a waiting-to-available slot transition invalidates the old busy result, while automatic errors require an explicit retry;
 - Preview receipts and internal refs are persisted before Local writes;
 - Preview, Rollback, Finalize, Discard, and resume-editing paths bind checkout, revision, review, and fingerprint identity;
 - Rollback removes only the delta proven to belong to the Preview and preserves separable Local changes made during review;

@@ -3,6 +3,11 @@ import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails, WorktreeCons
 import type { WorktreeClientServices } from '../actions.js'
 import { DeliveryProof } from '../review-console/DeliveryProof.js'
 import { ReviewActions } from '../review-console/ReviewActions.js'
+import {
+  restoreWorktreeRecovery,
+  retryWorktreeRecovery,
+  useWorktreeRecoverySnapshot,
+} from '../review-console/recovery-continuation.js'
 import { reviewEvidenceFromTarget, reviewIdentityFromTarget } from '../review-console/index.js'
 import { WORKTREE_REVIEW_REFRESH_EVENT } from '../review-console/status-events.js'
 
@@ -18,6 +23,7 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [startingIteration, setStartingIteration] = useState(false)
+  const recovery = useWorktreeRecoverySnapshot(sessionId)
   const mounted = useRef(true)
   const requestToken = useRef(0)
   const sessionGeneration = useRef(0)
@@ -48,6 +54,10 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
   }, [adapter, sessionId])
 
   useEffect(() => {
+    restoreWorktreeRecovery({ sessionId, adapter, services })
+  }, [adapter, services, sessionId])
+
+  useEffect(() => {
     sessionGeneration.current += 1
     requestToken.current += 1
     setTarget(null)
@@ -64,6 +74,32 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
       window.removeEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
     }
   }, [refresh, sessionId])
+
+  const standaloneRecovery = recovery
+    && target?.checkoutId === recovery.request.checkoutId
+    && (target.state === 'working' || !target.review)
+    ? recovery
+    : null
+  if (standaloneRecovery) {
+    return (
+      <section className="dsh-wt-review-dock" aria-label="Worktree 恢复续跑" data-recovery-status={standaloneRecovery.status}>
+        <span className="dsh-wt-review-dock-icon" aria-hidden>!</span>
+        <span className="dsh-wt-review-dock-copy">
+          <strong>{standaloneRecovery.request.kind === 'worktree_apply_conflict' ? 'Worktree 冲突恢复续跑' : '只读验收再生成'}</strong>
+          <span>
+            {standaloneRecovery.status === 'queued' ? '请求已持久排队，等待精确 owner Session 加载完成且停止 streaming。' : null}
+            {standaloneRecovery.status === 'sending' ? '正在通过 Harness 官方 Session API 发送恢复请求…' : null}
+            {standaloneRecovery.status === 'sent' ? '恢复请求已交给 Agent。' : null}
+            {standaloneRecovery.status === 'cancelled' ? 'Session/checkout 已切换，旧恢复请求已取消。' : null}
+            {standaloneRecovery.status === 'failed' ? `恢复请求发送失败：${standaloneRecovery.error}` : null}
+          </span>
+        </span>
+        {standaloneRecovery.status === 'failed' ? (
+          <button type="button" className="dsh-wt-button" onClick={() => retryWorktreeRecovery(sessionId)}>重新发送</button>
+        ) : null}
+      </section>
+    )
+  }
 
   if (target?.state === 'delivered' && target.checkoutId !== null && target.capabilities.beginNextIteration) {
     const beginNextIteration = async (): Promise<void> => {

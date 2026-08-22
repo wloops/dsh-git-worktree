@@ -173,6 +173,27 @@ export interface ManagedDeliveryProof {
   validationSummary?: string
 }
 
+export interface ManagedApplyConflictRecoveryContinuation {
+  kind: 'worktree_apply_conflict'
+  requestId: string
+  reviewId: string
+  readyRevision: number
+  workingRevision: number
+  localHeadOid: string
+  conflictingFiles: string[]
+}
+
+export interface ManagedReviewRegenerationContinuation {
+  kind: 'worktree_review_regeneration'
+  requestId: string
+  reviewId: string
+  revision: number
+}
+
+export type ManagedRecoveryContinuation =
+  | ManagedApplyConflictRecoveryContinuation
+  | ManagedReviewRegenerationContinuation
+
 export type ManagedCheckoutDelivery =
   | { state: 'working'; iteration: number }
   | { state: 'ready_for_review'; review: ManagedWorktreeReviewRecord }
@@ -231,6 +252,8 @@ export interface ManagedCheckoutRecord {
   baseOid: string
   /** Last successfully applied isolated snapshot; does not change the user-visible Session Base. */
   applyBaseOid?: string
+  /** Host-authoritative one-shot context for an explicitly resumed apply conflict. */
+  recoveryContinuation?: ManagedRecoveryContinuation
   sourceRef: string
   phase: SessionCheckoutPhase
   delivery: ManagedCheckoutDelivery

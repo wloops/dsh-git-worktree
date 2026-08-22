@@ -12,6 +12,7 @@ import {
   outcomeSchema,
   preflightResponseSchema,
   retainedModeSchema,
+  recoveryContinuationSchema,
   retentionSchema,
   reviewDiffResponseSchema,
   reviewIdSchema,
@@ -87,6 +88,12 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.checkoutId`),
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.expectedRevision`),
     json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.expectedReviewId`),
+    json('conflictContinuation', recoveryContinuationSchema.optional(), `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.conflictContinuation`, true),
+  ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
+  descriptor('prepareReviewRegeneration', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePrepareRegenerationRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePrepareRegenerationRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePrepareRegenerationRequest.expectedReviewId`),
   ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('rollbackPreview', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.checkoutId`),

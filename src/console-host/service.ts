@@ -10,6 +10,7 @@ import type {
   WorktreeConsoleOutcome,
   WorktreeConsolePreflightResponse,
   WorktreeConsoleReviewDiffResponse,
+  WorktreeApplyConflictContinuation,
 } from '../console-contract.js'
 import type { WorktreeRetentionMode } from '../types.js'
 import type { WorktreeConsoleControlPlane } from './control-plane.js'
@@ -56,8 +57,26 @@ export class WorktreeConsoleService extends TypertRemoteService {
   }
 
   @Remote
-  resumeRevision(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.resumeRevision({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  prepareReviewRegeneration(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.prepareReviewRegeneration({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  }
+
+  @Remote
+  resumeRevision(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    conflictContinuation?: WorktreeApplyConflictContinuation,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.resumeRevision({
+      sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, conflictContinuation,
+    })
   }
 
   @Remote

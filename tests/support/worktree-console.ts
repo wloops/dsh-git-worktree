@@ -16,6 +16,7 @@ import type {
   WorktreeConsoleOutcome,
   WorktreeConsolePreflightRequest,
   WorktreeConsolePreflightResponse,
+  WorktreeConsolePrepareRegenerationRequest,
   WorktreeConsolePreviewRequest,
   WorktreeConsoleRetryCleanupRequest,
   WorktreeConsoleResumeRevisionRequest,
@@ -194,10 +195,16 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         currentBranch: _currentBranch,
         ...working
       } = target
+      const recoveryContinuation = request.conflictContinuation ? {
+        ...request.conflictContinuation,
+        requestId: 'host-authority-conflict-1',
+        revision: target.revision + 1,
+      } : undefined
       return outcome({ target: {
         ...working,
         state: 'working',
         revision: target.revision + 1,
+        ...(recoveryContinuation ? { recoveryContinuation } : {}),
         capabilities: {
           ...target.capabilities,
           preflight: false,
@@ -207,7 +214,21 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           finalize: false,
           finalizePreview: false,
         },
-      } })
+      }, ...(recoveryContinuation ? { recoveryContinuation } : {}) })
+    },
+    async prepareReviewRegeneration(request: WorktreeConsolePrepareRegenerationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('prepareReviewRegeneration', request)
+      const recoveryContinuation = {
+        kind: 'worktree_review_regeneration' as const,
+        requestId: 'host-authority-regeneration-1',
+        checkoutId: request.checkoutId,
+        reviewId: request.expectedReviewId,
+        revision: request.expectedRevision,
+      }
+      return outcome({
+        target: { ...target, recoveryContinuation },
+        recoveryContinuation,
+      })
     },
     async rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
       record('rollbackPreview', request)

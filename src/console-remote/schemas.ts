@@ -14,9 +14,9 @@ import {
 
 const strict = <T extends z.core.$ZodLooseShape>(shape: T) => z.object(shape).strict()
 
-export const sessionIdSchema = z.string().min(1)
-export const checkoutIdSchema = z.string().min(1).refine(value => !value.includes('..') && !/[\\/\0]/u.test(value), 'unsafe checkout id')
-export const reviewIdSchema = z.string().min(1)
+export const sessionIdSchema = z.string().min(1).max(200).refine(value => !/[\0\r\n]/u.test(value), 'unsafe session id')
+export const checkoutIdSchema = z.string().min(1).max(200).refine(value => !value.includes('..') && !/[\\/\0\r\n]/u.test(value), 'unsafe checkout id')
+export const reviewIdSchema = z.string().min(1).max(200).refine(value => !/[\0\r\n]/u.test(value), 'unsafe review id')
 export const commitMessageSchema = z.string().trim().min(1).max(500)
 export const revisionSchema = z.number().int().nonnegative()
 export const oidSchema = z.union([
@@ -103,17 +103,45 @@ const targetSummarySchema = strict({
   }).optional(),
   capabilities: capabilitiesSchema,
 })
+function safeConflictFile(file: string): boolean {
+  if (/^[A-Za-z]:[\\/]|^[\\/]/u.test(file)) return false
+  if (/[\0-\x1f\x7f]/u.test(file)) return false
+  return !file.split(/[\\/]/u).some(segment => segment === '' || segment === '.' || segment === '..')
+}
+
+export const recoveryContinuationSchema = strict({
+  kind: z.literal('worktree_apply_conflict'),
+  requestId: z.string().min(1).max(500).refine(value => !/[\0\r\n]/u.test(value), 'unsafe request id'),
+  checkoutId: checkoutIdSchema,
+  reviewId: reviewIdSchema,
+  revision: revisionSchema,
+  localHeadOid: oidSchema,
+  conflictingFiles: z.array(z.string().min(1).max(1000).refine(safeConflictFile, 'unsafe conflict file')).max(500),
+})
+export const reviewRegenerationProofSchema = strict({
+  kind: z.literal('worktree_review_regeneration'),
+  requestId: z.string().min(1).max(500).refine(value => !/[\0\r\n]/u.test(value), 'unsafe request id'),
+  checkoutId: checkoutIdSchema,
+  reviewId: reviewIdSchema,
+  revision: revisionSchema,
+})
+const recoveryProofSchema = z.discriminatedUnion('kind', [recoveryContinuationSchema, reviewRegenerationProofSchema])
 const targetDetailsSchema = targetSummarySchema.extend({
   managedRoot: z.string().min(1).nullable(),
   sourceRoot: z.string().min(1).nullable(),
   sourceOid: oidSchema,
   currentBranch: z.string().nullable(),
+  recoveryContinuation: recoveryProofSchema.optional(),
 }).strict()
-
 const consoleErrorSchema = strict({
   code: z.enum(WORKTREE_CONSOLE_ERROR_CODES),
   message: z.string(),
   details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  continuation: recoveryContinuationSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (value.continuation !== undefined && value.code !== 'apply_conflict') {
+    ctx.addIssue({ code: 'custom', path: ['continuation'], message: 'only apply_conflict may carry a continuation' })
+  }
 })
 
 export function outcomeSchema<T>(value: z.ZodType<T>): z.ZodType<WorktreeConsoleOutcome<T>> {
@@ -135,6 +163,7 @@ export const mutationResponseSchema: z.ZodType<WorktreeConsoleMutationResponse> 
   target: targetSummarySchema,
   changedFiles: z.array(z.string()).optional(),
   commitOid: oidSchema.nullable().optional(),
+  recoveryContinuation: recoveryProofSchema.optional(),
 })
 const diffFileSchema = strict({
   path: z.string(),
@@ -158,7 +187,7 @@ const preflightFactsSchema = {
 }
 const preflightSchema = z.union([
   strict({ status: z.enum(['ready', 'local_advanced', 'already_in_local']), ...preflightFactsSchema }),
-  strict({ status: z.literal('conflict'), ...preflightFactsSchema, conflictingFiles: z.array(z.string()) }),
+  strict({ status: z.literal('conflict'), ...preflightFactsSchema, conflictingFiles: z.array(z.string().min(1).max(1000).refine(safeConflictFile, 'unsafe conflict file')).max(500) }),
   strict({
     status: z.literal('blocked'),
     localModified: z.literal(false),

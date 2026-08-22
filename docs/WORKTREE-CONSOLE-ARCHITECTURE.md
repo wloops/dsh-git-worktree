@@ -162,9 +162,18 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 
 - 自动 Preflight 的共享缓存键是 `sessionId + checkoutId + revision + reviewId`，只用于避免 Review 卡与 composer dock 重复读取；强制重检会覆盖该只读快照。
 - `stale_local` 表示 Local 事实已变化，不自动废弃 Review；Client 停止当前写操作并刷新 Preflight。`stale_isolated` 或 review/revision 身份变化会使旧 Preview/Finalize 立即失效。
-- “返回 Worktree 重新生成验收稿”先调用 owner-only `resumeRevision`，再通过公开 composer input 只预填重新验证请求；不得自动发送、伪造测试结果或自动调用 Ready 工具。
 - Delivery Proof 在 direct Finish、Finalize Preview 和 branch-CAS crash reconcile 中复制准确 Review 的 validation evidence；历史 version-2 proof 可缺少新增字段。
 - `commitInLocalHistory` 是读取时动态证据：`true` 表示 Commit 仍是当前 Local HEAD 祖先，`false` 显示警告，`null` 表示当前无法确认。三者都不改变 capability。
+
+### 7.2 Recovery continuation P1-B
+
+- conflict 与 `stale_isolated` 是两个不可互换的 discriminated request 类型。conflict 在用户明确点击后先强制重检 `checkoutId + reviewId + revision + localHeadOid + conflictingFiles`，再调用 owner-only `resumeRevision`；`stale_isolated` 保持 Ready，不调用 `resumeRevision`，只允许 Read Only 验证与新 Ready Review。
+- Preview/direct Finish 在写前 Host plan 中发现的竞态冲突，使用 strict `worktree_apply_conflict` continuation 返回 checkout/review/revision、Local HEAD 与最多 500 个安全相对冲突路径；该错误上下文不授予 mutation capability。用户点击恢复后，Host 在 mutation lock 内重新执行 conflict Preflight/CAS，生成新的随机 request ID，并把绑定 Ready/Working revision、review、Local HEAD 与冲突文件的 recovery proof 持久化到 registry。
+- `stale_isolated` 点击后先调用 owner-only `prepareReviewRegeneration`：Host 重新只读 Preflight，并在不改变 Ready revision、不修改文件的前提下持久化独立 `worktree_review_regeneration` proof。两类 proof 不可互换，后续 Ready/Working 状态或 Review 变化会使其失效。
+- Client 只通过 Harness 官方 `ISession.prompt(content, 'queue')` 发送；发送前和实际 prompt 前都必须由 `inspect` 取回与请求逐字段相等的 Host proof，并证明 exact owner Session、active Session、canonical cwd、checkout、revision 和 recovery kind。无法证明时 fail closed。
+- continuation 请求以 versioned browser storage 持久化 `queued/sending/failed` 上下文，以便页面刷新后恢复未发送工作；browser storage 是不可信上下文而不是权限记录，必须严格校验穷举 kind、精确字段集合、长度/OID/安全相对路径预算，并在每次恢复和发送前重新检查 Host proof、Session 与 cwd。重复点击复用同一 request ID；新请求取代旧请求；Session 切换中止并消费旧请求；明确 `queued` 可在刷新后继续，刷新时处于 `sending` 的请求因结果未知而降级为显式“重新发送”，避免自动重复投递；重试不重放 Host mutation。
+- Agent conflict prompt 只允许在 managed Worktree merge 最新 Local HEAD、解决冲突、聚焦验证并重新 Ready；禁止自动 Preview/Finalize/写 Local。review regeneration prompt 明确禁止修改文件，只在写入停止后复核并重新 Ready。
+- acceptance slot 从 `waiting` 变为 `available` 时，Client 使旧 busy Preflight 失效并重新读取；自动 Preflight error 保持缓存，避免重渲染循环请求，只有显式“重新检查”才 force retry。
 
 ## 8. 并行文件所有权
 

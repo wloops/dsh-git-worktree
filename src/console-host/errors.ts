@@ -1,8 +1,12 @@
 import { SESSION_CHECKOUT_ERROR_CODES, type SessionCheckoutErrorCode } from '../types.js'
 import type { WorktreeConsoleError, WorktreeConsoleOutcome } from '../console-contract.js'
 
-export function domainError(code: SessionCheckoutErrorCode, message: string): Error {
-  return Object.assign(new Error(message), { code })
+export function domainError(
+  code: SessionCheckoutErrorCode,
+  message: string,
+  continuation?: WorktreeConsoleError['continuation'],
+): Error {
+  return Object.assign(new Error(message), { code, ...(continuation === undefined ? {} : { continuation }) })
 }
 
 export function consoleFailure(error: unknown): WorktreeConsoleOutcome<never> {
@@ -12,7 +16,15 @@ export function consoleFailure(error: unknown): WorktreeConsoleOutcome<never> {
     && typeof error.code === 'string'
     && (SESSION_CHECKOUT_ERROR_CODES as readonly string[]).includes(error.code)
   ) {
-    return { ok: false, error: { code: error.code as SessionCheckoutErrorCode, message: error.message } }
+    const continuation = 'continuation' in error ? error.continuation : undefined
+    return {
+      ok: false,
+      error: {
+        code: error.code as SessionCheckoutErrorCode,
+        message: error.message,
+        ...(continuation === undefined ? {} : { continuation: continuation as WorktreeConsoleError['continuation'] }),
+      },
+    }
   }
   return {
     ok: false,
@@ -23,8 +35,21 @@ export function consoleFailure(error: unknown): WorktreeConsoleOutcome<never> {
   }
 }
 
-export function failure<T>(code: WorktreeConsoleError['code'], message: string, details?: WorktreeConsoleError['details']): WorktreeConsoleOutcome<T> {
-  return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } }
+export function failure<T>(
+  code: WorktreeConsoleError['code'],
+  message: string,
+  details?: WorktreeConsoleError['details'],
+  continuation?: WorktreeConsoleError['continuation'],
+): WorktreeConsoleOutcome<T> {
+  return {
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(details === undefined ? {} : { details }),
+      ...(continuation === undefined ? {} : { continuation }),
+    },
+  }
 }
 
 export async function outcome<T>(operation: () => Promise<T>): Promise<WorktreeConsoleOutcome<T>> {

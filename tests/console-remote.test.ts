@@ -42,6 +42,7 @@ const METHODS = [
   'preflight',
   'preview',
   'resumeRevision',
+  'prepareReviewRegeneration',
   'rollbackPreview',
   'discard',
   'finalize',
@@ -111,6 +112,31 @@ describe('manual strict Worktree Console Remote contribution', () => {
     expect(() => current.result.schema.parse({
       ...response,
       value: { target: { ...response.value.target, reviewSlotHolder: { ...response.value.target.reviewSlotHolder, managedRoot: '/secret' } } },
+    })).toThrow()
+  })
+
+  it('roundtrips a structured apply-conflict continuation and rejects malformed conflict facts', () => {
+    const preview = WORKTREE_CONSOLE_DESCRIPTORS.find((descriptor) => descriptor.method === 'preview')!
+    const response = {
+      ok: false as const,
+      error: {
+        code: 'apply_conflict' as const,
+        message: 'conflict',
+        continuation: {
+          kind: 'worktree_apply_conflict' as const,
+          requestId: `apply-conflict:checkout-1:review-1:9:${'a'.repeat(40)}`,
+          checkoutId: 'checkout-1', reviewId: 'review-1', revision: 9,
+          localHeadOid: 'a'.repeat(40), conflictingFiles: ['src/index.ts'],
+        },
+      },
+    }
+
+    expect(preview.result.mode).toBe('strict')
+    if (preview.result.mode !== 'strict') throw new Error('expected strict preview result')
+    expect(preview.result.schema.parse(response)).toEqual(response)
+    expect(() => preview.result.schema.parse({
+      ...response,
+      error: { ...response.error, continuation: { ...response.error.continuation, conflictingFiles: ['/unsafe'.repeat(1001)] } },
     })).toThrow()
   })
 

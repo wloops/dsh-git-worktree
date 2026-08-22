@@ -16,6 +16,7 @@ interface Entry {
   snapshot: PreflightSnapshot
   listeners: Set<() => void>
   promise?: Promise<PreflightSnapshot>
+  generation: number
 }
 
 const IDLE: PreflightSnapshot = { status: 'idle' }
@@ -39,7 +40,7 @@ function entryFor(adapter: WorktreeConsoleAdapter, identity: WorktreeConsolePref
   const key = identityKey(identity)
   let entry = cache.get(key)
   if (!entry) {
-    entry = { snapshot: IDLE, listeners: new Set() }
+    entry = { snapshot: IDLE, listeners: new Set(), generation: 0 }
     cache.set(key, entry)
   }
   return entry
@@ -58,26 +59,39 @@ export async function readReviewPreflight(
 ): Promise<PreflightSnapshot> {
   const entry = entryFor(adapter, identity)
   if (entry.promise) return entry.promise
-  if (!force && entry.snapshot.status === 'success') return entry.snapshot
+  if (!force && (entry.snapshot.status === 'success' || entry.snapshot.status === 'error')) return entry.snapshot
   publish(entry, { status: 'loading' })
+  const generation = entry.generation
   const promise: Promise<PreflightSnapshot> = adapter.preflight(identity).then((outcome): PreflightSnapshot => {
     const snapshot: PreflightSnapshot = outcome.ok
       ? { status: 'success', preflight: outcome.value.preflight }
       : { status: 'error', error: outcome.error }
-    publish(entry, snapshot)
+    if (entry.generation === generation) publish(entry, snapshot)
     return snapshot
   }, (reason): PreflightSnapshot => {
     const snapshot: PreflightSnapshot = {
       status: 'error',
       error: { code: 'transport_unavailable', message: reason instanceof Error ? reason.message : String(reason) },
     }
-    publish(entry, snapshot)
+    if (entry.generation === generation) publish(entry, snapshot)
     return snapshot
   }).finally(() => {
-    entry.promise = undefined
+    if (entry.generation === generation) entry.promise = undefined
   })
   entry.promise = promise
   return promise
+}
+
+/** Discard one identity result; in-flight reads still publish only to the orphaned entry. */
+export function invalidateReviewPreflight(
+  adapter: WorktreeConsoleAdapter,
+  identity: WorktreeConsolePreflightRequest,
+): void {
+  const entry = cacheFor(adapter).get(identityKey(identity))
+  if (!entry) return
+  entry.generation += 1
+  entry.promise = undefined
+  publish(entry, IDLE)
 }
 
 export function useReviewPreflight(

@@ -12,10 +12,27 @@ export interface SnapshotStore<T> {
   subscribe(listener: () => void): () => void
 }
 
+export interface ClientSessionSnapshot {
+  running: boolean
+  openState: 'cold' | 'loading' | 'open' | 'error'
+  removed: boolean
+}
+
 export interface ClientSessionBinding {
   /** Agent-scoped Client Context; present on real Harness bindings. */
   ctx?: unknown
   session: {
+    readonly sessionId?: string
+    getSnapshot?(): ClientSessionSnapshot
+    subscribe?(listener: () => void): () => void
+    prompt?(
+      content: Array<{ type: 'text'; text: string }>,
+      mode: 'queue' | 'steer',
+      signal?: AbortSignal,
+    ): Promise<
+      | { ok: true; value: { accepted: true } }
+      | { ok: false; error: { code: string; message: string; details?: Record<string, unknown> } }
+    >
     command(line: string): Promise<
       | { ok: true; value: { matched: boolean } }
       | { ok: false; error: { code: string; message: string } }
@@ -43,7 +60,7 @@ export interface ClientWorkspaces {
 export interface WorktreeClientServices {
   sessions: ClientSessions
   workspaces: ClientWorkspaces
-  /** Optional public composer face; recovery may prefill text but never auto-send it. */
+  /** Optional public composer face used only by manual draft-prefill actions. */
   conversation?: {
     input: {
       for(ctx: unknown): PreSessionInput

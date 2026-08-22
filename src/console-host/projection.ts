@@ -175,6 +175,27 @@ export function projectDetails(
     sourceRoot: record.localRoot,
     sourceOid: record.baseOid,
     currentBranch: snapshot?.branch ?? null,
+    ...(callerSessionId === record.ownerSessionId && !linkedRead && record.recoveryContinuation
+      ? {
+          recoveryContinuation: record.recoveryContinuation.kind === 'worktree_apply_conflict'
+            ? {
+                kind: record.recoveryContinuation.kind,
+                requestId: record.recoveryContinuation.requestId,
+                checkoutId: record.checkoutId,
+                reviewId: record.recoveryContinuation.reviewId,
+                revision: record.recoveryContinuation.workingRevision,
+                localHeadOid: record.recoveryContinuation.localHeadOid,
+                conflictingFiles: [...record.recoveryContinuation.conflictingFiles],
+              }
+            : {
+                kind: record.recoveryContinuation.kind,
+                requestId: record.recoveryContinuation.requestId,
+                checkoutId: record.checkoutId,
+                reviewId: record.recoveryContinuation.reviewId,
+                revision: record.recoveryContinuation.revision,
+              },
+        }
+      : {}),
   }
 }
 

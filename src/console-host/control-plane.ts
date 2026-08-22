@@ -14,6 +14,7 @@ import type {
   WorktreeConsoleOutcome,
   WorktreeConsolePreflightRequest,
   WorktreeConsolePreflightResponse,
+  WorktreeConsolePrepareRegenerationRequest,
   WorktreeConsolePreviewRequest,
   WorktreeConsoleResumeRevisionRequest,
   WorktreeConsoleRollbackPreviewRequest,
@@ -57,6 +58,7 @@ export interface WorktreeConsoleControlPlane {
   preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  prepareReviewRegeneration(request: WorktreeConsolePrepareRegenerationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   finalize(request: WorktreeConsoleFinalizeRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
@@ -84,6 +86,41 @@ function previewReview(record: ManagedCheckoutRecord) {
     throw domainError('preview_not_active', '当前没有等待验收的 Local Preview')
   }
   return record.delivery.review
+}
+
+function safeRecoveryRequestId(value: string): boolean {
+  return value.length > 0 && value.length <= 500 && !/[\0\r\n]/u.test(value)
+}
+
+function safeConflictFile(file: string): boolean {
+  if (!file || file.length > 1000 || /[\0-\x1f\x7f]/u.test(file)) return false
+  if (/^(?:[A-Za-z]:[\\/]|[\\/])/u.test(file)) return false
+  return !file.split(/[\\/]/u).some(segment => segment === '' || segment === '.' || segment === '..')
+}
+
+function applyConflictContinuation(
+  result: Extract<Awaited<ReturnType<SessionCheckoutModule['operate']>>, { status: 'conflict' }>,
+  reviewId: string,
+) {
+  const checkoutId = result.target.checkout.id
+  const revision = result.target.revision
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(result.localHeadOid)) {
+    throw domainError('git_error', '冲突恢复缺少有效的 Local HEAD 身份')
+  }
+  const localHeadOid = result.localHeadOid
+  if (result.conflictingFiles.length > 500 || !result.conflictingFiles.every(safeConflictFile)) {
+    throw domainError('git_error', '冲突恢复包含不安全或越界的文件身份')
+  }
+  const conflictingFiles = [...result.conflictingFiles]
+  return {
+    kind: 'worktree_apply_conflict' as const,
+    requestId: `apply-conflict:${checkoutId}:${reviewId}:${revision}:${localHeadOid}`,
+    checkoutId,
+    reviewId,
+    revision,
+    localHeadOid,
+    conflictingFiles,
+  }
 }
 
 function preflightFailure(view: Awaited<ReturnType<NonNullable<SessionCheckoutModule['preflight']>>> | undefined) {
@@ -502,7 +539,13 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         action: 'preview', sessionId: request.sessionId, expectedRevision: request.expectedRevision,
       })
       if (result.status === 'error') throw domainError(result.code, result.message)
-      if (result.status === 'conflict') throw domainError('apply_conflict', 'Local Preview 预检发现内容冲突')
+      if (result.status === 'conflict') {
+        throw domainError(
+          'apply_conflict',
+          'Local Preview 预检发现内容冲突',
+          applyConflictContinuation(result, review.reviewId),
+        )
+      }
       if (result.status !== 'previewed') throw domainError('operation_not_allowed', 'Preview 返回了非预期状态')
       return {
         ...(await mutationResponse(request.sessionId, request.checkoutId)),
@@ -516,15 +559,86 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
       const review = readyReview(record)
       if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
-      const target = await options.module.resumeRevision(
-        request.sessionId,
-        request.expectedRevision,
-        request.expectedReviewId,
-      )
+      const requestedRecovery = request.conflictContinuation
+      if (requestedRecovery && (
+        requestedRecovery.kind !== 'worktree_apply_conflict'
+        || !safeRecoveryRequestId(requestedRecovery.requestId)
+        || requestedRecovery.checkoutId !== request.checkoutId
+        || requestedRecovery.reviewId !== request.expectedReviewId
+        || requestedRecovery.revision !== request.expectedRevision
+        || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(requestedRecovery.localHeadOid)
+        || requestedRecovery.conflictingFiles.length > 500
+        || !requestedRecovery.conflictingFiles.every(safeConflictFile)
+      )) throw domainError('invalid_input', '冲突恢复请求身份无效')
+      const recovery = requestedRecovery ? {
+        kind: 'worktree_apply_conflict' as const,
+        requestId: `conflict-recovery:${randomUUID()}`,
+        reviewId: request.expectedReviewId,
+        readyRevision: request.expectedRevision,
+        localHeadOid: requestedRecovery.localHeadOid,
+        conflictingFiles: [...requestedRecovery.conflictingFiles],
+      } : undefined
+      const target = recovery
+        ? await options.module.resumeRevision(
+            request.sessionId,
+            request.expectedRevision,
+            request.expectedReviewId,
+            recovery,
+          )
+        : await options.module.resumeRevision(
+            request.sessionId,
+            request.expectedRevision,
+            request.expectedReviewId,
+          )
       if (target.checkout.id !== request.checkoutId || target.delivery?.state !== 'working') {
         throw domainError('checkout_mismatch', '恢复编辑后 Worktree 身份或状态不一致')
       }
-      return mutationResponse(request.sessionId, request.checkoutId)
+      const response = await mutationResponse(request.sessionId, request.checkoutId)
+      if (!requestedRecovery) return response
+      const current = recordOf(options.registry, request.checkoutId).recoveryContinuation
+      if (
+        !current
+        || current.kind !== 'worktree_apply_conflict'
+        || current.requestId !== recovery!.requestId
+        || current.workingRevision !== response.target.revision
+      ) throw domainError('checkout_mismatch', 'Host 未能持久化精确冲突恢复凭证')
+      return {
+        ...response,
+        recoveryContinuation: {
+          kind: current.kind,
+          requestId: current.requestId,
+          checkoutId: request.checkoutId,
+          reviewId: current.reviewId,
+          revision: current.workingRevision,
+          localHeadOid: current.localHeadOid,
+          conflictingFiles: [...current.conflictingFiles],
+        },
+      }
+    }),
+
+    prepareReviewRegeneration: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以请求重新生成验收结果')
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      const review = readyReview(record)
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      const prepared = await options.module.prepareReviewRegeneration(
+        request.sessionId,
+        request.expectedRevision,
+        request.expectedReviewId,
+        `review-regeneration:${randomUUID()}`,
+      )
+      const response = await mutationResponse(request.sessionId, request.checkoutId)
+      return {
+        ...response,
+        recoveryContinuation: {
+          kind: prepared.kind,
+          requestId: prepared.requestId,
+          checkoutId: request.checkoutId,
+          reviewId: prepared.reviewId,
+          revision: prepared.revision,
+        },
+      }
     }),
 
     rollbackPreview: request => outcome(async () => {
@@ -593,7 +707,14 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
           retention: request.retention,
         })
         if (result.status === 'error') return failure(result.code, result.message)
-        if (result.status === 'conflict') return failure('apply_conflict', 'Local 应用发生冲突')
+        if (result.status === 'conflict') {
+          return failure(
+            'apply_conflict',
+            'Local 应用发生冲突',
+            undefined,
+            applyConflictContinuation(result, review.reviewId),
+          )
+        }
         if (result.status !== 'finished') return failure('operation_not_allowed', 'Finalize 返回了非预期状态')
         return {
           ok: true,
