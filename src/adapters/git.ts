@@ -176,6 +176,12 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
     retainInternalArtifact: async (localRoot, checkoutId, artifactName, oid) => {
       await runSessionGitChecked(localRoot, ['update-ref', internalArtifactRef(checkoutId, artifactName), oid])
     },
+    readInternalArtifact: async (localRoot, checkoutId, artifactName) => {
+      const result = await runSessionGit(localRoot, ['rev-parse', '--verify', '--quiet', internalArtifactRef(checkoutId, artifactName)])
+      if (result.code === 0 && result.stdout) return result.stdout
+      if (result.code === 1) return null
+      throw new SessionCheckoutError('git_operation_failed', result.stderr || '无法读取内部 Git artifact')
+    },
     releaseInternalArtifacts: async (localRoot, checkoutId, artifactPrefix) => {
       const prefix = artifactPrefix
         ? internalArtifactRef(checkoutId, artifactPrefix)

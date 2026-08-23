@@ -19,6 +19,7 @@ pnpm pack --dry-run
 - Host `lib/index.js` 命名导出 `apply` 与 `inject`；
 - `dsh.client` 声明 Web 平台和 client injection；
 - `lib/client.js` 执行时调用 `window.__ModuleLoader__.load({ id, factory })`，注册 ID 精确等于包名，且 factory 返回 Client `apply` 与 `inject`；
+- Typert Loader/Remote discovery 必须从本轮刚生成的 `lib` 读取完整方法面；当前包括 `previewRecoveryPreflight`、`preparePreviewRecoveryAnalysis`、`createPreviewRecoveryHandoff` 与 proof-bearing Rollback/Finalize，source descriptor 和 build artifact 不一致会阻断发布；
 - 失效 export（例如历史 `./manager`）会直接阻断发布。
 
 正式发布或 tag CI 使用：
@@ -42,6 +43,10 @@ pnpm run check:publish:release
 8. 另一个 Session 即使属于同一项目，也不能 list/remove 不属于它的 Worktree。
 9. target Workspace cwd 被替换时，插件返回 `project_mismatch`。
 10. 历史 `applyBaseOid` 记录拒绝自动 Finish/Discard。
+11. 制造同分支 Local fast-forward 使 Preview 进入 `preview_detached`；Recovery Preflight 不改变 Local HEAD/ref/index/worktree、registry 或 retained refs，并只在 Host proof 标记 safe 后显示撤回/提交。
+12. 在 recovery proof 生成后改变 Local、retained artifact 或 acceptance-slot holder；旧 generation 必须在 journal/Local 写入前以 stale/blocked 结果拒绝。
+13. detached Rollback/Finalize 保留后续 Local Commit 与 staged/unstaged/untracked 层；写后验证 fault 进入 `recovery_required` 并保留 journal，不把 matching Commit HEAD 猜成成功。
+14. Recovery analysis prompt 明确只读；fresh Worktree handoff 从最新 Local HEAD 创建，任何失败都不改变旧 detached delivery、receipt、refs、Local 或旧 Worktree。
 
 ## 3. 版本、提交、CI 与 tag
 

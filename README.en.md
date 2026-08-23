@@ -45,6 +45,7 @@ This plugin separates a coding task into two explicit boundaries:
 - **Continuous Session iterations** — after delivery and cleanup, iteration + 1 can start in the same Session with the full conversation intact.
 - **Automatic read-only Preflight** — once Ready, the Review card and composer dock show Local/Worktree HEAD, effective base, sync conditions, conflicts, and the acceptance slot without writing Local.
 - **Agent recovery continuation** — a conflict resumes Working only after an explicit user click, then sends the Local HEAD and conflict files to the exact owner Agent through the official Harness Session API; `stale_isolated` stays strictly read-only and only regenerates the review.
+- **Host-authoritative Detached Preview recovery** — when Local drift moves a Preview into `preview_detached`, the Host read-only checks the receipt, retained refs, HEAD/ref, index, working tree, and acceptance slot. Rollback or Finalize appears only when a fresh proof marks it safe; the user may also request read-only Agent analysis or hand off from the latest Local HEAD into a fresh Worktree.
 - **Verifiable Delivery Proof** — after Finalize, the UI shows the Commit OID, Local branch/HEAD, file and validation summaries, and cleanup/retention results.
 - **Fail-closed recovery** — stale reviews, Local drift, branch changes, concurrent Previews, and uncertain cleanup stop instead of overwriting data.
 
@@ -109,6 +110,16 @@ The user can then:
 - **Discard** — clean up the task environment when all safety conditions pass.
 
 If Preflight reports `stale_local`, `stale_isolated`, or a conflict, old Preview/Finalize actions are disabled immediately. `stale_local` only refreshes read-only facts. A conflict resumes Working only after the user clicks **Let Agent resolve conflicts**: under the mutation lock, the Host reruns conflict Preflight/CAS, generates and persists an exact recovery proof, and only then lets the Client use the official Harness `ISession.prompt()` face to send structured Local HEAD and conflict-file context to the exact owner Session. **Regenerate review result** for `stale_isolated` keeps the target Ready and strictly read-only; the Host performs another read-only check and persists a separate, non-interchangeable proof without resuming Working or modifying files. Sending waits for the Session to load and stop streaming, then rechecks the Host proof field by field together with checkout/review/revision/cwd; duplicate clicks remain single-flight. Unsent requests survive a page refresh, but browser storage is untrusted context and must pass exhaustive kind, exact-field, OID, safe-relative-path, and Host-authority validation. An unknown in-flight result or an explicit failure requires a user-triggered retry. `project_acceptance_busy` exposes only a path-free holder summary; navigation happens only after the Host re-proves checkout, owner Session, and canonical cwd identity. After Finalize, the Review surface retains a Delivery Proof rather than collapsing to a generic success message.
+
+#### Detached Preview recovery
+
+When the Preview receipt is still intact but the Local branch/HEAD, index, or working tree has changed, delivery enters `preview_detached`. Here, detached is a delivery state, not Git detached HEAD. The Review surface automatically runs a strictly read-only Recovery Preflight and shows the Host generation, current Local HEAD/ref, and structured Rollback and Finalize conclusions.
+
+- The recovery proof binds the exact Session, checkout, revision, Review, Preview, receipt fingerprint, four retained artifacts, Local fingerprint/trees, and acceptance-slot holder. It is deterministic revalidation context, not bearer permission.
+- Safe Rollback, Finalize, read-only analysis, and fresh-Worktree handoff each bypass the display cache and fetch another proof. The Host then recomputes and compares it under the binding lock; any revision, Local, artifact, or slot change rejects the action before a write.
+- On a provable same-branch fast-forward, Rollback removes only the Preview and Finalize commits only the task delta onto the latest Local HEAD. Later staged, unstaged, untracked, and committed Local work remains. Branch switches, non-fast-forward history, committed Preview bytes, hunk conflicts, or missing artifacts fail closed.
+- **Let Agent analyze read-only** cannot modify the old Worktree, Local, refs/index, or artifacts. **Hand off to a fresh Worktree** creates a new managed checkout from the latest Local HEAD; failure leaves the old detached delivery, receipt, retained refs, Local state, and old Worktree unchanged.
+- If an exact post-write check cannot prove the target HEAD/ref/index/tree/fingerprint, the checkout enters `recovery_required` and preserves its journal and evidence. A matching Commit HEAD alone is never treated as sufficient proof of completion, and the write is not retried automatically.
 
 ### 5. Start the next round in the same conversation
 
@@ -247,8 +258,10 @@ Important rules include:
 - an acceptance-slot blocker exposes only a path-free checkout/Session/state summary; opening it requires a fresh inspect plus owner and canonical-cwd verification;
 - automatic Preflight creates no plan, slot, Git ref, or Local write; Preview and direct Finalize bypass display caches and check again; a waiting-to-available slot transition invalidates the old busy result, while automatic errors require an explicit retry;
 - Preview receipts and internal refs are persisted before Local writes;
-- Preview, Rollback, Finalize, Discard, and resume-editing paths bind checkout, revision, review, and fingerprint identity;
-- Rollback removes only the delta proven to belong to the Preview and preserves separable Local changes made during review;
+- `preview_detached` Recovery Preflight is strictly read-only and rechecks all four retained artifacts before and after assessment; Remote proof stays path-free and never exposes Local or Worktree paths;
+- Preview, Rollback, Finalize, Discard, and resume-editing paths bind checkout, revision, review, and fingerprint identity; detached mutation additionally requires a fresh generation that the Host recomputes under lock before journaling;
+- Rollback removes only the delta proven to belong to the Preview and preserves separable Local changes made during review; Finalize commits only the task delta onto the latest same-branch Local HEAD;
+- the final Local CAS occurs immediately before the first write, followed by exact HEAD/ref/index/tree/fingerprint verification; uncertain results enter `recovery_required` with the journal preserved and cannot be inferred successful from Commit HEAD alone;
 - branch switches, non-fast-forward history, overlapping conflicts, committed Preview bytes, or additional drift enter recovery instead of being overwritten;
 - cleanup verifies managed-path identity, Git metadata, and the final fingerprint; uncertain residue is retained or quarantined;
 - durable Delivery Proof is bound to the exact Review and records Commit, Local branch/HEAD, changed files, and validation evidence; dynamic history evidence grants no mutation capability;

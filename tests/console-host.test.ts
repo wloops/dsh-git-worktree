@@ -121,7 +121,7 @@ function gitDouble(): SessionCheckoutGitPort {
     inspect: vi.fn(async () => ({ root: '/managed', commonDir: '/git/common', gitDir: '/git/worktrees/one', branch: null, headOid: B, headRef: 'HEAD' })),
     findContainingWorktreeRoot: vi.fn(), status: vi.fn(async () => ({ dirty: true })), createDetachedWorktree: vi.fn(),
     removeWorktree: vi.fn(), retainApplyBase: vi.fn(), releaseApplyBase: vi.fn(), retainInternalArtifact: vi.fn(),
-    releaseInternalArtifacts: vi.fn(), isAncestor: vi.fn(),
+    readInternalArtifact: vi.fn(), releaseInternalArtifacts: vi.fn(), isAncestor: vi.fn(),
   }
 }
 
@@ -575,7 +575,7 @@ describe('Worktree Console Host control plane', () => {
     vi.mocked(module.preflight!).mockResolvedValue({
       status: 'blocked', localModified: false, checkoutId: waiting.checkoutId, reviewId: 'review-1', revision: waiting.revision,
       reason: 'project_acceptance_busy', message: 'busy',
-      blocker: { checkoutId: holder.checkoutId, ownerSessionId: holder.ownerSessionId, state: 'preview_active' },
+      blocker: { checkoutId: holder.checkoutId, ownerSessionId: holder.ownerSessionId, revision: holder.revision, state: 'preview_active' },
     })
 
     const current = await control.current('target-session')
@@ -584,7 +584,7 @@ describe('Worktree Console Host control plane', () => {
       value: {
         target: {
           reviewSlot: 'waiting',
-          reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' },
+          reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', revision: 9, state: 'preview_active' },
           capabilities: { preflight: true, preview: false, finalize: false },
         },
       },

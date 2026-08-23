@@ -7,9 +7,10 @@ import type {
   WorktreeConsoleTargetSummary,
 } from '../../console-contract.js'
 import { worktreeConsoleErrorMeta } from '../../console-contract.js'
-import type { WorktreeApplyPreflightView, WorktreeRetentionMode } from '../../types.js'
+import type { WorktreeApplyPreflightView, WorktreePreviewRecoveryProof, WorktreeRetentionMode } from '../../types.js'
 import {
   openAuthorizedWorktreeTarget,
+  openIsolatedTarget,
   prefillSessionDraft,
   type WorktreeClientServices,
 } from '../actions.js'
@@ -17,6 +18,7 @@ import type { WorktreeReviewEvidence, WorktreeReviewIdentity } from './WorktreeR
 import { DeliveryProof } from './DeliveryProof.js'
 import { PreflightStatus } from './PreflightStatus.js'
 import { invalidateReviewPreflight, readReviewPreflight, useReviewPreflight } from './preflight-cache.js'
+import { readPreviewRecoveryPreflight, usePreviewRecoveryPreflight } from './preview-recovery-cache.js'
 import {
   enqueueWorktreeRecovery,
   restoreWorktreeRecovery,
@@ -40,7 +42,7 @@ interface ReviewActionsProps {
   onTargetChange: (target: WorktreeConsoleTargetSummary) => void
 }
 
-type Mutation = 'preview' | 'resume_revision' | 'recovery' | 'open_holder' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
+type Mutation = 'preview' | 'resume_revision' | 'recovery' | 'recovery_analysis' | 'recovery_handoff' | 'open_holder' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
 type CommitMode = 'finish' | 'finalize_preview'
 
 function isStale(error: WorktreeConsoleError): boolean {
@@ -102,6 +104,21 @@ export function ReviewActions({
   const safeReadyPreflight = preflightSnapshot.status === 'success'
     && preflightSnapshot.preflight.status !== 'blocked'
     && preflightSnapshot.preflight.status !== 'conflict'
+  const recoveryIdentity = identity && target?.state === 'preview_detached' && target.previewRecovery
+    ? {
+        ...identity,
+        expectedPreviewId: target.previewRecovery.previewId,
+      }
+    : undefined
+  const { snapshot: recoveryPreflight, refresh: refreshRecoveryPreflight } = usePreviewRecoveryPreflight(
+    adapter,
+    recoveryIdentity,
+    Boolean(adapter && recoveryIdentity && !disabled),
+  )
+  const recoveryProof: WorktreePreviewRecoveryProof | undefined = recoveryPreflight.status === 'success'
+    && recoveryPreflight.preflight.status === 'assessed'
+    ? recoveryPreflight.preflight.proof
+    : undefined
   const activeRecovery = recoverySnapshot
     && identity
     && recoverySnapshot.request.checkoutId === identity.checkoutId
@@ -437,7 +454,41 @@ export function ReviewActions({
 
   const rollbackPreview = async (resumeRevision = false): Promise<void> => {
     if (!begin('rollback') || !adapter || !identity) return
-    const outcome = await adapter.rollbackPreview({ ...identity, resumeRevision })
+    let freshProof: WorktreePreviewRecoveryProof | undefined
+    if (target?.state === 'preview_detached') {
+      if (!recoveryIdentity) {
+        setError({ code: 'stale_target', message: 'Detached Preview 身份不完整，请刷新。' })
+        finish()
+        return
+      }
+      const inspected = await readPreviewRecoveryPreflight(adapter, recoveryIdentity, true)
+      if (!isActive()) {
+        finish()
+        return
+      }
+      if (inspected.status === 'error') {
+        finishError(inspected.error)
+        return
+      }
+      if (inspected.status !== 'success' || inspected.preflight.status !== 'assessed') {
+        setMessage(inspected.status === 'success' && inspected.preflight.status === 'blocked'
+          ? inspected.preflight.message
+          : 'Preview Recovery 预检未完成。')
+        finish()
+        return
+      }
+      if (inspected.preflight.proof.rollback.status !== 'safe') {
+        setMessage(inspected.preflight.proof.rollback.message)
+        finish()
+        return
+      }
+      freshProof = inspected.preflight.proof
+    }
+    const outcome = await adapter.rollbackPreview({
+      ...identity,
+      resumeRevision,
+      ...(freshProof ? { recoveryProof: freshProof } : {}),
+    })
     if (!isActive()) {
       finish()
       return
@@ -448,9 +499,7 @@ export function ReviewActions({
     }
     applyTarget(outcome.value.target)
     setMessage(outcome.value.target.state === 'preview_detached'
-      ? outcome.value.target.previewRecovery?.reason === 'stale_local'
-        ? 'Local branch/HEAD 已变化；同分支安全快进可重试撤回，其他历史变化不会被覆盖。'
-        : 'Preview 与 Local 存在冲突；恢复证据和 Worktree 已保留。'
+      ? '恢复条件在写入前发生变化；Preview 证据和 Worktree 已保留，请重新检查。'
       : resumeRevision ? '已撤回 Local Preview，可以继续修改 Worktree。' : '已撤回 Local Preview，验收卡仍可再次同步。')
     finish()
   }
@@ -477,8 +526,38 @@ export function ReviewActions({
         return
       }
     }
+    let previewProof: WorktreePreviewRecoveryProof | undefined
+    if (mode === 'finalize_preview' && target?.state === 'preview_detached') {
+      if (!recoveryIdentity) {
+        setError({ code: 'stale_target', message: 'Detached Preview 身份不完整，请刷新。' })
+        finish()
+        return
+      }
+      const inspected = await readPreviewRecoveryPreflight(adapter, recoveryIdentity, true)
+      if (!isActive()) {
+        finish()
+        return
+      }
+      if (inspected.status === 'error') {
+        finishError(inspected.error)
+        return
+      }
+      if (inspected.status !== 'success' || inspected.preflight.status !== 'assessed') {
+        setMessage(inspected.status === 'success' && inspected.preflight.status === 'blocked'
+          ? inspected.preflight.message
+          : 'Preview Recovery 预检未完成。')
+        finish()
+        return
+      }
+      if (inspected.preflight.proof.finalize.status !== 'safe') {
+        setMessage(inspected.preflight.proof.finalize.message)
+        finish()
+        return
+      }
+      previewProof = inspected.preflight.proof
+    }
     const outcome = mode === 'finalize_preview'
-      ? await adapter.finalizePreview(request)
+      ? await adapter.finalizePreview({ ...request, ...(previewProof ? { recoveryProof: previewProof } : {}) })
       : await adapter.finalize(request)
     if (!isActive()) {
       finish()
@@ -523,6 +602,140 @@ export function ReviewActions({
     finish()
   }
 
+  const freshRecoveryProof = async (): Promise<WorktreePreviewRecoveryProof | null> => {
+    if (!adapter || !recoveryIdentity) return null
+    const inspected = await readPreviewRecoveryPreflight(adapter, recoveryIdentity, true)
+    if (!isActive()) return null
+    if (inspected.status === 'error') {
+      finishError(inspected.error)
+      return null
+    }
+    if (inspected.status !== 'success' || inspected.preflight.status !== 'assessed') {
+      setMessage(inspected.status === 'success' && inspected.preflight.status === 'blocked'
+        ? inspected.preflight.message
+        : 'Preview Recovery 预检未完成。')
+      return null
+    }
+    return inspected.preflight.proof
+  }
+
+  const analyzeRecovery = async (): Promise<void> => {
+    if (!services || !begin('recovery_analysis') || !adapter || !identity || !recoveryIdentity) return
+    const proof = await freshRecoveryProof()
+    if (!proof) {
+      finish()
+      return
+    }
+    const prepared = await adapter.preparePreviewRecoveryAnalysis({ ...recoveryIdentity, recoveryProof: proof })
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (!prepared.ok) {
+      finishError(prepared.error)
+      return
+    }
+    const continuation = prepared.value.recoveryContinuation
+    if (
+      continuation?.kind !== 'worktree_preview_recovery_analysis'
+      || continuation.checkoutId !== identity.checkoutId
+      || continuation.reviewId !== identity.expectedReviewId
+      || continuation.previewId !== recoveryIdentity.expectedPreviewId
+      || continuation.revision !== identity.expectedRevision
+      || continuation.generation !== proof.generation
+    ) {
+      setError({ code: 'checkout_mismatch', message: 'Host 未返回精确的 detached Recovery 分析凭证。' })
+      finish()
+      return
+    }
+    try {
+      await openAuthorizedWorktreeTarget(adapter, services, identity.sessionId, {
+        checkoutId: identity.checkoutId,
+        ownerSessionId: identity.sessionId,
+      }, isActive)
+      const verified = await adapter.inspect({ sessionId: identity.sessionId, checkoutId: identity.checkoutId })
+      if (!verified.ok || verified.value.target.recoveryContinuation?.kind !== continuation.kind
+        || verified.value.target.recoveryContinuation.requestId !== continuation.requestId
+        || verified.value.target.recoveryContinuation.generation !== continuation.generation) {
+        throw new Error('二次 Host 检查未确认 detached Recovery 分析凭证。')
+      }
+      const binding = services.sessions.binding(identity.sessionId)
+      const prompt = binding?.session.prompt
+      if (!binding || !prompt) throw new Error('Owner Session 尚未提供 Harness prompt API。')
+      const result = await prompt.call(binding.session, [{ type: 'text', text: [
+        `请只读分析 detached Preview Recovery：checkout ${identity.checkoutId}，review ${identity.expectedReviewId}，preview ${recoveryIdentity.expectedPreviewId}，generation ${proof.generation}。`,
+        '禁止修改旧 managed Worktree、Local、Git refs、index、receipt 或 retained artifacts；不要运行 reset/rebase/force checkout/clean。',
+        '请解释 rollback/finalize blocker、仍缺失的任务增量与最安全的人工下一步。',
+      ].join('\n') }], 'queue')
+      if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`)
+      setMessage('已向精确 owner Session 发送只读 Recovery 分析请求。')
+    } catch (reason) {
+      setError({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) })
+    }
+    finish()
+  }
+
+  const handoffRecovery = async (): Promise<void> => {
+    if (!services || !begin('recovery_handoff') || !adapter || !identity || !recoveryIdentity) return
+    const proof = await freshRecoveryProof()
+    if (!proof) {
+      finish()
+      return
+    }
+    const created = await adapter.createPreviewRecoveryHandoff({ ...recoveryIdentity, recoveryProof: proof })
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (!created.ok) {
+      finishError(created.error)
+      return
+    }
+    const continuation = created.value.recoveryContinuation
+    if (
+      continuation.kind !== 'worktree_preview_recovery_handoff'
+      || continuation.sourceCheckoutId !== identity.checkoutId
+      || continuation.reviewId !== identity.expectedReviewId
+      || continuation.previewId !== recoveryIdentity.expectedPreviewId
+      || continuation.revision !== identity.expectedRevision
+      || continuation.generation !== proof.generation
+      || continuation.checkoutId !== created.value.target.checkoutId
+      || continuation.checkoutId === identity.checkoutId
+    ) {
+      setError({ code: 'checkout_mismatch', message: 'Host 返回的 Recovery handoff 身份不一致。' })
+      finish()
+      return
+    }
+    try {
+      await openIsolatedTarget(services, {
+        targetSessionId: created.value.targetSessionId,
+        managedRoot: created.value.managedRoot,
+      }, isActive)
+      const verified = await adapter.inspect({
+        sessionId: created.value.targetSessionId,
+        checkoutId: continuation.checkoutId,
+      })
+      if (!verified.ok || verified.value.target.managedRoot !== created.value.managedRoot
+        || verified.value.target.recoveryContinuation?.kind !== continuation.kind
+        || verified.value.target.recoveryContinuation.requestId !== continuation.requestId) {
+        throw new Error('新 Worktree 的二次 Host/cwd 检查未通过。')
+      }
+      const binding = services.sessions.binding(created.value.targetSessionId)
+      const prompt = binding?.session.prompt
+      if (!binding || !prompt) throw new Error('新 owner Session 尚未提供 Harness prompt API。')
+      const result = await prompt.call(binding.session, [{ type: 'text', text: [
+        `这是 detached Preview Recovery handoff。旧 checkout ${identity.checkoutId} / review ${identity.expectedReviewId} / preview ${recoveryIdentity.expectedPreviewId} / generation ${proof.generation} 只读。`,
+        '当前新 Worktree 基于最新 Local HEAD；只恢复仍缺失的任务增量。禁止修改 Local、旧 Worktree、旧 receipt/refs，禁止 reset/rebase/force checkout/clean。',
+        '完成后运行必要验证并生成新的 Ready for Review。',
+      ].join('\n') }], 'queue')
+      if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`)
+      setMessage('已创建并打开基于最新 Local HEAD 的 fresh Worktree，Recovery handoff 请求已发送。')
+    } catch (reason) {
+      setError({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) })
+    }
+    finish()
+  }
+
   const retryCleanup = async (): Promise<void> => {
     if (!begin('retry_cleanup') || !adapter || !identity) return
     const outcome = await adapter.retryCleanup({
@@ -548,7 +761,7 @@ export function ReviewActions({
       && preflightSnapshot.preflight.status === 'blocked'
       && preflightSnapshot.preflight.reason === 'project_acceptance_busy'
       ? preflightSnapshot.preflight.blocker ?? target?.reviewSlotHolder
-      : target?.reviewSlotHolder
+      : recoveryProof?.blocker ?? target?.reviewSlotHolder
     if (!holder || !adapter || !identity || !services || mutationLock.current) return
     mutationLock.current = true
     setSubmitting('open_holder')
@@ -568,8 +781,10 @@ export function ReviewActions({
   const previewActive = target?.state === 'preview_active'
   const previewRecovery = target?.state === 'preview_detached'
     || target?.state === 'recovery_required' && target.capabilities.rollbackPreview
-  const safeFastForwardRecovery = target?.state === 'preview_detached'
-    && target.previewRecovery?.reason === 'stale_local'
+  const rollbackRecoverySafe = target?.state === 'preview_detached'
+    && recoveryProof?.rollback.status === 'safe'
+  const finalizeRecoverySafe = target?.state === 'preview_detached'
+    && recoveryProof?.finalize.status === 'safe'
   const cleanupPending = target?.state === 'cleanup_pending'
   const terminal = target?.state === 'retained' || target?.state === 'delivered'
   const canDiscard = Boolean(target?.capabilities.discard)
@@ -590,9 +805,15 @@ export function ReviewActions({
       验收通过并提交
     </button>
   ) : previewRecovery ? (
-    <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview(true) }}>
-      {submitting === 'rollback' ? '处理中…' : safeFastForwardRecovery ? '安全重试撤回' : target?.state === 'preview_detached' ? '重新检查撤回' : '重新尝试撤回'}
-    </button>
+    rollbackRecoverySafe ? (
+      <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview(true) }}>
+        {submitting === 'rollback' ? '处理中…' : '安全撤回 Preview'}
+      </button>
+    ) : (
+      <button type="button" className="dsh-wt-button" disabled={allDisabled || target?.state !== 'preview_detached'} onClick={() => { void refreshRecoveryPreflight() }}>
+        {recoveryPreflight.status === 'loading' ? '检查中…' : '重新检查'}
+      </button>
+    )
   ) : cleanupPending ? (
     <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.retryCleanup} onClick={() => { void retryCleanup() }}>
       {submitting === 'retry_cleanup' ? '清理中…' : '重试清理环境'}
@@ -632,11 +853,17 @@ export function ReviewActions({
                   }}>跳过验收，直接提交</button>
                 </>
               ) : null}
-              {previewActive || previewRecovery ? (
+              {previewActive || rollbackRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={(event) => {
                   void rollbackPreview(true)
                   event.currentTarget.closest('details')?.removeAttribute('open')
-                }}>撤回本次预览</button>
+                }}>{previewActive ? '撤回本次预览' : '安全撤回 Preview'}</button>
+              ) : null}
+              {finalizeRecoverySafe ? (
+                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={(event) => {
+                  setCommitMode('finalize_preview')
+                  event.currentTarget.closest('details')?.removeAttribute('open')
+                }}>直接提交当前任务</button>
               ) : null}
               {canDiscard ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item dsh-wt-danger-text" disabled={allDisabled} onClick={(event) => {
@@ -716,6 +943,50 @@ export function ReviewActions({
           onOpenHolder={() => { void openHolder() }}
           busy={submitting !== null || activeRecovery?.status === 'queued' || activeRecovery?.status === 'sending' || activeRecovery?.status === 'sent'}
         />
+      ) : null}
+      {target?.state === 'preview_detached' ? (
+        <div className="dsh-wt-preflight" data-status={recoveryPreflight.status}>
+          <div className="dsh-wt-preflight-head">
+            <strong>Detached Preview Recovery</strong>
+            <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || recoveryPreflight.status === 'loading'} onClick={() => { void refreshRecoveryPreflight() }}>
+              重新检查
+            </button>
+          </div>
+          <p>Detached 是交付恢复状态，不是 Git detached HEAD。检查严格只读，写操作会在 Host 锁内再次验证。</p>
+          {recoveryPreflight.status === 'loading' ? <p>正在检查 Local HEAD、index、working tree、retained artifacts 与验收槽位…</p> : null}
+          {recoveryPreflight.status === 'error' ? <p className="dsh-wt-error">{recoveryPreflight.error.message}</p> : null}
+          {recoveryPreflight.status === 'success' && recoveryPreflight.preflight.status === 'blocked' ? (
+            <p className="dsh-wt-error">{recoveryPreflight.preflight.message}</p>
+          ) : null}
+          {recoveryProof ? (
+            <>
+              <p className="dsh-wt-code">generation {recoveryProof.generation.slice(0, 12)} · HEAD {recoveryProof.localHeadOid.slice(0, 12)} · {recoveryProof.localHeadRef ?? 'detached HEAD'}</p>
+              <ul className="dsh-wt-test-list" aria-label="Preview Recovery 结论">
+                <li>撤回：{recoveryProof.rollback.status === 'safe' ? '可证明安全' : recoveryProof.rollback.message}</li>
+                <li>提交：{recoveryProof.finalize.status === 'safe' ? '可证明安全' : recoveryProof.finalize.message}</li>
+              </ul>
+              {recoveryProof.rollback.status === 'blocked' && recoveryProof.rollback.conflictingFiles?.length ? (
+                <p>撤回冲突：{recoveryProof.rollback.conflictingFiles.join('、')}</p>
+              ) : null}
+              {recoveryProof.finalize.status === 'blocked' && recoveryProof.finalize.conflictingFiles?.length ? (
+                <p>提交冲突：{recoveryProof.finalize.conflictingFiles.join('、')}</p>
+              ) : null}
+              {recoveryProof.blocker ? (
+                <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void openHolder() }}>
+                  打开占用 Local 验收槽位的 Worktree
+                </button>
+              ) : null}
+              <div className="dsh-wt-recovery-actions">
+                <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void analyzeRecovery() }}>
+                  让 Agent 只读分析
+                </button>
+                <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void handoffRecovery() }}>
+                  交接到新 Worktree
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
       ) : null}
       {runtimeConflict ? (
         <div className="dsh-wt-recovery-actions">

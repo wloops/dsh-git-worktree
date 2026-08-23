@@ -55,6 +55,8 @@ export interface SessionCheckoutGitPort {
   retainApplyBase(localRoot: string, checkoutId: string, oid: string): Promise<void>
   releaseApplyBase(localRoot: string, checkoutId: string): Promise<void>
   retainInternalArtifact(localRoot: string, checkoutId: string, artifactName: string, oid: string): Promise<void>
+  /** Read one retained internal ref without modifying refs or object storage. */
+  readInternalArtifact(localRoot: string, checkoutId: string, artifactName: string): Promise<string | null>
   releaseInternalArtifacts(localRoot: string, checkoutId: string, artifactPrefix?: string): Promise<void>
   /** Read-only ancestry proof; only accepts host-verified checkout roots and OIDs. */
   isAncestor(root: string, ancestorOid: string, descendantOid: string): Promise<boolean>
@@ -118,6 +120,7 @@ export interface ManagedCheckoutMutationJournal extends ManagedCheckoutJournalBa
   isolatedHeadOid?: string
   commitOid?: string
   retention?: WorktreeRetentionMode
+  recoveryGeneration?: string
   /** rollback_preview crash recovery must preserve whether the review returns to working or ready_for_review. */
   resumeRevision?: boolean
   changedFiles?: string[]
@@ -190,9 +193,30 @@ export interface ManagedReviewRegenerationContinuation {
   revision: number
 }
 
+export interface ManagedPreviewRecoveryAnalysisContinuation {
+  kind: 'worktree_preview_recovery_analysis'
+  requestId: string
+  reviewId: string
+  previewId: string
+  revision: number
+  generation: string
+}
+
+export interface ManagedPreviewRecoveryHandoffContinuation {
+  kind: 'worktree_preview_recovery_handoff'
+  requestId: string
+  sourceCheckoutId: string
+  reviewId: string
+  previewId: string
+  sourceRevision: number
+  generation: string
+}
+
 export type ManagedRecoveryContinuation =
   | ManagedApplyConflictRecoveryContinuation
   | ManagedReviewRegenerationContinuation
+  | ManagedPreviewRecoveryAnalysisContinuation
+  | ManagedPreviewRecoveryHandoffContinuation
 
 export type ManagedCheckoutDelivery =
   | { state: 'working'; iteration: number }

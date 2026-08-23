@@ -180,6 +180,7 @@ function isJournal(value: unknown): boolean {
     && (value.isolatedHeadOid === undefined || typeof value.isolatedHeadOid === 'string')
     && (value.commitOid === undefined || typeof value.commitOid === 'string')
     && (value.retention === undefined || value.retention === 'cleanup' || value.retention === 'retain_24h' || value.retention === 'retain_3d' || value.retention === 'retain_manual')
+    && (value.recoveryGeneration === undefined || (typeof value.recoveryGeneration === 'string' && /^[0-9a-f]{64}$/u.test(value.recoveryGeneration)))
     && (value.resumeRevision === undefined || typeof value.resumeRevision === 'boolean')
     && (value.changedFiles === undefined || isStringArray(value.changedFiles))
 }
@@ -201,6 +202,19 @@ function safeConflictFile(value: unknown): value is string {
 function isRecoveryContinuation(value: unknown): boolean {
   if (!isRecord(value) || !safeRecoveryString(value.requestId, 500) || !safeRecoveryString(value.reviewId, 200)) return false
   if (value.kind === 'worktree_review_regeneration') return safeRecoveryRevision(value.revision)
+  if (value.kind === 'worktree_preview_recovery_analysis') {
+    return safeRecoveryRevision(value.revision)
+      && safeRecoveryString(value.previewId, 200)
+      && typeof value.generation === 'string'
+      && /^[0-9a-f]{64}$/u.test(value.generation)
+  }
+  if (value.kind === 'worktree_preview_recovery_handoff') {
+    return safeRecoveryRevision(value.sourceRevision)
+      && safeRecoveryString(value.sourceCheckoutId, 200)
+      && safeRecoveryString(value.previewId, 200)
+      && typeof value.generation === 'string'
+      && /^[0-9a-f]{64}$/u.test(value.generation)
+  }
   return value.kind === 'worktree_apply_conflict'
     && safeRecoveryRevision(value.readyRevision)
     && safeRecoveryRevision(value.workingRevision)

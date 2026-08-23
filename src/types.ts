@@ -130,6 +130,7 @@ export interface WorktreeApplyPreflightFacts {
 export interface WorktreeAcceptanceBlockerView {
   checkoutId: string
   ownerSessionId: string
+  revision: number
   state: 'preview_active' | 'preview_detached' | 'finalized' | 'retained' | 'working' | 'ready_for_review' | 'delivered'
 }
 
@@ -213,16 +214,83 @@ export interface SessionCheckoutPreviewOperation extends SessionCheckoutOperatio
   action: 'preview'
 }
 
+export type WorktreePreviewRecoveryActionBlockReason =
+  | 'stale_local'
+  | 'preview_modified'
+  | 'commit_isolation_conflict'
+  | 'operation_not_allowed'
+  | 'project_acceptance_busy'
+
+export type WorktreePreviewRecoveryRollbackAction =
+  | { status: 'safe'; targetTreeOid: string }
+  | { status: 'blocked'; code: WorktreePreviewRecoveryActionBlockReason; message: string; conflictingFiles?: string[] }
+
+export type WorktreePreviewRecoveryFinalizeAction =
+  | {
+      status: 'safe'
+      taskTreeOid: string
+      finalIndexTreeOid: string
+      expectedWorkingTreeOid: string
+      commitRequired: boolean
+    }
+  | { status: 'blocked'; code: WorktreePreviewRecoveryActionBlockReason; message: string; conflictingFiles?: string[] }
+
+/** Host-issued read-only recovery context. Mutation always recomputes and compares it under the Host lock. */
+export interface WorktreePreviewRecoveryProof {
+  sessionId: string
+  checkoutId: string
+  reviewId: string
+  previewId: string
+  revision: number
+  generation: string
+  /** SHA-256 over the complete durable receipt; binds proof to retained recovery evidence. */
+  receiptFingerprint: string
+  localFingerprint: string
+  localHeadOid: string
+  localHeadRef: string | null
+  localHeadTreeOid: string
+  localIndexTreeOid: string
+  localWorkingTreeOid: string
+  rollback: WorktreePreviewRecoveryRollbackAction
+  finalize: WorktreePreviewRecoveryFinalizeAction
+  blocker?: WorktreeAcceptanceBlockerView
+}
+
+export type WorktreePreviewRecoveryPreflightBlockedReason =
+  | 'not_owner'
+  | 'not_preview_detached'
+  | 'stale_target'
+  | 'artifacts_missing'
+  | 'checkout_unavailable'
+  | 'git_error'
+
+export type WorktreePreviewRecoveryPreflightView =
+  | { status: 'assessed'; localModified: false; proof: WorktreePreviewRecoveryProof }
+  | {
+      status: 'blocked'
+      localModified: false
+      checkoutId: string
+      reviewId: string | null
+      previewId: string | null
+      revision: number
+      reason: WorktreePreviewRecoveryPreflightBlockedReason
+      message: string
+    }
+
 export interface SessionCheckoutRollbackPreviewOperation extends SessionCheckoutOperationBase {
   action: 'rollback_preview'
   /** Structured withdraw-and-continue flow returns to working instead of preserving the review. */
   resumeRevision?: boolean
+  /** Required only for preview_detached; it is context to re-verify, never bearer permission. */
+  recoveryProof?: WorktreePreviewRecoveryProof
 }
 
 export interface SessionCheckoutFinalizePreviewOperation extends SessionCheckoutOperationBase {
   action: 'finalize_preview'
   commitMessage: string
   retention?: WorktreeRetentionMode
+  /** Required only for preview_detached; it is context to re-verify, never bearer permission. */
+  recoveryProof?: WorktreePreviewRecoveryProof
 }
 
 export interface SessionCheckoutRetryCleanupOperation extends SessionCheckoutOperationBase {

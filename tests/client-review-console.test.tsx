@@ -349,6 +349,44 @@ describe('Domi-style Worktree Review', () => {
     await waitFor(() => expect(fixture.adapter.rollbackPreview).toHaveBeenCalledWith({ ...identity(8), resumeRevision: true }))
   })
 
+  test('Detached Preview 只按 Host proof 显示安全操作，并在点击撤回前强制重检', async () => {
+    const { fixture, target: active } = previewTarget()
+    const recoverySpy = vi.spyOn(fixture.adapter, 'previewRecoveryPreflight')
+    const rollbackSpy = vi.spyOn(fixture.adapter, 'rollbackPreview')
+    const target = {
+      ...active,
+      state: 'preview_detached' as const,
+      previewRecovery: {
+        previewId: 'preview-1', detachedAt: 123,
+        reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const,
+      },
+    }
+    render(<WorktreeReviewPanel
+      review={review({ revision: 8 })}
+      identity={identity(8)}
+      adapter={fixture.adapter}
+      services={clientServices()}
+      target={target}
+      onStale={() => undefined}
+      onTargetChange={() => undefined}
+    />)
+
+    expect(screen.queryByRole('button', { name: '安全撤回 Preview' })).toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: '安全撤回 Preview' })).toBeTruthy())
+    expect(screen.getByText(/generation 111111111111/)).toBeTruthy()
+    expect(screen.getByText(/撤回：可证明安全/)).toBeTruthy()
+    expect(screen.getByText(/提交：可证明安全/)).toBeTruthy()
+    expect(recoverySpy).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '安全撤回 Preview' }))
+    await waitFor(() => expect(rollbackSpy).toHaveBeenCalledTimes(1))
+    expect(recoverySpy).toHaveBeenCalledTimes(2)
+    expect(rollbackSpy.mock.calls[0]?.[0]).toMatchObject({
+      expectedRevision: 8,
+      recoveryProof: { generation: '1'.repeat(64), previewId: 'preview-1' },
+    })
+  })
+
   test('Preview active 放弃任务会显式要求先 rollback Preview', async () => {
     const { fixture, target } = previewTarget()
     fixture.adapter.discard = vi.fn(fixture.adapter.discard)
@@ -422,7 +460,7 @@ describe('Domi-style Worktree Review', () => {
     const waiting = {
       ...fixture.target,
       reviewSlot: 'waiting' as const,
-      reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' as const },
+      reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', revision: 4, state: 'preview_active' as const },
       capabilities: { ...fixture.target.capabilities, preview: false, finalize: false },
     }
     const available = {
@@ -451,7 +489,7 @@ describe('Domi-style Worktree Review', () => {
     const waiting = {
       ...fixture.target,
       reviewSlot: 'waiting' as const,
-      reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' as const },
+      reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', revision: 4, state: 'preview_active' as const },
       capabilities: { ...fixture.target.capabilities, preview: false, finalize: false },
     }
     fixture.adapter.preflight = vi.fn(async () => ({ ok: true as const, value: { preflight: {

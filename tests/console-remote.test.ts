@@ -40,6 +40,9 @@ const METHODS = [
   'inspect',
   'reviewDiff',
   'preflight',
+  'previewRecoveryPreflight',
+  'preparePreviewRecoveryAnalysis',
+  'createPreviewRecoveryHandoff',
   'preview',
   'resumeRevision',
   'prepareReviewRegeneration',
@@ -96,7 +99,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
           ...fixture.target,
           reviewSlot: 'waiting' as const,
           reviewSlotOwnerSessionId: 'holder-session',
-          reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', state: 'preview_active' as const },
+          reviewSlotHolder: { checkoutId: 'checkout-holder', ownerSessionId: 'holder-session', revision: 11, state: 'preview_active' as const },
           deliveryProof: {
             localBranch: 'main', localHeadBefore: 'a'.repeat(40), localHeadAfter: 'b'.repeat(40),
             changedFiles: ['src/index.ts'], validationStatus: 'passed' as const,
@@ -140,6 +143,40 @@ describe('manual strict Worktree Console Remote contribution', () => {
     })).toThrow()
   })
 
+  it('roundtrips detached recovery proof and rejects unsafe paths, unknown fields, and malformed generation', () => {
+    const descriptor = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'previewRecoveryPreflight')!
+    const proof = {
+      sessionId: 'target-session', checkoutId: 'checkout-1', reviewId: 'review-1', previewId: 'preview-1', revision: 8,
+      generation: '1'.repeat(64), receiptFingerprint: '2'.repeat(64), localFingerprint: '3'.repeat(64),
+      localHeadOid: 'a'.repeat(40), localHeadRef: 'refs/heads/main', localHeadTreeOid: 'b'.repeat(40),
+      localIndexTreeOid: 'c'.repeat(40), localWorkingTreeOid: 'd'.repeat(40),
+      rollback: { status: 'safe' as const, targetTreeOid: 'e'.repeat(40) },
+      finalize: {
+        status: 'blocked' as const, code: 'commit_isolation_conflict' as const,
+        message: 'conflict', conflictingFiles: ['src/index.ts'],
+      },
+    }
+    const response = { ok: true as const, value: { preflight: { status: 'assessed' as const, localModified: false as const, proof } } }
+    expect(descriptor.result.mode).toBe('strict')
+    if (descriptor.result.mode !== 'strict') throw new Error('expected strict result')
+    expect(descriptor.result.schema.parse(response)).toEqual(response)
+    expect(() => descriptor.result.schema.parse({
+      ...response,
+      value: { preflight: { ...response.value.preflight, proof: { ...proof, generation: 'bad' } } },
+    })).toThrow()
+    expect(() => descriptor.result.schema.parse({
+      ...response,
+      value: { preflight: { ...response.value.preflight, proof: {
+        ...proof,
+        finalize: { ...proof.finalize, conflictingFiles: ['../secret'] },
+      } } },
+    })).toThrow()
+    expect(() => descriptor.result.schema.parse({
+      ...response,
+      value: { preflight: { ...response.value.preflight, proof: { ...proof, managedRoot: '/secret' } } },
+    })).toThrow()
+  })
+
   it('roundtrips detached recovery reason through the strict target response schema', () => {
     const current = WORKTREE_CONSOLE_DESCRIPTORS.find((descriptor) => descriptor.method === 'current')!
     const fixture = createWorktreeConsoleAdapterFixture()
@@ -149,7 +186,10 @@ describe('manual strict Worktree Console Remote contribution', () => {
         target: {
           ...fixture.target,
           state: 'preview_detached' as const,
-          previewRecovery: { reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
+          previewRecovery: {
+            previewId: 'preview-1', detachedAt: 123,
+            reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const,
+          },
         },
       },
     }

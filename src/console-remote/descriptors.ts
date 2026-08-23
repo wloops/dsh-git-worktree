@@ -11,6 +11,10 @@ import {
   optionalBooleanSchema,
   outcomeSchema,
   preflightResponseSchema,
+  previewRecoveryHandoffResponseSchema,
+  previewRecoveryPreflightResponseSchema,
+  previewRecoveryProofSchema,
+  previewIdSchema,
   retainedModeSchema,
   recoveryContinuationSchema,
   retentionSchema,
@@ -79,6 +83,26 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreflightRequest.expectedRevision`),
     json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreflightRequest.expectedReviewId`),
   ], outcomeSchema(preflightResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>'),
+  descriptor('previewRecoveryPreflight', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRecoveryPreflightRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRecoveryPreflightRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRecoveryPreflightRequest.expectedReviewId`),
+    json('expectedPreviewId', previewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRecoveryPreflightRequest.expectedPreviewId`),
+  ], outcomeSchema(previewRecoveryPreflightResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsolePreviewRecoveryPreflightResponse>'),
+  descriptor('preparePreviewRecoveryAnalysis', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreparePreviewRecoveryAnalysisRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreparePreviewRecoveryAnalysisRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreparePreviewRecoveryAnalysisRequest.expectedReviewId`),
+    json('expectedPreviewId', previewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreparePreviewRecoveryAnalysisRequest.expectedPreviewId`),
+    json('recoveryProof', previewRecoveryProofSchema, `${PACKAGE}/console-contract#WorktreeConsolePreparePreviewRecoveryAnalysisRequest.recoveryProof`),
+  ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
+  descriptor('createPreviewRecoveryHandoff', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleCreatePreviewRecoveryHandoffRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleCreatePreviewRecoveryHandoffRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleCreatePreviewRecoveryHandoffRequest.expectedReviewId`),
+    json('expectedPreviewId', previewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleCreatePreviewRecoveryHandoffRequest.expectedPreviewId`),
+    json('recoveryProof', previewRecoveryProofSchema, `${PACKAGE}/console-contract#WorktreeConsoleCreatePreviewRecoveryHandoffRequest.recoveryProof`),
+  ], outcomeSchema(previewRecoveryHandoffResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>'),
   descriptor('preview', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.checkoutId`),
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.expectedRevision`),
@@ -99,6 +123,7 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.checkoutId`),
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.expectedRevision`),
     json('resumeRevision', optionalBooleanSchema, `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.resumeRevision`, true),
+    json('recoveryProof', previewRecoveryProofSchema.optional(), `${PACKAGE}/console-contract#WorktreeConsoleRollbackPreviewRequest.recoveryProof`, true),
   ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('discard', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleDiscardRequest.checkoutId`),
@@ -119,6 +144,7 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizePreviewRequest.expectedReviewId`),
     json('commitMessage', commitMessageSchema, `${PACKAGE}/console-contract#WorktreeConsoleFinalizePreviewRequest.commitMessage`),
     json('retention', retentionSchema, `${PACKAGE}/types#WorktreeRetentionMode`),
+    json('recoveryProof', previewRecoveryProofSchema.optional(), `${PACKAGE}/console-contract#WorktreeConsoleFinalizePreviewRequest.recoveryProof`, true),
   ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('setRetention', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleSetRetentionRequest.checkoutId`),

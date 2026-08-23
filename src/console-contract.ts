@@ -14,6 +14,8 @@ import {
   type SessionCheckoutPhase,
   type WorktreeRetentionMode,
   type WorktreeApplyPreflightView,
+  type WorktreePreviewRecoveryPreflightView,
+  type WorktreePreviewRecoveryProof,
   type WorktreeAcceptanceBlockerView,
   type WorktreeDeliveryProofView,
   type WorktreeValidationItem,
@@ -90,6 +92,8 @@ export interface WorktreeConsoleCapabilities {
 }
 
 export interface WorktreeConsolePreviewRecovery {
+  previewId: string
+  detachedAt: number
   reason: 'stale_local' | 'preview_modified'
   attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard'
 }
@@ -221,11 +225,36 @@ export interface WorktreeConsoleResumeRevisionRequest {
   conflictContinuation?: WorktreeApplyConflictContinuation
 }
 
+export interface WorktreeConsolePreviewRecoveryPreflightRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  expectedReviewId: string
+  expectedPreviewId: string
+}
+
+export interface WorktreeConsolePreviewRecoveryPreflightResponse {
+  preflight: WorktreePreviewRecoveryPreflightView
+}
+
+export interface WorktreeConsolePreparePreviewRecoveryAnalysisRequest extends WorktreeConsolePreviewRecoveryPreflightRequest {
+  recoveryProof: WorktreePreviewRecoveryProof
+}
+
+export interface WorktreeConsoleCreatePreviewRecoveryHandoffRequest extends WorktreeConsolePreviewRecoveryPreflightRequest {
+  recoveryProof: WorktreePreviewRecoveryProof
+}
+
+export interface WorktreeConsoleCreatePreviewRecoveryHandoffResponse extends WorktreeConsoleCreateResponse {
+  recoveryContinuation: WorktreePreviewRecoveryHandoffProof
+}
+
 export interface WorktreeConsoleRollbackPreviewRequest {
   sessionId: string
   checkoutId: string
   expectedRevision: number
   resumeRevision?: boolean
+  recoveryProof?: WorktreePreviewRecoveryProof
 }
 
 export interface WorktreeConsoleFinalizeRequest {
@@ -245,6 +274,7 @@ export interface WorktreeConsoleFinalizePreviewRequest {
   expectedReviewId: string
   commitMessage: string
   retention: WorktreeRetentionMode
+  recoveryProof?: WorktreePreviewRecoveryProof
 }
 
 export interface WorktreeConsoleSetRetentionRequest {
@@ -355,7 +385,32 @@ export interface WorktreeReviewRegenerationProof {
   revision: number
 }
 
-export type WorktreeRecoveryProof = WorktreeApplyConflictRecoveryProof | WorktreeReviewRegenerationProof
+export interface WorktreePreviewRecoveryAnalysisProof {
+  kind: 'worktree_preview_recovery_analysis'
+  requestId: string
+  checkoutId: string
+  reviewId: string
+  previewId: string
+  revision: number
+  generation: string
+}
+
+export interface WorktreePreviewRecoveryHandoffProof {
+  kind: 'worktree_preview_recovery_handoff'
+  requestId: string
+  checkoutId: string
+  sourceCheckoutId: string
+  reviewId: string
+  previewId: string
+  revision: number
+  generation: string
+}
+
+export type WorktreeRecoveryProof =
+  | WorktreeApplyConflictRecoveryProof
+  | WorktreeReviewRegenerationProof
+  | WorktreePreviewRecoveryAnalysisProof
+  | WorktreePreviewRecoveryHandoffProof
 export type WorktreeConsoleContinuation = WorktreeApplyConflictContinuation
 
 export interface WorktreeConsoleError {
@@ -421,6 +476,9 @@ export interface WorktreeConsoleAdapter {
   inspect(request: WorktreeConsoleInspectRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>>
   reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
   preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
+  previewRecoveryPreflight(request: WorktreeConsolePreviewRecoveryPreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreviewRecoveryPreflightResponse>>
+  preparePreviewRecoveryAnalysis(request: WorktreeConsolePreparePreviewRecoveryAnalysisRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  createPreviewRecoveryHandoff(request: WorktreeConsoleCreatePreviewRecoveryHandoffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   prepareReviewRegeneration(request: WorktreeConsolePrepareRegenerationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>

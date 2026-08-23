@@ -379,7 +379,7 @@ describe('Harness-native Session Target slots', () => {
       state: 'preview_detached' as const,
       phase: 'ready' as const,
       revision: 9,
-      previewRecovery: { reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
+      previewRecovery: { previewId: 'preview-1', detachedAt: Date.UTC(2026, 7, 20), reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
       capabilities: { ...fixture.target.capabilities, discard: false, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: false },
     }
     fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: detached } }))
@@ -391,14 +391,14 @@ describe('Harness-native Session Target slots', () => {
     expect(screen.queryByText('同步预检通过，正在创建可撤回的 Local Preview。')).toBeNull()
   })
 
-  test('Preview 因 Local HEAD 变化 detached 后 dock 解释同分支快进恢复并提供安全重试', async () => {
+  test('Preview 因 Local HEAD 变化 detached 后 dock 解释同分支快进恢复并只展示 Host proof 证明安全的操作', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const detached = {
       ...fixture.target,
       state: 'preview_detached' as const,
       phase: 'ready' as const,
       revision: 9,
-      previewRecovery: { reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
+      previewRecovery: { previewId: 'preview-1', detachedAt: Date.UTC(2026, 7, 20), reason: 'stale_local' as const, attemptedAction: 'rollback_preview' as const },
       capabilities: { ...fixture.target.capabilities, discard: false, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: false },
     }
     fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: detached } }))
@@ -410,17 +410,21 @@ describe('Harness-native Session Target slots', () => {
 
     await waitFor(() => expect(screen.getByText('Local branch/HEAD 已变化，Preview 等待安全撤回')).toBeTruthy())
     expect(screen.getByText('同分支快进可安全重试；切分支或改写历史时不会写入。')).toBeTruthy()
-    expect((screen.getByRole('button', { name: '安全重试撤回' }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole('button', { name: '安全撤回 Preview' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(fixture.calls).toContainEqual({ method: 'previewRecoveryPreflight', request: {
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 9,
+      expectedReviewId: 'review-1', expectedPreviewId: 'preview-1',
+    } })
   })
 
-  test('Preview 内容冲突 detached 后 dock 明确保留现场并只提供重新检查撤回', async () => {
+  test('Preview 内容冲突 detached 后 dock 明确保留现场且不按旧 reason 否定新的 Host proof', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const detached = {
       ...fixture.target,
       state: 'preview_detached' as const,
       phase: 'ready' as const,
       revision: 10,
-      previewRecovery: { reason: 'preview_modified' as const, attemptedAction: 'rollback_preview' as const },
+      previewRecovery: { previewId: 'preview-1', detachedAt: Date.UTC(2026, 7, 20), reason: 'preview_modified' as const, attemptedAction: 'rollback_preview' as const },
       capabilities: { ...fixture.target.capabilities, discard: false, preflight: false, preview: false, rollbackPreview: true, finalize: false, finalizePreview: false },
     }
     fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: detached } }))
@@ -432,7 +436,10 @@ describe('Harness-native Session Target slots', () => {
 
     await waitFor(() => expect(screen.getByText('Preview 与 Local 发生冲突，已保留恢复现场')).toBeTruthy())
     expect(screen.getByText('自动撤回会重新检查冲突；无法证明安全时不会写入。')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '重新检查撤回' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '安全撤回 Preview' })).toBeTruthy()
+    const conclusions = screen.getByRole('list', { name: 'Preview Recovery 结论' })
+    expect(conclusions.textContent).toContain('撤回：可证明安全')
+    expect(conclusions.textContent).toContain('提交：可证明安全')
   })
 
   test('已清理 delivered Session 在原 composer dock 开始下一轮并保持同一 Session', async () => {
@@ -478,7 +485,7 @@ describe('Harness-native Session Target slots', () => {
     await waitFor(() => expect(screen.queryByText('本轮已交付，可在原会话继续下一轮修改')).toBeNull())
   })
 
-  test('Preview rollback 中断后 dock 保持可见并提供恢复入口', async () => {
+  test('Preview rollback 写入结果不确定后 dock 保持可见但不提供自动重试', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const recovery = {
       ...fixture.target,
@@ -495,7 +502,8 @@ describe('Harness-native Session Target slots', () => {
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
     await waitFor(() => expect(screen.getByText('验收操作中断，需要恢复 Preview')).toBeTruthy())
-    expect((screen.getByRole('button', { name: '重新尝试撤回' }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole('button', { name: '重新检查' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(fixture.calls.some(call => call.method === 'previewRecoveryPreflight')).toBe(false)
   })
 
   test('暂不注册 conversation.view，同时保留 Header 状态胶囊和验收 dock', () => {

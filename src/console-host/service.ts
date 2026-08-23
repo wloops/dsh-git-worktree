@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
+  WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateResponse,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleInspectResponse,
@@ -9,10 +10,11 @@ import type {
   WorktreeConsoleMutationResponse,
   WorktreeConsoleOutcome,
   WorktreeConsolePreflightResponse,
+  WorktreeConsolePreviewRecoveryPreflightResponse,
   WorktreeConsoleReviewDiffResponse,
   WorktreeApplyConflictContinuation,
 } from '../console-contract.js'
-import type { WorktreeRetentionMode } from '../types.js'
+import type { WorktreePreviewRecoveryProof, WorktreeRetentionMode } from '../types.js'
 import type { WorktreeConsoleControlPlane } from './control-plane.js'
 
 /** Official Typert Remote service; the Gateway resolves `agentId` before business code runs. */
@@ -52,6 +54,47 @@ export class WorktreeConsoleService extends TypertRemoteService {
   }
 
   @Remote
+  previewRecoveryPreflight(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    expectedPreviewId: string,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsolePreviewRecoveryPreflightResponse>> {
+    return this.controlPlane.previewRecoveryPreflight({
+      sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedPreviewId,
+    })
+  }
+
+  @Remote
+  preparePreviewRecoveryAnalysis(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    expectedPreviewId: string,
+    recoveryProof: WorktreePreviewRecoveryProof,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.preparePreviewRecoveryAnalysis({
+      sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedPreviewId, recoveryProof,
+    })
+  }
+
+  @Remote
+  createPreviewRecoveryHandoff(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    expectedPreviewId: string,
+    recoveryProof: WorktreePreviewRecoveryProof,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>> {
+    return this.controlPlane.createPreviewRecoveryHandoff({
+      sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedPreviewId, recoveryProof,
+    })
+  }
+
+  @Remote
   preview(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
     return this.controlPlane.preview({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
   }
@@ -80,8 +123,14 @@ export class WorktreeConsoleService extends TypertRemoteService {
   }
 
   @Remote
-  rollbackPreview(agent: Agent, checkoutId: string, expectedRevision: number, resumeRevision?: boolean): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.rollbackPreview({ sessionId: agent.id, checkoutId, expectedRevision, resumeRevision })
+  rollbackPreview(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    resumeRevision?: boolean,
+    recoveryProof?: WorktreePreviewRecoveryProof,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.rollbackPreview({ sessionId: agent.id, checkoutId, expectedRevision, resumeRevision, recoveryProof })
   }
 
   @Remote
@@ -109,8 +158,11 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedReviewId: string,
     commitMessage: string,
     retention: WorktreeRetentionMode,
+    recoveryProof?: WorktreePreviewRecoveryProof,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.finalizePreview({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, commitMessage, retention })
+    return this.controlPlane.finalizePreview({
+      sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, commitMessage, retention, recoveryProof,
+    })
   }
 
   @Remote

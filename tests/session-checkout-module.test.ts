@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, test } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { SessionCheckoutModule } from '../src/index.js'
-import type { SessionCheckoutApplyEngine } from '../src/session-checkout-apply.ts'
+import { createSessionCheckoutApplyEngine, type SessionCheckoutApplyEngine } from '../src/session-checkout-apply.ts'
 
 import { createSessionCheckoutModule } from '../src/session-checkout-module.ts'
 import { createNodeSessionCheckoutDependencies } from './support/production-adapters.ts'
@@ -950,8 +951,26 @@ describe('SessionCheckoutModule', () => {
     const restarted = context.restart()
     const detached = await restarted.inspect('session-1')
     expect(detached.delivery).toMatchObject({ state: 'preview_detached', reason: 'stale_local' })
+    const registryBefore = readFileSync(registryPath, 'utf8')
+    const refsBefore = git(context.projectRoot, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/dsh-worktree/session-checkouts')
+    const recovery = await restarted.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery?.state === 'ready_for_review' ? ready.delivery.review.reviewId : '', previewId,
+    )
+    expect(recovery).toMatchObject({
+      status: 'assessed',
+      localModified: false,
+      proof: { rollback: { status: 'safe' }, finalize: { status: 'safe' } },
+    })
+    expect(readFileSync(registryPath, 'utf8')).toBe(registryBefore)
+    expect(git(context.projectRoot, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/dsh-worktree/session-checkouts')).toBe(refsBefore)
+    if (!recovery || recovery.status !== 'assessed') throw new Error('expected assessed recovery')
+    const withoutProof = await restarted.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision, resumeRevision: true,
+    })
+    expect(withoutProof).toMatchObject({ status: 'error', code: 'stale_target' })
     const rolledBack = await restarted.operate({
       action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision, resumeRevision: true,
+      recoveryProof: recovery.proof,
     })
 
     expect(rolledBack).toMatchObject({ status: 'preview_rolled_back', target: { delivery: { state: 'working' } } })
@@ -960,6 +979,405 @@ describe('SessionCheckoutModule', () => {
     expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
     expect(git(context.projectRoot, 'for-each-ref', '--format=%(refname)', 'refs/dsh-worktree/session-checkouts')).not.toContain(previewId)
     expect(existsSync(managedRoot)).toBe(true)
+  })
+
+  test('Given a detached Preview and a fresh Host proof When finalize is requested Then it commits onto the latest Local HEAD', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'finalize after fast-forward\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'finalize recovery', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: finalize recovery',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error(`expected previewed, got ${preview.status}`)
+    writeFileSync(join(context.projectRoot, 'external-commit.txt'), 'new Local commit\n')
+    git(context.projectRoot, 'add', 'external-commit.txt')
+    git(context.projectRoot, 'commit', '--only', 'external-commit.txt', '-m', 'external fast-forward')
+    const advancedHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[target.checkout.id]
+    const previewId = record.delivery.preview.previewId as string
+    record.delivery = {
+      ...record.delivery,
+      state: 'preview_detached',
+      detachedAt: Date.now(),
+      reason: 'stale_local',
+      attemptedAction: 'finalize_preview',
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const restarted = context.restart()
+    const detached = await restarted.inspect('session-1')
+    const recovery = await restarted.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery.review.reviewId, previewId,
+    )
+    expect(recovery).toMatchObject({ status: 'assessed', proof: { finalize: { status: 'safe', commitRequired: true } } })
+    if (!recovery || recovery.status !== 'assessed') throw new Error('expected assessed recovery')
+
+    const finalized = await restarted.operate({
+      action: 'finalize_preview',
+      sessionId: 'session-1',
+      expectedRevision: detached.revision,
+      commitMessage: 'test: finalize recovery',
+      retention: 'retain_manual',
+      recoveryProof: recovery.proof,
+    })
+
+    expect(finalized).toMatchObject({ status: 'finished', cleanup: 'retained' })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD^')).toBe(advancedHead)
+    expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
+    expect(git(context.projectRoot, 'show', 'HEAD^:external-commit.txt')).toBe('new Local commit')
+  })
+
+  test('Given detached Preview evidence changes after assessment When recovery is retried Then Host fails closed and preserves detached state', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'artifact recovery\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'artifact recovery', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: artifact recovery',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error('expected previewed')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[target.checkout.id]
+    const previewId = record.delivery.preview.previewId as string
+    record.delivery = { ...record.delivery, state: 'preview_detached', detachedAt: Date.now(), reason: 'stale_local', attemptedAction: 'rollback_preview' }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+    const restarted = context.restart()
+    const detached = await restarted.inspect('session-1')
+    const assessed = await restarted.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery.review.reviewId, previewId,
+    )
+    if (!assessed || assessed.status !== 'assessed') throw new Error('expected assessed')
+
+    const forged = { ...assessed.proof, generation: '0'.repeat(64) }
+    const denied = await restarted.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision,
+      resumeRevision: true, recoveryProof: forged,
+    })
+    expect(denied).toMatchObject({ status: 'error', code: 'stale_target' })
+    expect((await restarted.inspect('session-1')).delivery).toMatchObject({ state: 'preview_detached' })
+
+    const refKey = createHash('sha256').update(target.checkout.id).digest('hex').slice(0, 24)
+    git(context.projectRoot, 'update-ref', '-d', `refs/dsh-worktree/session-checkouts/${refKey}/previews/${previewId}/local-working`)
+    const missing = await restarted.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery.review.reviewId, previewId,
+    )
+    expect(missing).toMatchObject({ status: 'blocked', reason: 'artifacts_missing', localModified: false })
+  })
+
+  test('Given detached rollback writes Local but exact verification becomes uncertain When Host receives the result Then it preserves the journal and enters recovery_required', async () => {
+    let injectFault = false
+    const context = createContext({
+      applyEngine: createSessionCheckoutApplyEngine({
+        afterLocalWriteBeforeVerification: () => {
+          if (injectFault) throw new Error('simulated post-write verification fault')
+        },
+      }),
+    })
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'uncertain rollback task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'uncertain rollback', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: uncertain rollback',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error('expected preview')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[target.checkout.id]
+    const previewId = record.delivery.preview.previewId as string
+    record.delivery = {
+      ...record.delivery,
+      state: 'preview_detached',
+      detachedAt: Date.now(),
+      reason: 'stale_local',
+      attemptedAction: 'rollback_preview',
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+    const detached = await context.module.inspect('session-1')
+    const assessed = await context.module.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery.review.reviewId, previewId,
+    )
+    if (!assessed || assessed.status !== 'assessed' || assessed.proof.rollback.status !== 'safe') {
+      throw new Error('expected safe rollback assessment')
+    }
+
+    injectFault = true
+    const result = await context.module.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision,
+      resumeRevision: true, recoveryProof: assessed.proof,
+    })
+
+    expect(result).toMatchObject({
+      status: 'error', code: 'git_error', target: { checkout: { phase: 'recovery_required' } },
+    })
+    const persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(persisted.managedCheckouts[target.checkout.id]).toMatchObject({
+      phase: 'recovery_required',
+      delivery: { state: 'preview_detached' },
+      journal: {
+        operation: 'rollback_preview', step: 'writing_local', previewId,
+        recoveryGeneration: assessed.proof.generation,
+      },
+    })
+    expect(existsSync(managedRoot)).toBe(true)
+  })
+
+  test('Given detached finalize receives a concurrent staged update after writing its index When compensation cannot CAS restore Then Host preserves the journal and enters recovery_required', async () => {
+    let injectRace = false
+    let projectRoot = ''
+    const context = createContext({
+      applyEngine: createSessionCheckoutApplyEngine({
+        afterLocalWriteBeforeVerification: () => {
+          if (!injectRace) return
+          writeFileSync(join(projectRoot, 'concurrent-stage.txt'), 'preserve staged race\n')
+          git(projectRoot, 'add', 'concurrent-stage.txt')
+          throw new Error('simulated finalize verification fault after concurrent git add')
+        },
+      }),
+    })
+    projectRoot = context.projectRoot
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'uncertain finalize task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'uncertain finalize', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: uncertain finalize',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error('expected preview')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[target.checkout.id]
+    const previewId = record.delivery.preview.previewId as string
+    record.delivery = {
+      ...record.delivery,
+      state: 'preview_detached',
+      detachedAt: Date.now(),
+      reason: 'stale_local',
+      attemptedAction: 'finalize_preview',
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+    const detached = await context.module.inspect('session-1')
+    const assessed = await context.module.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery.review.reviewId, previewId,
+    )
+    if (!assessed || assessed.status !== 'assessed' || assessed.proof.finalize.status !== 'safe') {
+      throw new Error('expected safe finalize assessment')
+    }
+
+    injectRace = true
+    const result = await context.module.operate({
+      action: 'finalize_preview', sessionId: 'session-1', expectedRevision: detached.revision,
+      commitMessage: 'test: uncertain finalize', retention: 'retain_manual', recoveryProof: assessed.proof,
+    })
+
+    expect(result).toMatchObject({
+      status: 'error', code: 'git_error', target: { checkout: { phase: 'recovery_required' } },
+    })
+    expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD')).toBe('tracked.txt')
+    expect(git(context.projectRoot, 'diff', '--cached', '--name-only')).toBe('concurrent-stage.txt')
+    const persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(persisted.managedCheckouts[target.checkout.id]).toMatchObject({
+      phase: 'recovery_required',
+      delivery: { state: 'preview_detached' },
+      journal: {
+        operation: 'finalize_preview', step: 'updating_ref', previewId,
+        recoveryGeneration: assessed.proof.generation,
+      },
+    })
+    expect(existsSync(managedRoot)).toBe(true)
+  })
+
+  test('Given Local changes after detached assessment When rollback uses the old proof Then Host rejects it before journaling and preserves every Local byte', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'stale proof task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'stale proof', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: stale proof',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error('expected preview')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[target.checkout.id]
+    const previewId = record.delivery.preview.previewId as string
+    record.delivery = {
+      ...record.delivery,
+      state: 'preview_detached',
+      detachedAt: Date.now(),
+      reason: 'stale_local',
+      attemptedAction: 'rollback_preview',
+    }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const detached = await context.module.inspect('session-1')
+    const assessed = await context.module.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery.review.reviewId, previewId,
+    )
+    if (!assessed || assessed.status !== 'assessed') throw new Error('expected assessment')
+    writeFileSync(join(context.projectRoot, 'late-local.txt'), 'late Local byte\n')
+    const localStatusBefore = git(context.projectRoot, 'status', '--porcelain=v1', '-uall')
+
+    const result = await context.module.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision,
+      resumeRevision: true, recoveryProof: assessed.proof,
+    })
+
+    expect(result).toMatchObject({ status: 'error', code: 'stale_target' })
+    expect(readFileSync(join(context.projectRoot, 'late-local.txt'), 'utf8')).toBe('late Local byte\n')
+    expect(git(context.projectRoot, 'status', '--porcelain=v1', '-uall')).toBe(localStatusBefore)
+    const persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(persisted.managedCheckouts[target.checkout.id].delivery).toMatchObject({ state: 'preview_detached' })
+    expect(persisted.managedCheckouts[target.checkout.id].journal).toBeNull()
+  })
+
+  test('Given another checkout occupies the acceptance slot during detached recovery When proof is checked and the slot later changes Then both actions fail closed without journaling', async () => {
+    const context = createContext()
+    context.addSession('session-2', 'project-1', 'Second owner')
+    const first = await context.module.bind('session-1', { kind: 'isolated' })
+    const second = await context.module.bind('session-2', { kind: 'isolated' })
+    const firstRoot = await context.module.resolveManagedRoot(first.checkout.id)
+    const secondRoot = await context.module.resolveManagedRoot(second.checkout.id)
+    writeFileSync(join(firstRoot, 'tracked.txt'), 'first detached task\n')
+    writeFileSync(join(secondRoot, 'second-task.txt'), 'second active task\n')
+    const firstReady = await context.module.markReadyForReview('session-1', {
+      summary: 'first', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: first',
+    })
+    const secondReady = await context.module.markReadyForReview('session-2', {
+      summary: 'second', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: second',
+    })
+    if (firstReady.delivery?.state !== 'ready_for_review' || secondReady.delivery?.state !== 'ready_for_review') {
+      throw new Error('expected both reviews')
+    }
+    const firstPreview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: firstReady.revision })
+    if (firstPreview.status !== 'previewed') throw new Error('expected first preview')
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const firstRecord = registry.managedCheckouts[first.checkout.id]
+    const previewId = firstRecord.delivery.preview.previewId as string
+    firstRecord.delivery = {
+      ...firstRecord.delivery,
+      state: 'preview_detached',
+      detachedAt: Date.now(),
+      reason: 'stale_local',
+      attemptedAction: 'rollback_preview',
+    }
+    firstRecord.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+
+    const secondCurrent = await context.module.inspect('session-2')
+    const secondPreview = await context.module.operate({ action: 'preview', sessionId: 'session-2', expectedRevision: secondCurrent.revision })
+    if (secondPreview.status !== 'previewed') throw new Error(`expected second preview, got ${secondPreview.status}`)
+    const detached = await context.module.inspect('session-1')
+    const assessed = await context.module.preflightPreviewRecovery?.(
+      'session-1', detached.revision, firstReady.delivery.review.reviewId, previewId,
+    )
+    expect(assessed).toMatchObject({
+      status: 'assessed',
+      proof: {
+        rollback: { status: 'blocked', code: 'project_acceptance_busy' },
+        finalize: { status: 'blocked', code: 'project_acceptance_busy' },
+        blocker: {
+          checkoutId: second.checkout.id,
+          ownerSessionId: 'session-2',
+          revision: secondPreview.target.revision,
+          state: 'preview_active',
+        },
+      },
+    })
+    if (!assessed || assessed.status !== 'assessed') throw new Error('expected blocked assessment')
+    const blocked = await context.module.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision,
+      resumeRevision: true, recoveryProof: assessed.proof,
+    })
+    expect(blocked).toMatchObject({ status: 'error', code: 'project_acceptance_busy' })
+    let persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(persisted.managedCheckouts[first.checkout.id].journal).toBeNull()
+
+    const released = await context.module.operate({
+      action: 'rollback_preview', sessionId: 'session-2', expectedRevision: secondPreview.target.revision,
+    })
+    expect(released.status).toBe('preview_rolled_back')
+    const stale = await context.module.operate({
+      action: 'rollback_preview', sessionId: 'session-1', expectedRevision: detached.revision,
+      resumeRevision: true, recoveryProof: assessed.proof,
+    })
+    expect(stale).toMatchObject({ status: 'error', code: 'stale_target' })
+    persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(persisted.managedCheckouts[first.checkout.id].delivery).toMatchObject({ state: 'preview_detached' })
+    expect(persisted.managedCheckouts[first.checkout.id].journal).toBeNull()
+  })
+
+  test('Given a detached Preview and fresh proof When recovery handoff is created Then old evidence stays intact and the new Worktree starts at latest Local HEAD', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'handoff task\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'handoff recovery', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: handoff recovery',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error('expected previewed')
+    writeFileSync(join(context.projectRoot, 'later.txt'), 'later local layer\n')
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const record = registry.managedCheckouts[target.checkout.id]
+    const previewId = record.delivery.preview.previewId as string
+    record.delivery = { ...record.delivery, state: 'preview_detached', detachedAt: Date.now(), reason: 'preview_modified', attemptedAction: 'finalize_preview' }
+    record.revision += 1
+    registry.revision += 1
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2))
+    const restarted = context.restart()
+    const detached = await restarted.inspect('session-1')
+    const assessed = await restarted.preflightPreviewRecovery?.(
+      'session-1', detached.revision, ready.delivery.review.reviewId, previewId,
+    )
+    if (!assessed || assessed.status !== 'assessed') throw new Error('expected assessed')
+    const oldRegistry = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    const oldDelivery = oldRegistry.managedCheckouts[target.checkout.id].delivery
+    const localHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+
+    const handoff = await restarted.createPreviewRecoveryHandoff(
+      'session-1', assessed.proof, 'recovery-session', 'handoff-request-1',
+    )
+
+    expect(handoff.targetSessionId).toBe('recovery-session')
+    expect(handoff.continuation).toMatchObject({
+      kind: 'worktree_preview_recovery_handoff', sourceCheckoutId: target.checkout.id,
+      reviewId: ready.delivery.review.reviewId, previewId, generation: assessed.proof.generation,
+    })
+    expect(git(handoff.managedRoot, 'rev-parse', 'HEAD')).toBe(localHead)
+    expect(readFileSync(join(handoff.managedRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+    expect(existsSync(join(handoff.managedRoot, 'later.txt'))).toBe(false)
+    const after = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(after.managedCheckouts[target.checkout.id].delivery).toEqual(oldDelivery)
+    const refKey = createHash('sha256').update(target.checkout.id).digest('hex').slice(0, 24)
+    expect(git(context.projectRoot, 'for-each-ref', '--format=%(refname)', `refs/dsh-worktree/session-checkouts/${refKey}`)).toContain(previewId)
   })
 
   test('Given Local commits the Preview bytes When rollback is requested Then it fails closed, preserves committed history and releases the acceptance slot', async () => {
@@ -1298,7 +1716,7 @@ describe('SessionCheckoutModule', () => {
     expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').trim()).toBe('base')
   })
 
-  test('Given process restarts after branch CAS but before Finalize registry update When reconcile runs Then it records the real Commit and preserves the Worktree', async () => {
+  test('Given process restarts after branch CAS but before exact Finalize verification When reconcile runs Then it fails closed and preserves all recovery evidence', async () => {
     const context = createContext()
     const target = await context.module.bind('session-1', { kind: 'isolated' })
     const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
@@ -1328,14 +1746,14 @@ describe('SessionCheckoutModule', () => {
     await restarted.reconcile()
     const recovered = await restarted.inspect('session-1')
     expect(recovered).toMatchObject({
-      checkout: { phase: 'finalized' },
-      delivery: {
-        state: 'finalized',
-        commitOid,
-        cleanup: 'blocked',
-        proof: { validationStatus: 'passed', validationSummary: 'recovery validation passed' },
-      },
+      checkout: { phase: 'recovery_required' },
+      delivery: { state: 'preview_active' },
     })
+    const persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(persisted.managedCheckouts[target.checkout.id].journal).toMatchObject({
+      operation: 'finalize_preview', step: 'updating_ref', commitOid,
+    })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(commitOid)
     expect(existsSync(managedRoot)).toBe(true)
   })
 

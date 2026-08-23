@@ -89,10 +89,17 @@ export function WorktreeReviewPanel({
     target.reviewSlot,
     target.reviewSlotHolder?.checkoutId,
     target.reviewSlotHolder?.ownerSessionId,
+    target.reviewSlotHolder?.revision,
     target.reviewSlotHolder?.state,
+    target.previewRecovery?.previewId,
+    target.previewRecovery?.detachedAt,
+    target.previewRecovery?.reason,
+    target.previewRecovery?.attemptedAction,
     target.capabilities.preflight,
     target.capabilities.preview,
     target.capabilities.finalize,
+    target.capabilities.finalizePreview,
+    target.capabilities.rollbackPreview,
     target.capabilities.discard,
   ].join('\u0000') : ''
   const [currentTarget, setCurrentTarget] = useState(target)

@@ -199,6 +199,180 @@ describe('SessionCheckoutApplyEngine', () => {
     expect(await readFile(join(fixture.localPath, 'review-note.txt'), 'utf8')).toBe('created while reviewing\n')
   })
 
+  test('Given the rollback journal callback changes Local When final CAS runs Then Preview stays untouched and the concurrent Local layer is preserved', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const previewEngine = createSessionCheckoutApplyEngine()
+    const preview = await previewEngine.preview(await readyPlan(previewEngine, fixture), {
+      previewId: 'preview-rollback-journal-race', reviewId: 'review-rollback-journal-race', iteration: 1,
+    })
+    if (preview.status !== 'previewed') throw new Error('expected previewed')
+    let journalPersisted = false
+
+    const result = await createSessionCheckoutApplyEngine().rollback({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+      beforeWrite: async () => {
+        journalPersisted = true
+        await writeFile(join(fixture.localPath, 'journal-race.txt'), 'concurrent Local layer\n')
+      },
+    })
+
+    expect(journalPersisted).toBe(true)
+    expect(result).toEqual({
+      status: 'error',
+      error: { code: 'stale_local', message: 'Local 在撤回 Preview 前发生变化，请重试' },
+    })
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('preview task\n')
+    expect(await readFile(join(fixture.localPath, 'journal-race.txt'), 'utf8')).toBe('concurrent Local layer\n')
+  })
+
+  test('Given rollback writes Local but write-after verification faults When it returns Then the result is explicitly uncertain', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const previewEngine = createSessionCheckoutApplyEngine()
+    const preview = await previewEngine.preview(await readyPlan(previewEngine, fixture), {
+      previewId: 'preview-rollback-fault', reviewId: 'review-rollback-fault', iteration: 1,
+    })
+    if (preview.status !== 'previewed') throw new Error('expected previewed')
+    const faulty = createSessionCheckoutApplyEngine({
+      afterLocalWriteBeforeVerification: () => { throw new Error('verification fault') },
+    })
+
+    const result = await faulty.rollback({ localPath: fixture.localPath, receipt: preview.receipt })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'git_error', recoveryState: 'uncertain' },
+    })
+  })
+
+  test('Given finalize writes ref and index but verification faults When exact rollback succeeds Then it reports Local unchanged', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const previewEngine = createSessionCheckoutApplyEngine()
+    const preview = await previewEngine.preview(await readyPlan(previewEngine, fixture), {
+      previewId: 'preview-finalize-fault', reviewId: 'review-finalize-fault', iteration: 1,
+    })
+    if (preview.status !== 'previewed') throw new Error('expected previewed')
+    const headBefore = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    const statusBefore = await runGit(fixture.localPath, ['status', '--porcelain=v1', '-uall'])
+    const faulty = createSessionCheckoutApplyEngine({
+      afterLocalWriteBeforeVerification: () => { throw new Error('verification fault') },
+    })
+
+    const result = await faulty.finalize({
+      localPath: fixture.localPath, receipt: preview.receipt, commitMessage: 'test: verification fault',
+    })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'git_error', recoveryState: 'unchanged' },
+    })
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(headBefore)
+    expect(await runGit(fixture.localPath, ['status', '--porcelain=v1', '-uall'])).toBe(statusBefore)
+  })
+
+  test('Given Local stages an existing working-tree file immediately before finalize CAS When finalize locks and revalidates the index Then it fails stale without moving HEAD or losing the stage', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const previewEngine = createSessionCheckoutApplyEngine()
+    const preview = await previewEngine.preview(await readyPlan(previewEngine, fixture), {
+      previewId: 'preview-finalize-index-race', reviewId: 'review-finalize-index-race', iteration: 1,
+    })
+    if (preview.status !== 'previewed') throw new Error('expected previewed')
+    await writeFile(join(fixture.localPath, 'late-stage.txt'), 'stage me concurrently\n')
+    const headBefore = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    const racing = createSessionCheckoutApplyEngine({
+      beforeFinalLocalValidation: async () => {
+        await runGit(fixture.localPath, ['add', 'late-stage.txt'])
+      },
+    })
+
+    const result = await racing.finalize({
+      localPath: fixture.localPath, receipt: preview.receipt, commitMessage: 'test: index race',
+    })
+
+    expect(result).toEqual({
+      status: 'error',
+      error: { code: 'stale_local', message: 'Local 在 Preview 提交写入前发生变化，请重试' },
+    })
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(headBefore)
+    expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('late-stage.txt')
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('preview task\n')
+  })
+
+  test('Given a concurrent staged update lands after finalize writes its index When verification fails Then compensation refuses to overwrite it and reports uncertain', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const previewEngine = createSessionCheckoutApplyEngine()
+    const preview = await previewEngine.preview(await readyPlan(previewEngine, fixture), {
+      previewId: 'preview-finalize-compensation-race', reviewId: 'review-finalize-compensation-race', iteration: 1,
+    })
+    if (preview.status !== 'previewed') throw new Error('expected previewed')
+    await writeFile(join(fixture.localPath, 'concurrent-stage.txt'), 'preserve concurrent stage\n')
+    const headBefore = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    const faulty = createSessionCheckoutApplyEngine({
+      afterLocalWriteBeforeVerification: async () => {
+        await runGit(fixture.localPath, ['add', 'concurrent-stage.txt'])
+        throw new Error('verification fault after concurrent git add')
+      },
+    })
+
+    const result = await faulty.finalize({
+      localPath: fixture.localPath, receipt: preview.receipt, commitMessage: 'test: compensation index CAS',
+    })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'git_error', recoveryState: 'uncertain' },
+    })
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).not.toBe(headBefore)
+    expect(await runGit(fixture.localPath, ['show', '--format=', '--name-only', 'HEAD'])).toBe('tracked.txt')
+    expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('concurrent-stage.txt')
+    expect(await readFile(join(fixture.localPath, 'concurrent-stage.txt'), 'utf8')).toBe('preserve concurrent stage\n')
+  })
+
+  test('Given a detached Preview with later Local layers When recovery is assessed Then the result is read-only and both safe actions bind the exact Local snapshot', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')
+    await runGit(fixture.localPath, ['add', 'local-staged.txt'])
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preview task\n')
+    const engine = createSessionCheckoutApplyEngine()
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-assessment',
+      reviewId: 'review-assessment',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    await writeFile(join(fixture.localPath, 'external-commit.txt'), 'committed elsewhere\n')
+    await runGit(fixture.localPath, ['add', 'external-commit.txt'])
+    await runGit(fixture.localPath, ['commit', '--only', 'external-commit.txt', '-m', 'external fast-forward'])
+    await writeFile(join(fixture.localPath, 'review-note.txt'), 'keep review work\n')
+    const headBefore = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    const statusBefore = await runGit(fixture.localPath, ['status', '--porcelain=v1', '-z'])
+    const indexBefore = await runGit(fixture.localPath, ['ls-files', '--stage'])
+    const refsBefore = await runGit(fixture.localPath, ['for-each-ref', '--format=%(refname) %(objectname)'])
+
+    const assessment = await createSessionCheckoutApplyEngine().assessPreviewRecovery({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+    })
+
+    expect(assessment).toMatchObject({
+      localHeadOid: headBefore,
+      localHeadRef: `refs/heads/${fixture.branchName}`,
+      rollback: { status: 'safe' },
+      finalize: { status: 'safe', commitRequired: true },
+    })
+    expect('localFingerprint' in assessment && assessment.localFingerprint).toHaveLength(64)
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(headBefore)
+    expect(await runGit(fixture.localPath, ['status', '--porcelain=v1', '-z'])).toBe(statusBefore)
+    expect(await runGit(fixture.localPath, ['ls-files', '--stage'])).toBe(indexBefore)
+    expect(await runGit(fixture.localPath, ['for-each-ref', '--format=%(refname) %(objectname)'])).toBe(refsBefore)
+  })
+
   test('Given Local advances on the same branch while Preview remains unstaged When rollback runs Then it removes only Preview and preserves the new commit and Local layers', async () => {
     const fixture = await createFixture()
     await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')
@@ -379,6 +553,43 @@ describe('SessionCheckoutApplyEngine', () => {
     expect(result.commitOid).toBe(await runGit(fixture.localPath, ['rev-parse', 'HEAD']))
     expect(await runGit(fixture.localPath, ['show', '-s', '--format=%s', 'HEAD'])).toBe('fix: accepted preview')
     expect(await runGit(fixture.localPath, ['show', '--format=', '--name-only', 'HEAD'])).toBe('tracked.txt')
+    expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('local-staged.txt')
+    expect(await runGit(fixture.localPath, ['diff', '--name-only'])).toBe('merge.txt')
+    expect(await readFile(join(fixture.localPath, 'review-untracked.txt'), 'utf8')).toBe('keep me\n')
+    expect(await readFile(join(fixture.localPath, 'tracked.txt'), 'utf8')).toBe('accepted preview\n')
+  })
+
+  test('Given Local fast-forwards after Preview When finalize runs Then it commits only the task onto latest HEAD and preserves every Local layer', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.localPath, 'local-staged.txt'), 'keep staged\n')
+    await runGit(fixture.localPath, ['add', 'local-staged.txt'])
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'accepted preview\n')
+    const engine = createSessionCheckoutApplyEngine()
+    const preview = await engine.preview(await readyPlan(engine, fixture), {
+      previewId: 'preview-finalize-fast-forward',
+      reviewId: 'review-finalize-fast-forward',
+      iteration: 1,
+    })
+    expect(preview.status).toBe('previewed')
+    if (preview.status !== 'previewed') throw new Error(`预期 previewed，实际为 ${preview.status}`)
+    await writeFile(join(fixture.localPath, 'external-commit.txt'), 'committed elsewhere\n')
+    await runGit(fixture.localPath, ['add', 'external-commit.txt'])
+    await runGit(fixture.localPath, ['commit', '--only', 'external-commit.txt', '-m', 'external fast-forward'])
+    const advancedHead = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    await writeFile(join(fixture.localPath, 'merge.txt'), 'review-local\nsecond\nthird\n')
+    await writeFile(join(fixture.localPath, 'review-untracked.txt'), 'keep me\n')
+
+    const result = await createSessionCheckoutApplyEngine().finalize({
+      localPath: fixture.localPath,
+      receipt: preview.receipt,
+      commitMessage: 'fix: accepted after fast-forward',
+    })
+
+    expect(result.status).toBe('finished')
+    if (result.status !== 'finished') throw new Error(`预期 finished，实际为 ${result.status}`)
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD^'])).toBe(advancedHead)
+    expect(await runGit(fixture.localPath, ['show', '--format=', '--name-only', 'HEAD'])).toBe('tracked.txt')
+    expect(await runGit(fixture.localPath, ['show', 'HEAD^:external-commit.txt'])).toBe('committed elsewhere')
     expect(await runGit(fixture.localPath, ['diff', '--cached', '--name-only'])).toBe('local-staged.txt')
     expect(await runGit(fixture.localPath, ['diff', '--name-only'])).toBe('merge.txt')
     expect(await readFile(join(fixture.localPath, 'review-untracked.txt'), 'utf8')).toBe('keep me\n')

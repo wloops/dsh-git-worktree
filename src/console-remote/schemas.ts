@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   WORKTREE_CONSOLE_ERROR_CODES,
   WORKTREE_CONSOLE_TARGET_STATES,
+  type WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   type WorktreeConsoleCreateResponse,
   type WorktreeConsoleCurrentResponse,
   type WorktreeConsoleInspectResponse,
@@ -9,6 +10,7 @@ import {
   type WorktreeConsoleMutationResponse,
   type WorktreeConsoleOutcome,
   type WorktreeConsolePreflightResponse,
+  type WorktreeConsolePreviewRecoveryPreflightResponse,
   type WorktreeConsoleReviewDiffResponse,
 } from '../console-contract.js'
 
@@ -19,10 +21,13 @@ export const checkoutIdSchema = z.string().min(1).max(200).refine(value => !valu
 export const reviewIdSchema = z.string().min(1).max(200).refine(value => !/[\0\r\n]/u.test(value), 'unsafe review id')
 export const commitMessageSchema = z.string().trim().min(1).max(500)
 export const revisionSchema = z.number().int().nonnegative()
+const gitOidSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu)
 export const oidSchema = z.union([
   z.literal('unversioned'),
-  z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu),
+  gitOidSchema,
 ])
+export const previewIdSchema = z.string().min(1).max(200).refine(value => !/[\\/\0\r\n]/u.test(value), 'unsafe preview id')
+export const generationSchema = z.string().regex(/^[0-9a-f]{64}$/u)
 export const booleanSchema = z.boolean()
 export const optionalBooleanSchema = z.union([booleanSchema, z.undefined()])
 export const retentionSchema = z.enum(['cleanup', 'retain_24h', 'retain_3d', 'retain_manual'])
@@ -64,6 +69,7 @@ const capabilitiesSchema = strict({
 const acceptanceBlockerSchema = strict({
   checkoutId: checkoutIdSchema,
   ownerSessionId: sessionIdSchema,
+  revision: revisionSchema,
   state: z.enum(['preview_active', 'preview_detached', 'finalized', 'retained', 'working', 'ready_for_review', 'delivered']),
 })
 const deliveryProofSchema = strict({
@@ -98,6 +104,8 @@ const targetSummarySchema = strict({
   reviewSlotOwnerSessionId: sessionIdSchema.optional(),
   reviewSlotHolder: acceptanceBlockerSchema.optional(),
   previewRecovery: strict({
+    previewId: previewIdSchema,
+    detachedAt: z.number().finite(),
     reason: z.enum(['stale_local', 'preview_modified']),
     attemptedAction: z.enum(['rollback_preview', 'finalize_preview', 'discard']),
   }).optional(),
@@ -125,7 +133,31 @@ export const reviewRegenerationProofSchema = strict({
   reviewId: reviewIdSchema,
   revision: revisionSchema,
 })
-const recoveryProofSchema = z.discriminatedUnion('kind', [recoveryContinuationSchema, reviewRegenerationProofSchema])
+export const previewRecoveryAnalysisProofSchema = strict({
+  kind: z.literal('worktree_preview_recovery_analysis'),
+  requestId: z.string().min(1).max(500).refine(value => !/[\0\r\n]/u.test(value), 'unsafe request id'),
+  checkoutId: checkoutIdSchema,
+  reviewId: reviewIdSchema,
+  previewId: previewIdSchema,
+  revision: revisionSchema,
+  generation: generationSchema,
+})
+export const previewRecoveryHandoffProofSchema = strict({
+  kind: z.literal('worktree_preview_recovery_handoff'),
+  requestId: z.string().min(1).max(500).refine(value => !/[\0\r\n]/u.test(value), 'unsafe request id'),
+  checkoutId: checkoutIdSchema,
+  sourceCheckoutId: checkoutIdSchema,
+  reviewId: reviewIdSchema,
+  previewId: previewIdSchema,
+  revision: revisionSchema,
+  generation: generationSchema,
+})
+const recoveryProofSchema = z.discriminatedUnion('kind', [
+  recoveryContinuationSchema,
+  reviewRegenerationProofSchema,
+  previewRecoveryAnalysisProofSchema,
+  previewRecoveryHandoffProofSchema,
+])
 const targetDetailsSchema = targetSummarySchema.extend({
   managedRoot: z.string().min(1).nullable(),
   sourceRoot: z.string().min(1).nullable(),
@@ -133,6 +165,12 @@ const targetDetailsSchema = targetSummarySchema.extend({
   currentBranch: z.string().nullable(),
   recoveryContinuation: recoveryProofSchema.optional(),
 }).strict()
+export const previewRecoveryHandoffResponseSchema: z.ZodType<WorktreeConsoleCreatePreviewRecoveryHandoffResponse> = strict({
+  target: targetDetailsSchema,
+  targetSessionId: sessionIdSchema,
+  managedRoot: z.string().min(1),
+  recoveryContinuation: previewRecoveryHandoffProofSchema,
+})
 const consoleErrorSchema = strict({
   code: z.enum(WORKTREE_CONSOLE_ERROR_CODES),
   message: z.string(),
@@ -200,6 +238,68 @@ const preflightSchema = z.union([
   }),
 ])
 export const preflightResponseSchema: z.ZodType<WorktreeConsolePreflightResponse> = strict({ preflight: preflightSchema })
+
+const previewRecoveryBlockedReasonSchema = z.enum([
+  'stale_local',
+  'preview_modified',
+  'commit_isolation_conflict',
+  'operation_not_allowed',
+  'project_acceptance_busy',
+])
+const previewRecoveryBlockedActionSchema = strict({
+  status: z.literal('blocked'),
+  code: previewRecoveryBlockedReasonSchema,
+  message: z.string(),
+  conflictingFiles: z.array(z.string().min(1).max(1000).refine(safeConflictFile, 'unsafe conflict file')).max(500).optional(),
+})
+const previewRecoveryRollbackSchema = z.union([
+  strict({ status: z.literal('safe'), targetTreeOid: gitOidSchema }),
+  previewRecoveryBlockedActionSchema,
+])
+const previewRecoveryFinalizeSchema = z.union([
+  strict({
+    status: z.literal('safe'),
+    taskTreeOid: gitOidSchema,
+    finalIndexTreeOid: gitOidSchema,
+    expectedWorkingTreeOid: gitOidSchema,
+    commitRequired: z.boolean(),
+  }),
+  previewRecoveryBlockedActionSchema,
+])
+export const previewRecoveryProofSchema = strict({
+  sessionId: sessionIdSchema,
+  checkoutId: checkoutIdSchema,
+  reviewId: reviewIdSchema,
+  previewId: previewIdSchema,
+  revision: revisionSchema,
+  generation: generationSchema,
+  receiptFingerprint: generationSchema,
+  localFingerprint: generationSchema,
+  localHeadOid: gitOidSchema,
+  localHeadRef: z.string().min(1).max(1000).refine(value => !/[\0\r\n]/u.test(value), 'unsafe head ref').nullable(),
+  localHeadTreeOid: gitOidSchema,
+  localIndexTreeOid: gitOidSchema,
+  localWorkingTreeOid: gitOidSchema,
+  rollback: previewRecoveryRollbackSchema,
+  finalize: previewRecoveryFinalizeSchema,
+  blocker: acceptanceBlockerSchema.optional(),
+})
+const previewRecoveryPreflightSchema = z.union([
+  strict({ status: z.literal('assessed'), localModified: z.literal(false), proof: previewRecoveryProofSchema }),
+  strict({
+    status: z.literal('blocked'),
+    localModified: z.literal(false),
+    checkoutId: z.string().max(200),
+    reviewId: reviewIdSchema.nullable(),
+    previewId: previewIdSchema.nullable(),
+    revision: revisionSchema,
+    reason: z.enum(['not_owner', 'not_preview_detached', 'stale_target', 'artifacts_missing', 'checkout_unavailable', 'git_error']),
+    message: z.string(),
+  }),
+])
+export const previewRecoveryPreflightResponseSchema: z.ZodType<WorktreeConsolePreviewRecoveryPreflightResponse> = strict({
+  preflight: previewRecoveryPreflightSchema,
+})
 
 export const reviewDiffResponseSchema: z.ZodType<WorktreeConsoleReviewDiffResponse> = strict({
   reviewId: reviewIdSchema,

@@ -8,7 +8,12 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { ManagedApplyConflictRecoveryContinuation, ManagedReviewRegenerationContinuation } from './ports.js'
+import type {
+  ManagedApplyConflictRecoveryContinuation,
+  ManagedPreviewRecoveryAnalysisContinuation,
+  ManagedPreviewRecoveryHandoffContinuation,
+  ManagedReviewRegenerationContinuation,
+} from './ports.js'
 import type {
   ManagedWorktreeSummaryView,
   BulkCleanupManagedWorktreeCandidate,
@@ -22,6 +27,8 @@ import type {
   WorktreeValidationItem,
   WorktreeValidationStatus,
   WorktreeApplyPreflightView,
+  WorktreePreviewRecoveryPreflightView,
+  WorktreePreviewRecoveryProof,
 } from './types.js'
 
 /** Stable domain failure raised by the session-checkout state machine and its adapters. */
@@ -85,6 +92,13 @@ export interface SessionCheckoutModule {
   runtimeContext(sessionId: string): string
   /** Read-only sync preflight; modifies no Local, worktree, registry, review state, or Git refs. */
   preflight?(sessionId: string, expectedRevision: number): Promise<WorktreeApplyPreflightView>
+  /** Strictly read-only detached Preview recovery assessment and deterministic revalidation context. */
+  preflightPreviewRecovery?(
+    sessionId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    expectedPreviewId: string,
+  ): Promise<WorktreePreviewRecoveryPreflightView>
   /** Cross-module mutation under the same exclusive lock as bind/apply/discard/cleanup. */
   runExclusiveSessionMutation<T>(
     sessionId: string,
@@ -109,6 +123,19 @@ export interface SessionCheckoutModule {
     expectedReviewId: string,
     requestId: string,
   ): Promise<ManagedReviewRegenerationContinuation>
+  /** Persist an exact detached Recovery proof before the Client prompts the owner Agent for read-only analysis. */
+  preparePreviewRecoveryAnalysis(
+    sessionId: string,
+    proof: WorktreePreviewRecoveryProof,
+    requestId: string,
+  ): Promise<ManagedPreviewRecoveryAnalysisContinuation>
+  /** Create a fresh managed Worktree at latest Local HEAD while preserving all old detached evidence. */
+  createPreviewRecoveryHandoff(
+    sessionId: string,
+    proof: WorktreePreviewRecoveryProof,
+    targetSessionId: string,
+    requestId: string,
+  ): Promise<IsolatedTargetLaunch & { continuation: ManagedPreviewRecoveryHandoffContinuation }>
   markReadyForReview(sessionId: string, input: MarkReadyForReviewInput): Promise<SessionTargetView>
   operate(input: SessionCheckoutOperation): Promise<SessionCheckoutOperationResult>
   listManagedWorktrees(input?: ListManagedWorktreesInput): Promise<ManagedWorktreeSummaryView[]>

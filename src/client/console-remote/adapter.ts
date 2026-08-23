@@ -1,6 +1,7 @@
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   WorktreeConsoleAdapter,
+  WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateResponse,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleInspectResponse,
@@ -8,6 +9,7 @@ import type {
   WorktreeConsoleMutationResponse,
   WorktreeConsoleOutcome,
   WorktreeConsolePreflightResponse,
+  WorktreeConsolePreviewRecoveryPreflightResponse,
   WorktreeConsoleReviewDiffResponse,
 } from '../../console-contract.js'
 import type { GitWorktreeRemote } from '../../console-remote/remote.js'
@@ -60,6 +62,15 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): W
     inspect: request => invoke<WorktreeConsoleInspectResponse>('inspect', () => remote.inspect(request.sessionId, request.checkoutId)),
     reviewDiff: request => invoke<WorktreeConsoleReviewDiffResponse>('reviewDiff', () => remote.reviewDiff(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
     preflight: request => invoke<WorktreeConsolePreflightResponse>('preflight', () => remote.preflight(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
+    previewRecoveryPreflight: request => invoke<WorktreeConsolePreviewRecoveryPreflightResponse>('previewRecoveryPreflight', () => remote.previewRecoveryPreflight(
+      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId,
+    )),
+    preparePreviewRecoveryAnalysis: request => invoke<WorktreeConsoleMutationResponse>('preparePreviewRecoveryAnalysis', () => remote.preparePreviewRecoveryAnalysis(
+      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, request.recoveryProof,
+    )),
+    createPreviewRecoveryHandoff: request => invoke<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>('createPreviewRecoveryHandoff', () => remote.createPreviewRecoveryHandoff(
+      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, request.recoveryProof,
+    )),
     preview: request => invoke<WorktreeConsoleMutationResponse>('preview', () => remote.preview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
     resumeRevision: request => invoke<WorktreeConsoleMutationResponse>('resumeRevision', () => request.conflictContinuation
       ? remote.resumeRevision(
@@ -71,10 +82,14 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): W
     prepareReviewRegeneration: request => invoke<WorktreeConsoleMutationResponse>('prepareReviewRegeneration', () => remote.prepareReviewRegeneration(
       request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId,
     )),
-    rollbackPreview: request => invoke<WorktreeConsoleMutationResponse>('rollbackPreview', () => remote.rollbackPreview(request.sessionId, request.checkoutId, request.expectedRevision, request.resumeRevision)),
+    rollbackPreview: request => invoke<WorktreeConsoleMutationResponse>('rollbackPreview', () => remote.rollbackPreview(
+      request.sessionId, request.checkoutId, request.expectedRevision, request.resumeRevision, request.recoveryProof,
+    )),
     discard: request => invoke<WorktreeConsoleMutationResponse>('discard', () => remote.discard(request.sessionId, request.checkoutId, request.expectedRevision, request.confirmDirty, request.rollbackPreview)),
     finalize: request => invoke<WorktreeConsoleMutationResponse>('finalize', () => remote.finalize(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention)),
-    finalizePreview: request => invoke<WorktreeConsoleMutationResponse>('finalizePreview', () => remote.finalizePreview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention)),
+    finalizePreview: request => invoke<WorktreeConsoleMutationResponse>('finalizePreview', () => remote.finalizePreview(
+      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention, request.recoveryProof,
+    )),
     setRetention: request => invoke<WorktreeConsoleMutationResponse>('setRetention', () => remote.setRetention(request.sessionId, request.checkoutId, request.expectedRevision, request.retention)),
     retryCleanup: request => invoke<WorktreeConsoleMutationResponse>('retryCleanup', () => remote.retryCleanup(request.sessionId, request.checkoutId, request.expectedRevision)),
     beginNextIteration: request => invoke<WorktreeConsoleMutationResponse>('beginNextIteration', () => remote.beginNextIteration(request.sessionId, request.checkoutId, request.expectedRevision)),

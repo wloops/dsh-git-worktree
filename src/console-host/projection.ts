@@ -85,7 +85,7 @@ export function capabilities(
     resumeRevision: owner && ready,
     rollbackPreview: owner && (previewActive || previewDetached || previewRecovery),
     finalize: owner && ready,
-    finalizePreview: owner && previewActive,
+    finalizePreview: owner && (previewActive || previewDetached),
     setRetention: manageAuthorized && record.delivery.state === 'retained',
     retryCleanup: manageAuthorized && cleanup,
     beginNextIteration: owner && delivered,
@@ -140,6 +140,8 @@ export function projectRecord(
     ...(delivery.state === 'ready_for_review' ? { reviewSlot: 'available' as const } : {}),
     ...(delivery.state === 'preview_detached' ? {
       previewRecovery: {
+        previewId: delivery.preview.previewId,
+        detachedAt: delivery.detachedAt,
         reason: delivery.reason,
         attemptedAction: delivery.attemptedAction,
       },
@@ -187,13 +189,34 @@ export function projectDetails(
                 localHeadOid: record.recoveryContinuation.localHeadOid,
                 conflictingFiles: [...record.recoveryContinuation.conflictingFiles],
               }
-            : {
-                kind: record.recoveryContinuation.kind,
-                requestId: record.recoveryContinuation.requestId,
-                checkoutId: record.checkoutId,
-                reviewId: record.recoveryContinuation.reviewId,
-                revision: record.recoveryContinuation.revision,
-              },
+            : record.recoveryContinuation.kind === 'worktree_review_regeneration'
+              ? {
+                  kind: record.recoveryContinuation.kind,
+                  requestId: record.recoveryContinuation.requestId,
+                  checkoutId: record.checkoutId,
+                  reviewId: record.recoveryContinuation.reviewId,
+                  revision: record.recoveryContinuation.revision,
+                }
+              : record.recoveryContinuation.kind === 'worktree_preview_recovery_analysis'
+                ? {
+                    kind: record.recoveryContinuation.kind,
+                    requestId: record.recoveryContinuation.requestId,
+                    checkoutId: record.checkoutId,
+                    reviewId: record.recoveryContinuation.reviewId,
+                    previewId: record.recoveryContinuation.previewId,
+                    revision: record.recoveryContinuation.revision,
+                    generation: record.recoveryContinuation.generation,
+                  }
+                : {
+                    kind: record.recoveryContinuation.kind,
+                    requestId: record.recoveryContinuation.requestId,
+                    checkoutId: record.checkoutId,
+                    sourceCheckoutId: record.recoveryContinuation.sourceCheckoutId,
+                    reviewId: record.recoveryContinuation.reviewId,
+                    previewId: record.recoveryContinuation.previewId,
+                    revision: record.recoveryContinuation.sourceRevision,
+                    generation: record.recoveryContinuation.generation,
+                  },
         }
       : {}),
   }

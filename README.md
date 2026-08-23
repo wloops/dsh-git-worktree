@@ -45,6 +45,7 @@
 - **同一 Session 连续迭代**：本轮成功交付并 cleanup 后，可在原 Session 中开始 iteration + 1，保留完整对话。
 - **自动只读 Preflight**：Ready 后由 Review 卡与 composer dock 自动展示 Local/Worktree HEAD、effective base、同步条件、冲突与 acceptance slot；自动阶段绝不写入 Local。
 - **Agent Recovery continuation**：冲突只在用户明确点击后恢复 Working，并通过 Harness 官方 Session API 把 Local HEAD 与冲突文件交给精确 owner Agent；`stale_isolated` 则保持严格只读，只重新验证并生成新验收稿。
+- **Host 权威 Detached Preview 恢复**：Preview 因 Local 漂移进入 `preview_detached` 后，Host 会只读核验 receipt、retained refs、HEAD/ref、index、working tree 与验收槽位；只有新鲜 proof 明确标记安全时才显示撤回或提交，也可让 Agent 只读分析，或从最新 Local HEAD 交接到全新 Worktree。
 - **可核验 Delivery Proof**：Finalize 后展示 Commit OID、Local branch/HEAD、文件与验证摘要，以及 cleanup/retention 结果。
 - **保守恢复**：Review 过期、Local 漂移、分支变化、并发 Preview 或清理身份不确定时停止写入，不覆盖用户数据。
 
@@ -109,6 +110,16 @@ Agent 只在隔离 cwd 中读取、修改和验证项目。该 cwd 对应真实 
 - **放弃任务**：在满足安全条件后清理任务环境。
 
 如果预检发现 `stale_local`、`stale_isolated` 或冲突，旧 Preview/Finalize 操作会立即停用。`stale_local` 只刷新只读事实；冲突仅在用户点击“让 Agent 解决冲突”后，才由 Host 在锁内重跑 conflict Preflight/CAS、生成并持久化精确恢复凭证、恢复 Working，再通过 Harness 官方 `ISession.prompt()` 将结构化上下文发送给精确 owner Session；`stale_isolated` 的“重新生成验收结果”保持 Ready 与严格 Read Only，由 Host 只读复核并持久化另一种不可互换的凭证，不恢复 Working 或修改文件。发送会等待 Session 加载完成并停止 streaming，并在真正发送前重新逐字段核验 Host proof、checkout/review/revision/cwd；重复点击单飞。未发送请求可在页面刷新后恢复，但浏览器存储只是不可信上下文，必须通过 kind、字段、OID、相对路径预算和 Host 权威复验；发送结果未知或明确失败时由用户显式重试。`project_acceptance_busy` 会显示不含路径的占用任务摘要；只有 Host 再次证明 checkout、owner Session 与 canonical cwd 一致后，界面才会导航到该 Session。Finalize 成功后，Review 界面继续保留 Delivery Proof，而不是只显示“成功”。
+
+#### Detached Preview 恢复
+
+当 Preview receipt 仍完整、但 Local branch/HEAD、index 或 working tree 已变化时，交付会进入 `preview_detached`。这里的 detached 是交付状态，不是 Git detached HEAD。Review 界面会自动运行严格只读的 Recovery Preflight，并展示 Host generation、当前 Local HEAD/ref，以及撤回和提交各自的结构化结论。
+
+- Recovery proof 绑定精确 Session、checkout、revision、Review、Preview、receipt fingerprint、四个 retained artifacts、Local fingerprint/trees 和 acceptance-slot holder；proof 只是确定性复验上下文，不是 bearer permission。
+- 点击安全撤回、提交、只读分析或新 Worktree 交接时，Client 都会绕过展示缓存再取一次 proof；Host 随后在 binding lock 内重新计算并逐项比较，任何 revision、Local、artifact 或 slot 变化都会在写入前拒绝。
+- 同分支可证明 fast-forward 时，撤回只移除 Preview，提交只把任务 delta 放到最新 Local HEAD；后续 staged、unstaged、untracked 和新 Commit 会继续保留。切分支、non-fast-forward、Preview 已入历史、hunk 冲突或缺失 artifact 会 fail closed。
+- “让 Agent 只读分析”不会修改旧 Worktree、Local、refs/index 或 artifacts；“交接到新 Worktree”从最新 Local HEAD 创建新的 managed checkout，失败时旧 detached delivery、receipt、retained refs、Local 和旧 Worktree 均保持不变。
+- Git 写入后若无法精确证明 HEAD/ref/index/tree/fingerprint 已达到目标，状态进入 `recovery_required` 并保留 journal 与证据；不会把“看起来像成功”自动记为已完成，也不会自动重试写入。
 
 ### 5. 在原对话开始下一轮
 
@@ -263,8 +274,10 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 - acceptance slot blocker 只返回 path-free checkout/Session/state 摘要；打开占用任务前必须重新 inspect 并复验 owner 与 canonical cwd；
 - 自动 Preflight 不创建 plan、slot、Git ref 或 Local 写入；Preview 与 direct Finalize 前必须 bypass 缓存重新检查；slot 从 waiting 释放时废弃旧 busy 结果，自动错误只允许显式重试；
 - Preview receipt 和 internal refs 在写入 Local 前持久化；
-- Preview、Rollback、Finalize、Discard 和继续修改都绑定 checkout、revision、review 与 fingerprint；
-- Rollback 只移除可以证明属于本次 Preview 的增量，并尽量保留验收期间新增的无关 Local 修改；
+- `preview_detached` Recovery Preflight 严格只读，并在 assessment 前后复验四个 retained artifacts；Remote 只返回 path-free proof，不暴露 Local/Worktree 路径；
+- Preview、Rollback、Finalize、Discard 和继续修改都绑定 checkout、revision、review 与 fingerprint；detached mutation 还必须携带新鲜 generation，Host 在锁内重算 proof 后才可进入 journal；
+- Rollback 只移除可以证明属于本次 Preview 的增量，并尽量保留验收期间新增的无关 Local 修改；Finalize 只提交任务 delta 到最新同分支 Local HEAD；
+- Local 第一次写入前执行最终 CAS，写入后精确验证 HEAD/ref/index/tree/fingerprint；不确定结果进入 `recovery_required` 并保留 journal，不能仅凭 Commit HEAD 猜测成功；
 - branch switch、non-fast-forward、重叠冲突、Preview 已进入 Commit 或额外漂移会进入 recovery，而不是强行覆盖；
 - cleanup 前验证 managed path、Git metadata 和最终 fingerprint；未知残余会保留或 quarantine；
 - Finalize 的 durable Delivery Proof 绑定准确 Review，并保存 Commit、Local branch/HEAD、changed files 与 validation 摘要；动态历史证据不授予新的写权限；

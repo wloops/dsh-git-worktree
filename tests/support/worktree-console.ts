@@ -1,6 +1,8 @@
 import type {
   WorktreeConsoleAdapter,
   WorktreeConsoleBeginNextIterationRequest,
+  WorktreeConsoleCreatePreviewRecoveryHandoffRequest,
+  WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateRequest,
   WorktreeConsoleCreateResponse,
   WorktreeConsoleCurrentRequest,
@@ -16,6 +18,9 @@ import type {
   WorktreeConsoleOutcome,
   WorktreeConsolePreflightRequest,
   WorktreeConsolePreflightResponse,
+  WorktreeConsolePreparePreviewRecoveryAnalysisRequest,
+  WorktreeConsolePreviewRecoveryPreflightRequest,
+  WorktreeConsolePreviewRecoveryPreflightResponse,
   WorktreeConsolePrepareRegenerationRequest,
   WorktreeConsolePreviewRequest,
   WorktreeConsoleRetryCleanupRequest,
@@ -172,6 +177,53 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           revision: request.expectedRevision, configuredBaseOid: 'a'.repeat(40), effectiveBaseOid: 'a'.repeat(40),
           baseStrategy: 'recorded_base', localBranch: 'main', localHeadOid: 'a'.repeat(40), isolatedHeadOid: 'b'.repeat(40),
           changedFiles: ['src/index.ts'],
+        },
+      })
+    },
+    async previewRecoveryPreflight(request: WorktreeConsolePreviewRecoveryPreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreviewRecoveryPreflightResponse>> {
+      record('previewRecoveryPreflight', request)
+      return outcome({ preflight: {
+        status: 'assessed', localModified: false,
+        proof: {
+          sessionId: request.sessionId,
+          checkoutId: request.checkoutId,
+          reviewId: request.expectedReviewId,
+          previewId: request.expectedPreviewId,
+          revision: request.expectedRevision,
+          generation: '1'.repeat(64),
+          receiptFingerprint: '2'.repeat(64),
+          localFingerprint: '3'.repeat(64),
+          localHeadOid: 'a'.repeat(40),
+          localHeadRef: 'refs/heads/main',
+          localHeadTreeOid: 'b'.repeat(40),
+          localIndexTreeOid: 'c'.repeat(40),
+          localWorkingTreeOid: 'd'.repeat(40),
+          rollback: { status: 'safe', targetTreeOid: 'e'.repeat(40) },
+          finalize: {
+            status: 'safe', taskTreeOid: 'f'.repeat(40), finalIndexTreeOid: '1'.repeat(40),
+            expectedWorkingTreeOid: 'd'.repeat(40), commitRequired: true,
+          },
+        },
+      } })
+    },
+    async preparePreviewRecoveryAnalysis(request: WorktreeConsolePreparePreviewRecoveryAnalysisRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('preparePreviewRecoveryAnalysis', request)
+      return outcome({ target, recoveryContinuation: {
+        kind: 'worktree_preview_recovery_analysis', requestId: 'analysis-1', checkoutId: request.checkoutId,
+        reviewId: request.expectedReviewId, previewId: request.expectedPreviewId,
+        revision: request.expectedRevision, generation: request.recoveryProof.generation,
+      } })
+    },
+    async createPreviewRecoveryHandoff(request: WorktreeConsoleCreatePreviewRecoveryHandoffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>> {
+      record('createPreviewRecoveryHandoff', request)
+      return outcome({
+        target,
+        targetSessionId: target.ownerSessionId,
+        managedRoot: target.managedRoot!,
+        recoveryContinuation: {
+          kind: 'worktree_preview_recovery_handoff', requestId: 'handoff-1', checkoutId: target.checkoutId!,
+          sourceCheckoutId: request.checkoutId, reviewId: request.expectedReviewId, previewId: request.expectedPreviewId,
+          revision: request.expectedRevision, generation: request.recoveryProof.generation,
         },
       })
     },

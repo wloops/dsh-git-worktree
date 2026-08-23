@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import type {
   WorktreeConsoleBeginNextIterationRequest,
+  WorktreeConsoleCreatePreviewRecoveryHandoffRequest,
+  WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateResponse,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleDiscardRequest,
@@ -14,6 +16,9 @@ import type {
   WorktreeConsoleOutcome,
   WorktreeConsolePreflightRequest,
   WorktreeConsolePreflightResponse,
+  WorktreeConsolePreparePreviewRecoveryAnalysisRequest,
+  WorktreeConsolePreviewRecoveryPreflightRequest,
+  WorktreeConsolePreviewRecoveryPreflightResponse,
   WorktreeConsolePrepareRegenerationRequest,
   WorktreeConsolePreviewRequest,
   WorktreeConsoleResumeRevisionRequest,
@@ -56,6 +61,9 @@ export interface WorktreeConsoleControlPlane {
   inspect(sessionId: string, checkoutId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>>
   reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
   preflight(request: WorktreeConsolePreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>>
+  previewRecoveryPreflight(request: WorktreeConsolePreviewRecoveryPreflightRequest): Promise<WorktreeConsoleOutcome<WorktreeConsolePreviewRecoveryPreflightResponse>>
+  preparePreviewRecoveryAnalysis(request: WorktreeConsolePreparePreviewRecoveryAnalysisRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  createPreviewRecoveryHandoff(request: WorktreeConsoleCreatePreviewRecoveryHandoffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   prepareReviewRegeneration(request: WorktreeConsolePrepareRegenerationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
@@ -82,7 +90,10 @@ function readyReview(record: ManagedCheckoutRecord) {
 }
 
 function previewReview(record: ManagedCheckoutRecord) {
-  if (record.phase !== 'ready' || record.delivery.state !== 'preview_active') {
+  if (
+    record.phase !== 'ready'
+    || (record.delivery.state !== 'preview_active' && record.delivery.state !== 'preview_detached')
+  ) {
     throw domainError('preview_not_active', '当前没有等待验收的 Local Preview')
   }
   return record.delivery.review
@@ -323,6 +334,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         reviewSlotHolder: {
           checkoutId: holder.checkoutId,
           ownerSessionId: holder.ownerSessionId,
+          revision: holder.revision,
           state: holder.delivery.state,
         },
         capabilities: { ...target.capabilities, preview: false, finalize: false },
@@ -529,6 +541,105 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       return { preflight }
     }),
 
+    previewRecoveryPreflight: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以检查 Preview 恢复')
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      if (
+        record.phase !== 'ready'
+        || record.delivery.state !== 'preview_detached'
+        || record.delivery.review.reviewId !== request.expectedReviewId
+        || record.delivery.preview.previewId !== request.expectedPreviewId
+      ) throw domainError('stale_target', 'Detached Preview 身份已变化，请刷新')
+      const preflight = await options.module.preflightPreviewRecovery?.(
+        request.sessionId,
+        request.expectedRevision,
+        request.expectedReviewId,
+        request.expectedPreviewId,
+      )
+      if (preflight === undefined) throw domainError('git_error', '当前 SessionCheckoutModule 不支持 Preview Recovery 预检')
+      return { preflight }
+    }),
+
+    preparePreviewRecoveryAnalysis: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (
+        record.ownerSessionId !== request.sessionId
+        || request.recoveryProof.sessionId !== request.sessionId
+        || request.recoveryProof.checkoutId !== request.checkoutId
+        || request.recoveryProof.revision !== request.expectedRevision
+        || request.recoveryProof.reviewId !== request.expectedReviewId
+        || request.recoveryProof.previewId !== request.expectedPreviewId
+      ) throw domainError('stale_target', 'Preview Recovery 分析身份不匹配')
+      const prepared = await options.module.preparePreviewRecoveryAnalysis(
+        request.sessionId,
+        request.recoveryProof,
+        `preview-recovery-analysis:${randomUUID()}`,
+      )
+      const response = await mutationResponse(request.sessionId, request.checkoutId)
+      return {
+        ...response,
+        recoveryContinuation: {
+          kind: prepared.kind,
+          requestId: prepared.requestId,
+          checkoutId: request.checkoutId,
+          reviewId: prepared.reviewId,
+          previewId: prepared.previewId,
+          revision: prepared.revision,
+          generation: prepared.generation,
+        },
+      }
+    }),
+
+    createPreviewRecoveryHandoff: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (
+        record.ownerSessionId !== request.sessionId
+        || request.recoveryProof.sessionId !== request.sessionId
+        || request.recoveryProof.checkoutId !== request.checkoutId
+        || request.recoveryProof.revision !== request.expectedRevision
+        || request.recoveryProof.reviewId !== request.expectedReviewId
+        || request.recoveryProof.previewId !== request.expectedPreviewId
+      ) throw domainError('stale_target', 'Preview Recovery handoff 身份不匹配')
+      const targetSessionId = createTargetSessionId()
+      const launch = await options.module.createPreviewRecoveryHandoff(
+        request.sessionId,
+        request.recoveryProof,
+        targetSessionId,
+        `preview-recovery-handoff:${randomUUID()}`,
+      )
+      const created = recordOf(options.registry, launch.target.checkout.id)
+      const observed = await observe(created)
+      if (
+        created.ownerSessionId !== targetSessionId
+        || created.recoveryContinuation?.kind !== 'worktree_preview_recovery_handoff'
+        || created.recoveryContinuation.requestId !== launch.continuation.requestId
+        || observed.managedRoot !== launch.managedRoot
+      ) throw domainError('checkout_mismatch', 'Recovery handoff Worktree 的 Host 身份校验失败')
+      return {
+        target: projectDetails(
+          created,
+          targetSessionId,
+          observed.managedRoot,
+          observed.snapshot,
+          observed.dirty,
+          false,
+        ),
+        targetSessionId,
+        managedRoot: launch.managedRoot,
+        recoveryContinuation: {
+          kind: launch.continuation.kind,
+          requestId: launch.continuation.requestId,
+          checkoutId: created.checkoutId,
+          sourceCheckoutId: launch.continuation.sourceCheckoutId,
+          reviewId: launch.continuation.reviewId,
+          previewId: launch.continuation.previewId,
+          revision: launch.continuation.sourceRevision,
+          generation: launch.continuation.generation,
+        },
+      }
+    }),
+
     preview: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
       if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以同步到 Local 验收')
@@ -649,6 +760,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         sessionId: request.sessionId,
         expectedRevision: request.expectedRevision,
         ...(request.resumeRevision === undefined ? {} : { resumeRevision: request.resumeRevision }),
+        ...(request.recoveryProof === undefined ? {} : { recoveryProof: request.recoveryProof }),
       })
       if (result.status === 'error') throw domainError(result.code, result.message)
       if (result.status !== 'preview_rolled_back' && result.status !== 'preview_detached') {
@@ -748,6 +860,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
           expectedRevision: request.expectedRevision,
           commitMessage,
           retention: request.retention,
+          ...(request.recoveryProof === undefined ? {} : { recoveryProof: request.recoveryProof }),
         })
         if (result.status === 'error') return failure(result.code, result.message)
         if (result.status === 'preview_detached') {
