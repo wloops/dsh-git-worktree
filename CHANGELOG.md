@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-25
+
+`0.5.0` 完成冲突与 detached Preview 的 Host 权威恢复闭环：恢复决策绑定 durable proof、严格 Remote contract 与写前后 CAS 复验，并将运行基线统一升级到 DeepSeek Harness `0.1.1-rc.2`。
+
 ### Compatibility
 
 - 将全部直接 DeepSeek Harness 依赖与完整 peer 图从 `0.1.0-rc.8` 统一升级到 `0.1.1-rc.2`，避免 rc.8/rc.2 混合 runtime。
@@ -166,6 +170,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.5.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.0...v0.3.1
