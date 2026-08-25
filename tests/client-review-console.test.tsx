@@ -6,6 +6,7 @@ import { WorktreeReviewRow } from '../src/client/WorktreeReviewRow.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
 import { WORKTREE_STYLES } from '../src/client/styles.js'
 import { WorktreeReviewPanel, type WorktreeReviewEvidence } from '../src/client/review-console/WorktreeReviewPanel.js'
+import { WORKTREE_REVIEW_REFRESH_EVENT } from '../src/client/review-console/status-events.js'
 import { clearWorktreeRecovery } from '../src/client/review-console/recovery-continuation.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
 
@@ -114,9 +115,31 @@ describe('Domi-style Worktree Review', () => {
       expect(rule('.dsh-wt-more-content').bottom).toBe('auto')
       expect(rule('.dsh-wt-review-dock .dsh-wt-more-content').top).toBe('auto')
       expect(rule('.dsh-wt-review-dock .dsh-wt-more-content').bottom).toBe('calc(100% + 6px)')
+      const compactPreflightRule = rules.find(candidate => candidate.selectorText?.includes('.dsh-wt-review-dock .dsh-wt-preflight[data-preflight="loading"]'))
+      expect(compactPreflightRule?.style.display).toBe('none')
+      expect(compactPreflightRule?.selectorText).toContain('.dsh-wt-review-dock .dsh-wt-preflight[data-preflight="ready"]')
     } finally {
       style.remove()
     }
+  })
+
+  test('更多菜单点击外部或按 Escape 会关闭', () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} />)
+
+    const trigger = screen.getByLabelText('更多交付操作')
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menuitem', { name: '保存阶段并继续' })).toBeTruthy()
+
+    const menu = trigger.closest('details') as HTMLDetailsElement
+    fireEvent.mouseDown(document.body)
+    expect(menu.open).toBe(false)
+
+    fireEvent.click(trigger)
+    expect(menu.open).toBe(true)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(menu.open).toBe(false)
+    expect(document.activeElement).toBe(trigger)
   })
 
   test('默认只展示中文摘要，并按用户操作展开验证详情', () => {
@@ -572,6 +595,33 @@ describe('Domi-style Worktree Review', () => {
     expect(screen.getByText(/环境已清理/)).toBeTruthy()
     expect(screen.getByText(/focused tests passed/)).toBeTruthy()
     expect(screen.getByText(/Commit 仍在 Local 历史中/)).toBeTruthy()
+  })
+
+  test('logged ToolView 监听统一状态刷新，和 composer dock 切到同一验收阶段', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const preview = {
+      ...fixture.target,
+      state: 'preview_active' as const,
+      revision: 8,
+      capabilities: {
+        ...fixture.target.capabilities,
+        preflight: false,
+        preview: false,
+        rollbackPreview: true,
+        finalize: false,
+        finalizePreview: true,
+      },
+    }
+    let current = fixture.target
+    fixture.adapter.current = vi.fn(async () => ({ ok: true as const, value: { target: current } }))
+    render(loggedReviewRow(fixture.adapter))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy())
+    current = preview
+    window.dispatchEvent(new CustomEvent(WORKTREE_REVIEW_REFRESH_EVENT, { detail: { sessionId: 'target-session' } }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '验收通过并提交' })).toBeTruthy())
+    expect(fixture.adapter.current).toHaveBeenCalledTimes(2)
   })
 
   test('logged ToolView 在 Remote 可用时可连续 Preview 再按最新 revision 提交', async () => {

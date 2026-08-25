@@ -85,12 +85,17 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
 .dsh-wt-review-dock-copy { display:grid; min-width:0; flex:1; gap:1px; }
 .dsh-wt-review-dock-copy strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-wt-review-dock-copy span { color:var(--wt-muted); font-size:10px; }
-.dsh-wt-review-dock .dsh-wt-review-actions { padding:0; }
+.dsh-wt-review-dock .dsh-wt-review-actions { min-width:0; padding:0; }
+.dsh-wt-review-dock .dsh-wt-actions { justify-content:flex-end; }
 .dsh-wt-review-dock .dsh-wt-action-status,
 .dsh-wt-review-dock .dsh-wt-preflight-facts,
 .dsh-wt-review-dock .dsh-wt-conflict-list,
 .dsh-wt-review-dock .dsh-wt-delivery-proof:not(.dsh-wt-delivery-proof-compact) { display:none; }
 .dsh-wt-review-dock .dsh-wt-preflight { margin:0; padding:4px 6px; }
+.dsh-wt-review-dock .dsh-wt-preflight[data-preflight="loading"],
+.dsh-wt-review-dock .dsh-wt-preflight[data-preflight="ready"],
+.dsh-wt-review-dock .dsh-wt-preflight[data-preflight="local_advanced"],
+.dsh-wt-review-dock .dsh-wt-preflight[data-preflight="already_in_local"] { display:none; }
 .dsh-wt-review-dock .dsh-wt-preflight-head > span { display:none; }
 .dsh-wt-review-dock .dsh-wt-button { padding:5px 9px; font-size:11px; }
 .dsh-wt-review-dock .dsh-wt-more-trigger { width:29px; height:27px; }

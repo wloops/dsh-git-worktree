@@ -80,6 +80,7 @@ export function ReviewActions({
   onTargetChange,
 }: ReviewActionsProps) {
   const formId = useId()
+  const moreMenuRef = useRef<HTMLDetailsElement>(null)
   const [submitting, setSubmitting] = useState<Mutation | null>(null)
   const [commitMode, setCommitMode] = useState<CommitMode | null>(null)
   const [checkpointOpen, setCheckpointOpen] = useState(false)
@@ -142,10 +143,31 @@ export function ReviewActions({
     setCommitMessage(review.suggestedCommitMessage)
     setCheckpointMessage(review.suggestedCommitMessage)
     setCheckpointOpen(false)
+    if (moreMenuRef.current) moreMenuRef.current.open = false
     checkpointRequestId.current = null
     setRetainEnvironment(false)
     setRetention('retain_24h')
   }, [review.reviewId, review.suggestedCommitMessage])
+
+  useEffect(() => {
+    const closeFromOutside = (event: MouseEvent): void => {
+      const menu = moreMenuRef.current
+      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false
+    }
+    const closeFromKeyboard = (event: KeyboardEvent): void => {
+      const menu = moreMenuRef.current
+      if (event.key !== 'Escape' || !menu?.open) return
+      event.preventDefault()
+      menu.open = false
+      menu.querySelector<HTMLElement>('summary')?.focus()
+    }
+    document.addEventListener('mousedown', closeFromOutside)
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => {
+      document.removeEventListener('mousedown', closeFromOutside)
+      document.removeEventListener('keydown', closeFromKeyboard)
+    }
+  }, [])
 
   useEffect(() => {
     const revision = target?.revision
@@ -183,6 +205,10 @@ export function ReviewActions({
   const finish = (): void => {
     mutationLock.current = false
     setSubmitting(null)
+  }
+
+  const closeMoreMenu = (): void => {
+    if (moreMenuRef.current) moreMenuRef.current.open = false
   }
 
   const finishError = (nextError: WorktreeConsoleError): void => {
@@ -862,7 +888,11 @@ export function ReviewActions({
 
   const primary = ready ? (
     <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.preview || !safeReadyPreflight} onClick={() => { void previewLocal() }}>
-      {submitting === 'preview' ? '同步中…' : '同步到 Local 验收'}
+      {submitting === 'preview'
+        ? '同步中…'
+        : autoPreflightEnabled && (preflightSnapshot.status === 'idle' || preflightSnapshot.status === 'loading')
+          ? '检查中…'
+          : '同步到 Local 验收'}
     </button>
   ) : previewActive ? (
     <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => setCommitMode('finalize_preview')}>
@@ -896,53 +926,53 @@ export function ReviewActions({
       ) : (
         <div className="dsh-wt-actions">
           {primary}
-          <details className="dsh-wt-more-menu">
+          <details ref={moreMenuRef} className="dsh-wt-more-menu">
             <summary className="dsh-wt-more-trigger" aria-label="更多交付操作">•••</summary>
             <div className="dsh-wt-more-content" role="menu">
               {focusReview ? (
-                <button type="button" role="menuitem" className="dsh-wt-more-item" onClick={(event) => {
+                <button type="button" role="menuitem" className="dsh-wt-more-item" onClick={() => {
                   focusReview()
-                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  closeMoreMenu()
                 }}>查看验收卡</button>
               ) : null}
               {ready ? (
                 <>
-                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.checkpoint || !target.checkpointGeneration} onClick={(event) => {
+                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.checkpoint || !target.checkpointGeneration} onClick={() => {
                     openCheckpoint()
-                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    closeMoreMenu()
                   }}>保存阶段并继续</button>
-                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.resumeRevision} onClick={(event) => {
+                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.resumeRevision} onClick={() => {
                     void resumeRevision()
-                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    closeMoreMenu()
                   }}>{submitting === 'resume_revision' ? '恢复中…' : '继续修改'}</button>
-                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize || !safeReadyPreflight} onClick={(event) => {
+                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize || !safeReadyPreflight} onClick={() => {
                     setCommitMode('finish')
-                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    closeMoreMenu()
                   }}>跳过验收，直接提交</button>
                 </>
               ) : null}
               {previewActive && target.capabilities.checkpoint && target.checkpointGeneration ? (
-                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled} onClick={(event) => {
+                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled} onClick={() => {
                   openCheckpoint()
-                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  closeMoreMenu()
                 }}>撤回 Preview，保存阶段并继续</button>
               ) : null}
               {previewActive || rollbackRecoverySafe ? (
-                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={(event) => {
+                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
                   void rollbackPreview(true)
-                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  closeMoreMenu()
                 }}>{previewActive ? '撤回本次预览' : '安全撤回 Preview'}</button>
               ) : null}
               {finalizeRecoverySafe ? (
-                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={(event) => {
+                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => {
                   setCommitMode('finalize_preview')
-                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  closeMoreMenu()
                 }}>直接提交当前任务</button>
               ) : null}
               {canDiscard ? (
-                <button type="button" role="menuitem" className="dsh-wt-more-item dsh-wt-danger-text" disabled={allDisabled} onClick={(event) => {
+                <button type="button" role="menuitem" className="dsh-wt-more-item dsh-wt-danger-text" disabled={allDisabled} onClick={() => {
                   setDiscardOpen(true)
-                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  closeMoreMenu()
                 }}>放弃任务</button>
               ) : null}
             </div>

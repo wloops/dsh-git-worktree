@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetSummary } from '../console-contract.js'
 import type { WorktreeClientServices } from './actions.js'
 import { parseReviewTool, type ToolCallViewPropsLike } from './model.js'
-import { requestWorktreeReviewRefresh } from './review-console/status-events.js'
+import { requestWorktreeReviewRefresh, WORKTREE_REVIEW_REFRESH_EVENT } from './review-console/status-events.js'
 import {
   WorktreeReviewPanel,
   type WorktreeReviewEvidence,
@@ -43,14 +43,35 @@ export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props
   }, [payload?.reviewId, payload?.revision, sessionId])
 
   useEffect(() => {
+    if (!sessionId) return
+    const listener = (event: Event): void => {
+      const detail = (event as CustomEvent<{ sessionId?: string }>).detail
+      if (detail?.sessionId === sessionId) setRefreshNonce(value => value + 1)
+    }
+    window.addEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
+    return () => window.removeEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
+  }, [sessionId])
+
+  useEffect(() => {
     setLiveTarget(undefined)
     setLiveError(null)
+  }, [adapter, payload?.reviewId, payload?.revision, sessionId])
+
+  useEffect(() => {
     if (!adapter || !sessionId || !payload) return
     let active = true
     void adapter.current({ sessionId }).then(outcome => {
       if (!active) return
-      if (outcome.ok) setLiveTarget(outcome.value.target)
-      else setLiveError(`${outcome.error.code}: ${outcome.error.message}`)
+      if (outcome.ok) {
+        setLiveTarget(current => current
+          && current.checkoutId === outcome.value.target.checkoutId
+          && current.revision > outcome.value.target.revision
+          ? current
+          : outcome.value.target)
+        setLiveError(null)
+      } else {
+        setLiveError(`${outcome.error.code}: ${outcome.error.message}`)
+      }
     }, reason => {
       if (active) setLiveError(reason instanceof Error ? reason.message : String(reason))
     })
