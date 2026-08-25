@@ -11,6 +11,9 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.{ts,tsx}'],
+    // Heavy Git fixture suites contend for Windows process and file handles when
+    // Vitest runs files concurrently, which can outlive the timeout and lock temp dirs.
+    fileParallelism: process.platform !== 'win32',
     testTimeout: 60_000,
     hookTimeout: 60_000,
   },
