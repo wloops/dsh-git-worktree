@@ -97,6 +97,7 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 - `preparePreviewRecoveryAnalysis`
 - `createPreviewRecoveryHandoff`
 - `preview`
+- `checkpoint`
 - `resumeRevision`
 - `prepareReviewRegeneration`
 - `rollbackPreview`
@@ -115,6 +116,7 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 - `project_acceptance_busy` 的 blocker 只包含 checkout ID、owner Session ID 与状态，不含路径；等待 owner 保留 `preflight`，但 `preview`/`finalize` capability 关闭；
 - slot-holder 导航必须调用 Host `inspect`，且跨 source 窄授权只对“当前 Ready owner 的真实 acceptance holder”开放；Client 随后复验 checkout/owner/target/canonical cwd，兄弟仍不获得 mutation capability；
 - preview 必须在同一 Host mutation lock 下重新 plan/CAS，先持久化 receipt 和 internal refs，再写 Local；同一 canonical localRoot 只能有一个 active slot；
+- checkpoint 只允许 exact isolated owner 对当前 `ready_for_review` 或 `preview_active` 发起，绑定 checkout/revision/review、Host-derived generation 与 request ID；active Preview 在同一 locked operation 中先安全 rollback。Host 随后把 reviewed staged/unstaged/untracked snapshot 创建为 detached Worktree Commit，先 journal prepared commit facts，再保留内部 artifact，最终复验 HEAD/index/tree 并恢复 clean Working。Local branch/HEAD/refs/index/working tree 必须保持不变，旧 Review/Preview/proof 全部失效；相同完成请求只允许精确幂等重放，多次 checkpoint 最终仍只向 Local 交付一个累计 Commit；
 - `previewRecoveryPreflight` 只允许 exact owner 的指定 `preview_detached` identity，严格只读核验 receipt、四个 retained artifacts、Local HEAD/ref/tree、index tree、working tree、fingerprint 与 path-free acceptance holder；assessment 前后都要复验 registry identity 和 artifacts；
 - Recovery proof 使用 canonical key-sorted JSON + SHA-256 generation，绑定 Session/checkout/revision/Review/Preview、receipt fingerprint、Local snapshot、两种 action 结论与 holder revision；它只是 revalidation context，mutation 必须在 binding lock 内重算并比较，不能把 proof 当 bearer permission；
 - rollbackPreview/finalizePreview 必须绑定最新 revision，并复验 receipt 中的 Local HEAD/ref/fingerprint 与 Preview tree；`preview_detached` 还必须携带新鲜 recovery proof。rollback 只可跨越同一 ref 的可证明 fast-forward：先将 Preview 前 Local 层三方重放到新 HEAD，再证明新 HEAD 未包含 Preview 增量，最后反向移除 Preview并执行写前/写后 CAS；finalize 只把任务 delta 提交到最新同分支 Local HEAD，并保留可分离的 staged/unstaged/untracked 层；切分支、non-fast-forward、Preview 已入历史、artifact 缺失、slot contention 或 hunk 冲突继续 fail closed；
@@ -135,6 +137,7 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 | inspect | caller Session | checkout 属于已证明的关联组；目标 root identity 重验 | owner/source、同源 linked target 只读，或当前 Ready owner 的精确 slot holder 窄只读 | 返回当次 revision；Client 再验 cwd |
 | reviewDiff | owner/source 规则由 Backend 明确；默认 owner | 同上 | review 必须仍为当前 | revision + reviewId + fingerprint/head |
 | preflight/preview | isolated owner | Local acceptance project 与 target project 一致 | 仅 owner；busy 时 preflight 仍只读可用，preview/finalize 关闭 | revision + reviewId + isolated fingerprint/head + Local CAS；写前强制重检 |
+| checkpoint | isolated owner | 精确 managed Worktree；active Preview 额外绑定 receipt 的 canonical Local boundary | 仅 exact owner；Manager 无 mutation 控件 | revision + reviewId + Host generation + requestId + slot + isolated fingerprint/head；Preview rollback 与 Worktree commit 在同一 Host lock 中执行，写后复验 |
 | previewRecoveryPreflight | isolated owner | detached receipt 的 canonical Local boundary | 仅 exact owner；严格只读 | revision + reviewId + previewId + artifacts before/after + Local snapshot + holder revision + deterministic generation |
 | preparePreviewRecoveryAnalysis | isolated owner | 同上 | 仅 exact owner；旧 checkout 与 Local 只读 | 强制新 recovery proof + owner/cwd/identity revalidation |
 | createPreviewRecoveryHandoff | isolated owner | 新 checkout 从 proof 绑定的最新 Local HEAD 创建 | 仅 exact owner；旧证据不可消费 | 强制新 recovery proof + fresh target identity；失败保持旧 delivery/artifacts/Local/Worktree |

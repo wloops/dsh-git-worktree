@@ -288,6 +288,50 @@ describe('Domi-style Worktree Review', () => {
     await waitFor(() => expect(services.sessions.binding('target-session')?.session.prompt).toHaveBeenCalledTimes(1))
   })
 
+  test('Ready 可单飞保存阶段并继续，使用 generation-bound requestId 且不触碰 Local Preview', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.checkpoint = vi.fn(fixture.adapter.checkpoint)
+    fixture.adapter.preview = vi.fn(fixture.adapter.preview)
+    const onTargetChange = vi.fn()
+    render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} onTargetChange={onTargetChange} />)
+
+    fireEvent.click(screen.getByLabelText('更多交付操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: '保存阶段并继续' }))
+    expect(screen.getByRole('dialog', { name: '保存 Worktree 阶段并继续？' })).toBeTruthy()
+    expect(screen.getByText(/阶段不会发布到 Local/)).toBeTruthy()
+    const message = screen.getByRole('textbox', { name: 'Checkpoint Commit Message' })
+    fireEvent.change(message, { target: { value: 'feat(checkpoint): save stage one' } })
+    const confirm = screen.getByRole('button', { name: '确认保存并继续' })
+    fireEvent.click(confirm)
+    fireEvent.click(confirm)
+
+    await waitFor(() => expect(fixture.adapter.checkpoint).toHaveBeenCalledTimes(1))
+    expect(fixture.adapter.checkpoint).toHaveBeenCalledWith({
+      ...identity(),
+      expectedGeneration: '9'.repeat(64),
+      requestId: `checkpoint:${'9'.repeat(64)}`,
+      commitMessage: 'feat(checkpoint): save stage one',
+    })
+    expect(fixture.adapter.preview).not.toHaveBeenCalled()
+    expect(onTargetChange).toHaveBeenCalledWith(expect.objectContaining({ state: 'working', checkpoints: [expect.objectContaining({ sequence: 1 })] }))
+    expect(screen.getByText(/已保存第 1 个 Worktree 阶段并继续修改/)).toBeTruthy()
+  })
+
+  test('Preview active 保存阶段明确由 Host 先安全撤回 Preview，Client 不拆成两个写请求', async () => {
+    const { fixture, target } = previewTarget()
+    fixture.adapter.checkpoint = vi.fn(fixture.adapter.checkpoint)
+    fixture.adapter.rollbackPreview = vi.fn(fixture.adapter.rollbackPreview)
+    render(<WorktreeReviewPanel review={review({ revision: 8 })} adapter={fixture.adapter} identity={identity(8)} target={target} />)
+
+    fireEvent.click(screen.getByLabelText('更多交付操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: '撤回 Preview，保存阶段并继续' }))
+    expect(screen.getByRole('dialog', { name: '保存 Worktree 阶段并继续？' }).textContent).toContain('先按现有 receipt 安全撤回 Local Preview')
+    fireEvent.click(screen.getByRole('button', { name: '确认保存并继续' }))
+
+    await waitFor(() => expect(fixture.adapter.checkpoint).toHaveBeenCalledTimes(1))
+    expect(fixture.adapter.rollbackPreview).not.toHaveBeenCalled()
+  })
+
   test('Ready 更多菜单可手动继续修改，但正常 follow-up 不依赖该入口', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     fixture.adapter.resumeRevision = vi.fn(fixture.adapter.resumeRevision)

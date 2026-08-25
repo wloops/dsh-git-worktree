@@ -44,6 +44,17 @@ export interface WorktreeValidationItem {
   summary?: string
 }
 
+/** A saved stage that exists only in the managed Worktree history until final delivery. */
+export interface WorktreeCheckpointView {
+  checkpointId: string
+  sequence: number
+  reviewId: string
+  createdAt: number
+  summary: string
+  validationStatus: WorktreeValidationStatus
+  changedFiles: string[]
+}
+
 export interface WorktreeReviewView {
   reviewId: string
   iteration: number
@@ -183,6 +194,10 @@ export interface SessionTargetView {
   revision: number
   /** Delivery state for isolated checkouts; Local targets do not carry it. */
   delivery?: WorktreeDeliveryView
+  /** Linear saved stages that remain unpublished to Local. */
+  checkpoints?: WorktreeCheckpointView[]
+  /** Host-derived CAS generation for the exact active Review/checkpoint state. */
+  checkpointGeneration?: string
   /** Current project Local Preview slot state; does not expose another checkout identity. */
   reviewSlot?: 'available' | 'waiting'
   /** Owner Session holding the slot, used only for navigation/status. */
@@ -212,6 +227,14 @@ export interface SessionCheckoutFinishOperation extends SessionCheckoutOperation
 
 export interface SessionCheckoutPreviewOperation extends SessionCheckoutOperationBase {
   action: 'preview'
+}
+
+export interface SessionCheckoutCheckpointOperation extends SessionCheckoutOperationBase {
+  action: 'checkpoint'
+  commitMessage: string
+  expectedReviewId: string
+  expectedGeneration: string
+  requestId: string
 }
 
 export type WorktreePreviewRecoveryActionBlockReason =
@@ -311,6 +334,7 @@ export type SessionCheckoutOperation =
   | SessionCheckoutApplyOperation
   | SessionCheckoutFinishOperation
   | SessionCheckoutPreviewOperation
+  | SessionCheckoutCheckpointOperation
   | SessionCheckoutRollbackPreviewOperation
   | SessionCheckoutFinalizePreviewOperation
   | SessionCheckoutRetryCleanupOperation
@@ -326,6 +350,13 @@ export interface SessionCheckoutAppliedResult {
 export interface SessionCheckoutPreviewedResult {
   status: 'previewed'
   target: SessionTargetView
+  changedFiles: string[]
+}
+
+export interface SessionCheckoutCheckpointedResult {
+  status: 'checkpointed'
+  target: SessionTargetView
+  checkpoint: WorktreeCheckpointView
   changedFiles: string[]
 }
 
@@ -406,6 +437,8 @@ export interface ManagedWorktreeSummaryView {
   phase: SessionCheckoutPhase
   dirty: boolean
   commitOid: string | null
+  /** Number of saved managed-Worktree stages not yet delivered to Local. */
+  checkpointCount?: number
   retention?: Exclude<WorktreeRetentionMode, 'cleanup'>
   retainedAt?: number
   expiresAt?: number | null
@@ -459,6 +492,7 @@ export interface SessionCheckoutOperationErrorResult {
 export type SessionCheckoutOperationResult =
   | SessionCheckoutAppliedResult
   | SessionCheckoutPreviewedResult
+  | SessionCheckoutCheckpointedResult
   | SessionCheckoutPreviewRolledBackResult
   | SessionCheckoutPreviewDetachedResult
   | SessionCheckoutFinishedResult

@@ -42,8 +42,12 @@ interface ReviewActionsProps {
   onTargetChange: (target: WorktreeConsoleTargetSummary) => void
 }
 
-type Mutation = 'preview' | 'resume_revision' | 'recovery' | 'recovery_analysis' | 'recovery_handoff' | 'open_holder' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
+type Mutation = 'preview' | 'checkpoint' | 'resume_revision' | 'recovery' | 'recovery_analysis' | 'recovery_handoff' | 'open_holder' | 'rollback' | 'finish' | 'finalize_preview' | 'discard' | 'retry_cleanup'
 type CommitMode = 'finish' | 'finalize_preview'
+
+function checkpointRequestIdForGeneration(generation: string): string {
+  return `checkpoint:${generation}`
+}
 
 function isStale(error: WorktreeConsoleError): boolean {
   return error.code === 'stale_target' || error.code === 'stale_isolated' || error.code === 'stale_local'
@@ -78,8 +82,11 @@ export function ReviewActions({
   const formId = useId()
   const [submitting, setSubmitting] = useState<Mutation | null>(null)
   const [commitMode, setCommitMode] = useState<CommitMode | null>(null)
+  const [checkpointOpen, setCheckpointOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState(review.suggestedCommitMessage)
+  const [checkpointMessage, setCheckpointMessage] = useState(review.suggestedCommitMessage)
+  const checkpointRequestId = useRef<string | null>(null)
   const [retainEnvironment, setRetainEnvironment] = useState(false)
   const [retention, setRetention] = useState<Exclude<WorktreeRetentionMode, 'cleanup'>>('retain_24h')
   const [message, setMessage] = useState<string | null>(null)
@@ -133,6 +140,9 @@ export function ReviewActions({
 
   useEffect(() => {
     setCommitMessage(review.suggestedCommitMessage)
+    setCheckpointMessage(review.suggestedCommitMessage)
+    setCheckpointOpen(false)
+    checkpointRequestId.current = null
     setRetainEnvironment(false)
     setRetention('retain_24h')
   }, [review.reviewId, review.suggestedCommitMessage])
@@ -424,6 +434,55 @@ export function ReviewActions({
     }
     applyTarget(outcome.value.target)
     setMessage('已同步为可撤回的 Local Preview；请在 Local 中验收。')
+    finish()
+  }
+
+  const openCheckpoint = (): void => {
+    if (!target?.checkpointGeneration || !target.capabilities.checkpoint || disabled || submitting !== null) return
+    checkpointRequestId.current = checkpointRequestIdForGeneration(target.checkpointGeneration)
+    setCheckpointMessage(review.suggestedCommitMessage)
+    setCheckpointOpen(true)
+  }
+
+  const checkpoint = async (): Promise<void> => {
+    const value = checkpointMessage.trim()
+    const requestId = checkpointRequestId.current
+    if (!value || value.length > 500 || !requestId || !begin('checkpoint') || !adapter || !identity || !target?.checkpointGeneration) return
+    const expectedCount = target.checkpoints?.length ?? 0
+    const outcome = await adapter.checkpoint({
+      ...identity,
+      expectedGeneration: target.checkpointGeneration,
+      requestId,
+      commitMessage: value,
+    })
+    if (!isActive()) {
+      finish()
+      return
+    }
+    if (!outcome.ok) {
+      finishError(outcome.error)
+      return
+    }
+    const saved = outcome.value.checkpoint
+    const nextTarget = outcome.value.target
+    if (
+      !saved
+      || saved.reviewId !== identity.expectedReviewId
+      || saved.sequence !== expectedCount + 1
+      || nextTarget.checkoutId !== identity.checkoutId
+      || nextTarget.ownerSessionId !== identity.sessionId
+      || nextTarget.state !== 'working'
+      || nextTarget.review !== undefined
+      || nextTarget.checkpoints?.at(-1)?.checkpointId !== saved.checkpointId
+    ) {
+      setError({ code: 'checkout_mismatch', message: 'Host 返回的 Checkpoint 身份或 Working 状态不一致。' })
+      finish()
+      return
+    }
+    applyTarget(nextTarget)
+    setCheckpointOpen(false)
+    checkpointRequestId.current = null
+    setMessage(`已保存第 ${saved.sequence} 个 Worktree 阶段并继续修改；阶段尚未发布到 Local。`)
     finish()
   }
 
@@ -792,6 +851,11 @@ export function ReviewActions({
   const closeCommit = (): void => {
     if (submitting === null) setCommitMode(null)
   }
+  const closeCheckpoint = (): void => {
+    if (submitting !== null) return
+    setCheckpointOpen(false)
+    checkpointRequestId.current = null
+  }
   const closeDiscard = (): void => {
     if (submitting === null) setDiscardOpen(false)
   }
@@ -843,6 +907,10 @@ export function ReviewActions({
               ) : null}
               {ready ? (
                 <>
+                  <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.checkpoint || !target.checkpointGeneration} onClick={(event) => {
+                    openCheckpoint()
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                  }}>保存阶段并继续</button>
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.resumeRevision} onClick={(event) => {
                     void resumeRevision()
                     event.currentTarget.closest('details')?.removeAttribute('open')
@@ -852,6 +920,12 @@ export function ReviewActions({
                     event.currentTarget.closest('details')?.removeAttribute('open')
                   }}>跳过验收，直接提交</button>
                 </>
+              ) : null}
+              {previewActive && target.capabilities.checkpoint && target.checkpointGeneration ? (
+                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled} onClick={(event) => {
+                  openCheckpoint()
+                  event.currentTarget.closest('details')?.removeAttribute('open')
+                }}>撤回 Preview，保存阶段并继续</button>
               ) : null}
               {previewActive || rollbackRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={(event) => {
@@ -875,6 +949,34 @@ export function ReviewActions({
           </details>
         </div>
       )}
+
+      <Modal
+        open={checkpointOpen}
+        onClose={closeCheckpoint}
+        title="保存 Worktree 阶段并继续？"
+        closeLabel="关闭保存阶段确认"
+        description={previewActive
+          ? '会先按现有 receipt 安全撤回 Local Preview，再把验收快照保存为仅存在于 managed Worktree 的阶段提交。撤回失败或 Local 漂移时会停止。'
+          : '把当前验收快照保存为仅存在于 managed Worktree 的阶段提交，然后在同一 Session 继续开发；Local 不会收到该提交。'}
+        footer={(
+          <div className="dsh-wt-modal-footer">
+            <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCheckpoint}>取消</button>
+            <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={submitting !== null || !checkpointMessage.trim() || checkpointMessage.trim().length > 500} onClick={() => { void checkpoint() }}>
+              {submitting === 'checkpoint' ? '正在保存…' : '确认保存并继续'}
+            </button>
+          </div>
+        )}
+      >
+        <div className="dsh-wt-commit-dialog">
+          <div className="dsh-wt-checkpoint-note">
+            <strong>阶段不会发布到 Local</strong>
+            <span>已有 {target?.checkpoints?.length ?? 0} 个阶段；最终交付仍会从原始任务基线汇总为一个 Local Commit。</span>
+          </div>
+          <label htmlFor={`${formId}-checkpoint-message`}>Checkpoint Commit Message</label>
+          <textarea id={`${formId}-checkpoint-message`} aria-label="Checkpoint Commit Message" rows={6} maxLength={500} value={checkpointMessage} onChange={event => setCheckpointMessage(event.target.value)} />
+          <div className="dsh-wt-character-count">{checkpointMessage.length}/500</div>
+        </div>
+      </Modal>
 
       <Modal
         open={commitMode !== null}

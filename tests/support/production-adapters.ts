@@ -366,6 +366,7 @@ function isJournal(value: unknown): boolean {
   if (value.operation === 'create') return value.step === 'creating_worktree'
   const validOperation = value.operation === 'apply'
     || value.operation === 'preview'
+    || value.operation === 'checkpoint'
     || value.operation === 'rollback_preview'
     || value.operation === 'finish'
     || value.operation === 'finalize_preview'
@@ -389,7 +390,15 @@ function isJournal(value: unknown): boolean {
     && (value.localHeadOid === undefined || typeof value.localHeadOid === 'string')
     && (value.isolatedHeadOid === undefined || typeof value.isolatedHeadOid === 'string')
     && (value.commitOid === undefined || typeof value.commitOid === 'string')
+    && (value.checkpointId === undefined || typeof value.checkpointId === 'string')
+    && (value.checkpointSequence === undefined || typeof value.checkpointSequence === 'number')
+    && (value.checkpointRequestId === undefined || typeof value.checkpointRequestId === 'string')
+    && (value.checkpointRequestedRevision === undefined || typeof value.checkpointRequestedRevision === 'number')
+    && (value.checkpointMessage === undefined || typeof value.checkpointMessage === 'string')
+    && (value.checkpointIndexTreeOid === undefined || typeof value.checkpointIndexTreeOid === 'string')
+    && (value.parentOid === undefined || typeof value.parentOid === 'string')
     && (value.retention === undefined || value.retention === 'cleanup' || value.retention === 'retain_24h' || value.retention === 'retain_3d' || value.retention === 'retain_manual')
+    && (value.recoveryGeneration === undefined || typeof value.recoveryGeneration === 'string')
     && (value.resumeRevision === undefined || typeof value.resumeRevision === 'boolean')
     && (value.changedFiles === undefined || isStringArray(value.changedFiles))
 }

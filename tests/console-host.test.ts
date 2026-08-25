@@ -13,6 +13,7 @@ import type {
   SessionCheckoutRegistryPort,
 } from '../src/ports.js'
 import type { SessionTargetView } from '../src/types.js'
+import { checkpointGenerationForRecord } from '../src/checkpoint.js'
 import { createWorktreeConsoleControlPlane } from '../src/console-host/control-plane.js'
 import {
   createGitWorktreeReviewDiffReader,
@@ -343,6 +344,67 @@ describe('Worktree Console Host control plane', () => {
       },
     })
     expect(module.resumeRevision).not.toHaveBeenCalled()
+  })
+
+  it('saves an exact generation-bound checkpoint and returns the Working projection without leaking internal refs', async () => {
+    const record = readyRecord()
+    const generation = checkpointGenerationForRecord(record)
+    if (!generation) throw new Error('expected checkpoint generation')
+    let value: ManagedCheckoutsRegistry = {
+      version: 2, revision: 1, sessionBindings: {}, managedCheckouts: { [record.checkoutId]: record },
+    }
+    const registryPort: SessionCheckoutRegistryPort = {
+      read: () => structuredClone(value),
+      write: nextValue => { value = structuredClone(nextValue) },
+    }
+    const { module, control } = plane(record, { registry: registryPort })
+    vi.mocked(module.operate).mockImplementation(async operation => {
+      if (operation.action !== 'checkpoint') throw new Error('expected checkpoint')
+      const checkpoint = {
+        checkpointId: 'checkpoint-1', sequence: 1, reviewId: operation.expectedReviewId, createdAt: 2,
+        summary: 'Ready', validationStatus: 'passed' as const, changedFiles: ['src/index.ts'],
+      }
+      const current = value.managedCheckouts[record.checkoutId]!
+      value.managedCheckouts[record.checkoutId] = {
+        ...current,
+        revision: 10,
+        delivery: { state: 'working', iteration: 1 },
+        checkpoints: [{
+          ...checkpoint,
+          requestId: operation.requestId,
+          requestedRevision: operation.expectedRevision,
+          generation: operation.expectedGeneration,
+          iteration: 1,
+          commitOid: B,
+          parentOid: A,
+          commitMessage: operation.commitMessage,
+        }],
+      }
+      return {
+        status: 'checkpointed',
+        target: { ...(await module.inspect('target-session')), revision: 10, delivery: { state: 'working', iteration: 1 }, checkpoints: [checkpoint] },
+        checkpoint,
+        changedFiles: ['src/index.ts'],
+      }
+    })
+
+    const result = await control.checkpoint({
+      sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+      expectedGeneration: generation, requestId: `checkpoint:${generation}`, commitMessage: 'feat(checkpoint): save stage',
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        target: { state: 'working', revision: 10, checkpoints: [expect.objectContaining({ sequence: 1 })] },
+        checkpoint: { checkpointId: 'checkpoint-1', sequence: 1 },
+      },
+    })
+    expect(module.operate).toHaveBeenCalledWith({
+      action: 'checkpoint', sessionId: 'target-session', expectedRevision: 7, expectedReviewId: 'review-1',
+      expectedGeneration: generation, requestId: `checkpoint:${generation}`, commitMessage: 'feat(checkpoint): save stage',
+    })
+    expect(JSON.stringify(result)).not.toContain('refs/dsh')
   })
 
   it('returns a structured apply-conflict continuation from a Preview race', async () => {

@@ -28,6 +28,7 @@ export const oidSchema = z.union([
 ])
 export const previewIdSchema = z.string().min(1).max(200).refine(value => !/[\\/\0\r\n]/u.test(value), 'unsafe preview id')
 export const generationSchema = z.string().regex(/^[0-9a-f]{64}$/u)
+export const requestIdSchema = z.string().min(1).max(200).refine(value => !/[\0\r\n]/u.test(value), 'unsafe request id')
 export const booleanSchema = z.boolean()
 export const optionalBooleanSchema = z.union([booleanSchema, z.undefined()])
 export const retentionSchema = z.enum(['cleanup', 'retain_24h', 'retain_3d', 'retain_manual'])
@@ -38,6 +39,15 @@ const validationItemSchema = strict({
   command: z.string(),
   status: z.enum(['passed', 'failed', 'not_run']),
   summary: z.string().optional(),
+})
+const checkpointSchema = strict({
+  checkpointId: checkoutIdSchema,
+  sequence: z.number().int().positive(),
+  reviewId: reviewIdSchema,
+  createdAt: z.number().finite().nonnegative(),
+  summary: z.string().max(1000),
+  validationStatus: z.enum(['passed', 'failed', 'partial', 'not_run']),
+  changedFiles: z.array(z.string().min(1).max(1000).refine(value => !/^(?:[A-Za-z]:[\\/]|[\\/])/u.test(value) && !value.split(/[\\/]/u).some(segment => segment === '' || segment === '.' || segment === '..'), 'unsafe checkpoint file')).max(500),
 })
 const reviewSchema = strict({
   reviewId: reviewIdSchema,
@@ -58,6 +68,7 @@ const capabilitiesSchema = strict({
   discard: z.boolean(),
   preflight: z.boolean(),
   preview: z.boolean(),
+  checkpoint: z.boolean(),
   resumeRevision: z.boolean(),
   rollbackPreview: z.boolean(),
   finalize: z.boolean(),
@@ -100,6 +111,8 @@ const targetSummarySchema = strict({
   cleanupMessage: z.string().optional(),
   deliveryProof: deliveryProofSchema.optional(),
   review: reviewSchema.optional(),
+  checkpoints: z.array(checkpointSchema).max(100).optional(),
+  checkpointGeneration: generationSchema.optional(),
   reviewSlot: z.enum(['available', 'waiting']).optional(),
   reviewSlotOwnerSessionId: sessionIdSchema.optional(),
   reviewSlotHolder: acceptanceBlockerSchema.optional(),
@@ -201,6 +214,7 @@ export const mutationResponseSchema: z.ZodType<WorktreeConsoleMutationResponse> 
   target: targetSummarySchema,
   changedFiles: z.array(z.string()).optional(),
   commitOid: oidSchema.nullable().optional(),
+  checkpoint: checkpointSchema.optional(),
   recoveryContinuation: recoveryProofSchema.optional(),
 })
 const diffFileSchema = strict({

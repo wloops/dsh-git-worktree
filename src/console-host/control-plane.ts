@@ -5,6 +5,7 @@ import type {
   WorktreeConsoleCreatePreviewRecoveryHandoffRequest,
   WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateResponse,
+  WorktreeConsoleCheckpointRequest,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleDiscardRequest,
   WorktreeConsoleFinalizePreviewRequest,
@@ -65,6 +66,7 @@ export interface WorktreeConsoleControlPlane {
   preparePreviewRecoveryAnalysis(request: WorktreeConsolePreparePreviewRecoveryAnalysisRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   createPreviewRecoveryHandoff(request: WorktreeConsoleCreatePreviewRecoveryHandoffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  checkpoint(request: WorktreeConsoleCheckpointRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   prepareReviewRegeneration(request: WorktreeConsolePrepareRegenerationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
@@ -337,7 +339,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
           revision: holder.revision,
           state: holder.delivery.state,
         },
-        capabilities: { ...target.capabilities, preview: false, finalize: false },
+        capabilities: { ...target.capabilities, preview: false, checkpoint: false, finalize: false },
       } : {}),
     } as T
   }
@@ -638,6 +640,34 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
           generation: launch.continuation.generation,
         },
       }
+    }),
+
+    checkpoint: request => outcome(async () => {
+      const record = await authorize(request.sessionId, request.checkoutId)
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以保存阶段')
+      const commitMessage = request.commitMessage.trim()
+      if (!commitMessage || commitMessage.length > 500 || !safeRecoveryRequestId(request.requestId)) {
+        throw domainError('invalid_input', 'Checkpoint Commit Message 或 requestId 无效')
+      }
+      const result = await options.module.operate({
+        action: 'checkpoint',
+        sessionId: request.sessionId,
+        expectedRevision: request.expectedRevision,
+        expectedReviewId: request.expectedReviewId,
+        expectedGeneration: request.expectedGeneration,
+        requestId: request.requestId,
+        commitMessage,
+      })
+      if (result.status === 'error') throw domainError(result.code, result.message)
+      if (result.status === 'preview_detached') {
+        return { ...(await mutationResponse(request.sessionId, request.checkoutId)), changedFiles: [...result.changedFiles] }
+      }
+      if (result.status !== 'checkpointed') throw domainError('operation_not_allowed', 'Checkpoint 返回了非预期状态')
+      const response = await mutationResponse(request.sessionId, request.checkoutId)
+      if (response.target.state !== 'working' || response.target.revision !== result.target.revision) {
+        throw domainError('checkout_mismatch', 'Checkpoint 后 Worktree 状态未收敛到 Working')
+      }
+      return { ...response, checkpoint: result.checkpoint, changedFiles: [...result.changedFiles] }
     }),
 
     preview: request => outcome(async () => {

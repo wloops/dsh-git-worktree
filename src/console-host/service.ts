@@ -100,6 +100,21 @@ export class WorktreeConsoleService extends TypertRemoteService {
   }
 
   @Remote
+  checkpoint(
+    agent: Agent,
+    checkoutId: string,
+    expectedRevision: number,
+    expectedReviewId: string,
+    expectedGeneration: string,
+    requestId: string,
+    commitMessage: string,
+  ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return this.controlPlane.checkpoint({
+      sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedGeneration, requestId, commitMessage,
+    })
+  }
+
+  @Remote
   prepareReviewRegeneration(
     agent: Agent,
     checkoutId: string,

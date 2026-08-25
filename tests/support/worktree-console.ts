@@ -1,6 +1,7 @@
 import type {
   WorktreeConsoleAdapter,
   WorktreeConsoleBeginNextIterationRequest,
+  WorktreeConsoleCheckpointRequest,
   WorktreeConsoleCreatePreviewRecoveryHandoffRequest,
   WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateRequest,
@@ -64,6 +65,7 @@ function readyTarget(): WorktreeConsoleTargetDetails {
       discard: true,
       preflight: true,
       preview: true,
+      checkpoint: true,
       resumeRevision: true,
       rollbackPreview: false,
       finalize: true,
@@ -72,6 +74,7 @@ function readyTarget(): WorktreeConsoleTargetDetails {
       retryCleanup: false,
       beginNextIteration: false,
     },
+    checkpointGeneration: '9'.repeat(64),
     review: {
       reviewId: 'review-1',
       revision: 7,
@@ -129,6 +132,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           discard: false,
           preflight: false,
           preview: false,
+          checkpoint: false,
           resumeRevision: false,
           rollbackPreview: false,
           finalize: false,
@@ -235,6 +239,43 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
         revision: target.revision + 1,
         capabilities: { ...target.capabilities, preflight: false, preview: false, resumeRevision: false, rollbackPreview: true, finalize: false, finalizePreview: true },
       }, changedFiles: ['src/index.ts'] })
+    },
+    async checkpoint(request: WorktreeConsoleCheckpointRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+      record('checkpoint', request)
+      const saved = {
+        checkpointId: 'checkpoint-1', sequence: 1, reviewId: request.expectedReviewId, createdAt: 2,
+        summary: target.review!.summary, validationStatus: target.review!.validationStatus,
+        changedFiles: [...target.review!.changedFiles],
+      }
+      const {
+        review: _review,
+        checkpointGeneration: _generation,
+        managedRoot: _managedRoot,
+        sourceRoot: _sourceRoot,
+        sourceOid: _sourceOid,
+        currentBranch: _currentBranch,
+        ...working
+      } = target
+      return outcome({
+        target: {
+          ...working,
+          state: 'working',
+          revision: target.revision + 3,
+          checkpoints: [saved],
+          capabilities: {
+            ...target.capabilities,
+            preflight: false,
+            preview: false,
+            checkpoint: false,
+            resumeRevision: false,
+            rollbackPreview: false,
+            finalize: false,
+            finalizePreview: false,
+          },
+        },
+        checkpoint: saved,
+        changedFiles: [...saved.changedFiles],
+      })
     },
     async resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
       record('resumeRevision', request)

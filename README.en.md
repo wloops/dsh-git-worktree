@@ -42,6 +42,7 @@ This plugin separates a coding task into two explicit boundaries:
 - **Parallel preparation, serialized acceptance** — multiple Isolated Worktrees may prepare tasks concurrently, while one active Preview per Local project prevents review drafts from being written over each other.
 - **Stop on conflict instead of overwriting** — overlapping changes, Local drift, branch movement, or an inseparable delta enters conflict/recovery rather than silently choosing one side.
 - **Task-only commit** — acceptance creates one commit for the isolated task while preserving separable Local work.
+- **Save stage and continue** — a Ready or active Preview can be explicitly saved as a managed-Worktree-only Checkpoint. The stage commit never enters Local; development resumes from a clean worktree, and final delivery still creates one cumulative Local task commit.
 - **Continuous Session iterations** — after delivery and cleanup, iteration + 1 can start in the same Session with the full conversation intact.
 - **Automatic read-only Preflight** — once Ready, the Review card and composer dock show Local/Worktree HEAD, effective base, sync conditions, conflicts, and the acceptance slot without writing Local.
 - **Agent recovery continuation** — a conflict resumes Working only after an explicit user click, then sends the Local HEAD and conflict files to the exact owner Agent through the official Harness Session API; `stale_isolated` stays strictly read-only and only regenerates the review.
@@ -70,8 +71,10 @@ Agent edits and validates in the Worktree
     ▼
 Ready for Review
     │
+    ├─ Save stage and continue ── Worktree-only Checkpoint
     ├─ Sync to Local Preview ── Accept and commit
-    │                         └─ Roll back and continue editing
+    │                         ├─ Roll back and continue editing
+    │                         └─ Roll back Preview, save stage, continue
     ├─ Skip Preview and commit directly
     └─ Discard
     │
@@ -103,11 +106,14 @@ This stores a review report. It does not write to Local and does not create a co
 
 The user can then:
 
+- **Save stage and continue** — commit the reviewed snapshot only inside the managed Worktree, clean the construction state, and resume Working;
 - **Sync to Local for review** — create an uncommitted, reversible Preview;
-- **Accept and commit** — commit only the task delta;
+- **Accept and commit** — commit only the cumulative task delta;
 - **Roll back and continue editing** — remove the Preview and return to the Worktree;
 - **Skip review and commit directly** — use the guarded direct-delivery path after explicit confirmation;
 - **Discard** — clean up the task environment when all safety conditions pass.
+
+Checkpoint is available only to the exact owner when the current Review, revision, generation, and acceptance slot still match. Under the Host lock it creates a Worktree-only commit, persists the operation journal and internal artifact, performs post-write verification, and invalidates the old Review/Preview/proof. An exact completed request ID can be replayed safely. For an active Preview, the same Host operation first performs a safe rollback; if rollback cannot be proven, recovery evidence is retained and the operation stops. Local branch/HEAD, index, staged, unstaged, untracked, and working-tree state never enter the Checkpoint commit, and multiple Checkpoints still deliver one final Local commit.
 
 If Preflight reports `stale_local`, `stale_isolated`, or a conflict, old Preview/Finalize actions are disabled immediately. `stale_local` only refreshes read-only facts. A conflict resumes Working only after the user clicks **Let Agent resolve conflicts**: under the mutation lock, the Host reruns conflict Preflight/CAS, generates and persists an exact recovery proof, and only then lets the Client use the official Harness `ISession.prompt()` face to send structured Local HEAD and conflict-file context to the exact owner Session. **Regenerate review result** for `stale_isolated` keeps the target Ready and strictly read-only; the Host performs another read-only check and persists a separate, non-interchangeable proof without resuming Working or modifying files. Sending waits for the Session to load and stop streaming, then rechecks the Host proof field by field together with checkout/review/revision/cwd; duplicate clicks remain single-flight. Unsent requests survive a page refresh, but browser storage is untrusted context and must pass exhaustive kind, exact-field, OID, safe-relative-path, and Host-authority validation. An unknown in-flight result or an explicit failure requires a user-triggered retry. `project_acceptance_busy` exposes only a path-free holder summary; navigation happens only after the Host re-proves checkout, owner Session, and canonical cwd identity. After Finalize, the Review surface retains a Delivery Proof rather than collapsing to a generic success message.
 
@@ -203,7 +209,7 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific Git tag:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.5.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.0
 ```
 
 With pnpm 10 or newer, a Git install may require this entry in the profile's `pnpm-workspace.yaml` before retrying:
@@ -258,6 +264,7 @@ Important rules include:
 - an acceptance-slot blocker exposes only a path-free checkout/Session/state summary; opening it requires a fresh inspect plus owner and canonical-cwd verification;
 - automatic Preflight creates no plan, slot, Git ref, or Local write; Preview and direct Finalize bypass display caches and check again; a waiting-to-available slot transition invalidates the old busy result, while automatic errors require an explicit retry;
 - Preview receipts and internal refs are persisted before Local writes;
+- Checkpoint binds exact owner, checkout, revision, review, generation, request ID, and acceptance slot. The Host atomically rolls back an active Preview, commits only the managed Worktree snapshot, verifies the write, invalidates old Review/Preview/proof state, and exposes neither paths nor internal refs through Remote;
 - `preview_detached` Recovery Preflight is strictly read-only and rechecks all four retained artifacts before and after assessment; Remote proof stays path-free and never exposes Local or Worktree paths;
 - Preview, Rollback, Finalize, Discard, and resume-editing paths bind checkout, revision, review, and fingerprint identity; detached mutation additionally requires a fresh generation that the Host recomputes under lock before journaling;
 - Rollback removes only the delta proven to belong to the Preview and preserves separable Local changes made during review; Finalize commits only the task delta onto the latest same-branch Local HEAD;
@@ -277,7 +284,7 @@ See [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md) for t
 - Workflow `agent({ isolation })` integration is not available in the verified Harness `0.1.1-rc.2` line.
 - Subagents inherit their parent Session cwd; they share the isolated boundary only when the parent is already a Worktree Session.
 - Dependency snapshot/restore and the complete collaborator handoff UI have not yet been implemented.
-- A reviewed stage cannot yet be saved as an internal checkpoint before continuing development.
+- Checkpoint history is currently append-only metadata: editing, deleting, reordering, and arbitrary rollback are not supported.
 - An Isolated Session cannot yet request a bounded transaction to repair the real Local checkout directly.
 - Cleanup removes the current Worktree cwd, but a delivered Session can recreate the path and start another iteration after strict validation.
 
@@ -294,7 +301,7 @@ The following items describe possible directions for continuing the project. The
 
 ### Medium term
 
-- Add “save stage and continue” so long tasks can record reviewed stages inside the isolated checkout, continue from a clean worktree, and retain stage history in final acceptance.
+- Continue improving Checkpoint history presentation from real long-running Harness task feedback.
 - Evaluate a bounded Local repair transaction: a user-approved temporary authorization tied to the current Local state, allowing an Isolated Session to repair Local through restricted tools without changing its Session Target, then automatically resume the original task.
 - Port dependency snapshot/restore to reduce repeated setup across Worktrees.
 - Complete the collaborator/subagent handoff lifecycle so delegated work can be released and delivered safely.

@@ -119,6 +119,7 @@ function createContext(options: {
   mkdirSync(projectRoot, { recursive: true })
   git(projectRoot, 'config', 'user.name', 'Domi Test')
   git(projectRoot, 'config', 'user.email', 'domi@example.test')
+  git(projectRoot, 'config', 'core.autocrlf', 'false')
   writeFileSync(join(projectRoot, 'tracked.txt'), 'base\n')
   git(projectRoot, 'add', 'tracked.txt')
   git(projectRoot, 'commit', '-m', 'base')
@@ -504,6 +505,131 @@ describe('SessionCheckoutModule', () => {
     expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBytes)
     expect(readFileSync(join(managedRoot, 'tracked.txt'), 'utf8')).toBe('reviewed draft\n')
     expect(context.module.runtimeContext('session-1')).toContain('worktree_ready_for_review')
+  })
+
+  test('Given an exact Ready review When checkpoint is confirmed Then it saves one Worktree-only stage, replays the same request idempotently, and final delivery remains one cumulative Local commit', async () => {
+    const context = createContext({ checkoutIds: ['checkpoint-checkout', 'checkpoint-operation', 'checkpoint-id', 'checkpoint-mutation', 'finish-operation'] })
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(context.projectRoot, 'local-staged.txt'), 'keep staged\n')
+    git(context.projectRoot, 'add', 'local-staged.txt')
+    writeFileSync(join(context.projectRoot, 'local-untracked.txt'), 'keep untracked\n')
+    const localHeadBefore = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const localStatusBefore = git(context.projectRoot, 'status', '--porcelain=v1', '-uall')
+
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'checkpoint stage one\n')
+    writeFileSync(join(managedRoot, 'stage-one.txt'), 'stage one\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'checkpoint stage one', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'feat: checkpoint stage one',
+    })
+    if (ready.delivery?.state !== 'ready_for_review' || !ready.checkpointGeneration) throw new Error('expected checkpoint generation')
+    const request = {
+      action: 'checkpoint' as const,
+      sessionId: 'session-1',
+      expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId,
+      expectedGeneration: ready.checkpointGeneration,
+      requestId: `checkpoint:${ready.checkpointGeneration}`,
+      commitMessage: 'feat(checkpoint): save stage one',
+    }
+
+    const saved = await context.module.operate(request)
+    if (saved.status === 'error') throw new Error(`${saved.code}: ${saved.message}`)
+
+    expect(saved).toMatchObject({
+      status: 'checkpointed',
+      checkpoint: { sequence: 1, reviewId: ready.delivery.review.reviewId },
+      target: { delivery: { state: 'working', iteration: 1 }, checkpoints: [expect.objectContaining({ sequence: 1 })] },
+    })
+    if (saved.status !== 'checkpointed') throw new Error('expected checkpointed')
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHeadBefore)
+    expect(git(context.projectRoot, 'status', '--porcelain=v1', '-uall')).toBe(localStatusBefore)
+    expect(git(managedRoot, 'status', '--porcelain=v1', '-uall')).toBe('')
+    expect(git(managedRoot, 'rev-parse', 'HEAD')).not.toBe(localHeadBefore)
+    expect(context.module.runtimeContext('session-1')).toContain('Saved Worktree checkpoints: 1')
+    expect(context.module.runtimeContext('session-1')).toContain('remain unpublished to Local')
+
+    const replayed = await context.module.operate(request)
+    expect(replayed).toMatchObject({ status: 'checkpointed', checkpoint: { checkpointId: saved.checkpoint.checkpointId, sequence: 1 } })
+    expect((await context.module.inspect('session-1')).checkpoints).toHaveLength(1)
+
+    writeFileSync(join(managedRoot, 'stage-two.txt'), 'stage two\n')
+    const finalReady = await context.module.markReadyForReview('session-1', {
+      summary: 'cumulative final review', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'feat: deliver cumulative task',
+    })
+    if (finalReady.delivery?.state !== 'ready_for_review') throw new Error('expected final ready')
+    const finished = await context.module.operate({
+      action: 'finish', sessionId: 'session-1', expectedRevision: finalReady.revision,
+      expectedReviewId: finalReady.delivery.review.reviewId,
+      commitMessage: 'feat: deliver cumulative task', retention: 'retain_manual',
+    })
+
+    expect(finished).toMatchObject({ status: 'finished', cleanup: 'retained' })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD^')).toBe(localHeadBefore)
+    expect(git(context.projectRoot, 'rev-list', '--count', `${localHeadBefore}..HEAD`)).toBe('1')
+    expect(git(context.projectRoot, 'show', '--format=', '--name-only', 'HEAD').split('\n').sort()).toEqual([
+      'stage-one.txt', 'stage-two.txt', 'tracked.txt',
+    ])
+    expect(git(context.projectRoot, 'diff', '--cached', '--name-only')).toBe('local-staged.txt')
+    expect(readFileSync(join(context.projectRoot, 'local-untracked.txt'), 'utf8')).toBe('keep untracked\n')
+  })
+
+  test('Given an active Local Preview When checkpoint is confirmed Then Host rolls back the receipt first and saves the reviewed Worktree stage without leaving Preview bytes in Local', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(context.projectRoot, 'local-note.txt'), 'preserve local note\n')
+    const localBefore = readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')
+    const statusBefore = git(context.projectRoot, 'status', '--porcelain=v1', '-uall')
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'preview checkpoint stage\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'preview checkpoint', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'feat: preview checkpoint',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready')
+    const previewed = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (previewed.status !== 'previewed' || previewed.target.delivery?.state !== 'preview_active' || !previewed.target.checkpointGeneration) {
+      throw new Error('expected preview generation')
+    }
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/gu, '\n')).toBe('preview checkpoint stage\n')
+
+    const saved = await context.module.operate({
+      action: 'checkpoint', sessionId: 'session-1', expectedRevision: previewed.target.revision,
+      expectedReviewId: previewed.target.delivery.review.reviewId,
+      expectedGeneration: previewed.target.checkpointGeneration,
+      requestId: `checkpoint:${previewed.target.checkpointGeneration}`,
+      commitMessage: 'feat(checkpoint): save preview stage',
+    })
+
+    expect(saved).toMatchObject({ status: 'checkpointed', target: { delivery: { state: 'working' } } })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/gu, '\n')).toBe(localBefore.replace(/\r\n/gu, '\n'))
+    expect(readFileSync(join(context.projectRoot, 'local-note.txt'), 'utf8')).toBe('preserve local note\n')
+    expect(git(context.projectRoot, 'status', '--porcelain=v1', '-uall')).toBe(statusBefore)
+  })
+
+  test('Given a stale or foreign checkpoint identity When checkpoint is requested Then it fails closed before changing Worktree or Local', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'checkpoint candidate\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'checkpoint candidate', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: checkpoint candidate',
+    })
+    if (ready.delivery?.state !== 'ready_for_review' || !ready.checkpointGeneration) throw new Error('expected generation')
+    const localHead = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const managedHead = git(managedRoot, 'rev-parse', 'HEAD')
+
+    expect(await context.module.operate({
+      action: 'checkpoint', sessionId: 'session-1', expectedRevision: ready.revision,
+      expectedReviewId: 'stale-review', expectedGeneration: ready.checkpointGeneration,
+      requestId: 'checkpoint:stale-review', commitMessage: 'test: stale',
+    })).toMatchObject({ status: 'error', code: 'stale_target' })
+    expect(await context.module.operate({
+      action: 'checkpoint', sessionId: 'session-1', expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId, expectedGeneration: '0'.repeat(64),
+      requestId: 'checkpoint:stale-generation', commitMessage: 'test: stale',
+    })).toMatchObject({ status: 'error', code: 'stale_target' })
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(localHead)
+    expect(git(managedRoot, 'rev-parse', 'HEAD')).toBe(managedHead)
   })
 
   test('Given an exact apply conflict When recovery resumes Then Host CAS persists a proof for the new Working revision without touching Local', async () => {

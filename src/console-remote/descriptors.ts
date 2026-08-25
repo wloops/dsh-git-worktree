@@ -5,6 +5,8 @@ import {
   commitMessageSchema,
   createResponseSchema,
   currentResponseSchema,
+  generationSchema,
+  requestIdSchema,
   inspectResponseSchema,
   listResponseSchema,
   mutationResponseSchema,
@@ -107,6 +109,14 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.checkoutId`),
     json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.expectedRevision`),
     json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsolePreviewRequest.expectedReviewId`),
+  ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
+  descriptor('checkpoint', [
+    json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleCheckpointRequest.checkoutId`),
+    json('expectedRevision', revisionSchema, `${PACKAGE}/console-contract#WorktreeConsoleCheckpointRequest.expectedRevision`),
+    json('expectedReviewId', reviewIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleCheckpointRequest.expectedReviewId`),
+    json('expectedGeneration', generationSchema, `${PACKAGE}/console-contract#WorktreeConsoleCheckpointRequest.expectedGeneration`),
+    json('requestId', requestIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleCheckpointRequest.requestId`),
+    json('commitMessage', commitMessageSchema, `${PACKAGE}/console-contract#WorktreeConsoleCheckpointRequest.commitMessage`),
   ], outcomeSchema(mutationResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>'),
   descriptor('resumeRevision', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleResumeRevisionRequest.checkoutId`),

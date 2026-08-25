@@ -42,6 +42,7 @@
 - **并行施工、有序验收**：多个 Isolated Worktree 可以并行准备任务，但同一 Local 项目同时只允许一个 active Preview，避免多个验收稿交叉写入。
 - **冲突时停止而非覆盖**：重叠修改、Local 漂移、分支变化或无法安全拆分的增量会进入 conflict/recovery，不自动选择一方覆盖。
 - **单任务提交**：验收通过后，只为本次任务创建一个 Commit，并继续保留可分离的 Local 修改。
+- **保存阶段并继续**：Ready 或 active Preview 可以由用户显式保存为 managed Worktree 内部 Checkpoint；阶段 Commit 不进入 Local，工作区清理后继续开发，最终仍只向 Local 交付一个累计任务 Commit。
 - **同一 Session 连续迭代**：本轮成功交付并 cleanup 后，可在原 Session 中开始 iteration + 1，保留完整对话。
 - **自动只读 Preflight**：Ready 后由 Review 卡与 composer dock 自动展示 Local/Worktree HEAD、effective base、同步条件、冲突与 acceptance slot；自动阶段绝不写入 Local。
 - **Agent Recovery continuation**：冲突只在用户明确点击后恢复 Working，并通过 Harness 官方 Session API 把 Local HEAD 与冲突文件交给精确 owner Agent；`stale_isolated` 则保持严格只读，只重新验证并生成新验收稿。
@@ -70,8 +71,10 @@ Agent 在 Worktree 中修改、测试
     ▼
 Ready for Review
     │
+    ├─ 保存阶段并继续 ── Worktree 内部 Checkpoint
     ├─ 同步到 Local Preview ── 验收并提交
-    │                         └─ 撤回 Preview，继续修改
+    │                         ├─ 撤回 Preview，继续修改
+    │                         └─ 撤回 Preview，保存阶段并继续
     ├─ 跳过 Preview，直接提交
     └─ 放弃任务
     │
@@ -103,11 +106,14 @@ Agent 只在隔离 cwd 中读取、修改和验证项目。该 cwd 对应真实 
 
 用户可以选择：
 
+- **保存阶段并继续**：把当前验收快照提交到 managed Worktree，清空当前施工现场并恢复 Working；
 - **同步到 Local 验收**：创建一个未提交、可撤回的 Preview；
-- **验收通过并提交**：只提交本次任务增量；
+- **验收通过并提交**：只提交本次任务累计增量；
 - **撤回并继续修改**：移除 Preview，返回原 Worktree；
 - **跳过验收直接提交**：显式确认后走受保护的直接交付路径；
 - **放弃任务**：在满足安全条件后清理任务环境。
+
+Checkpoint 只允许精确 owner 在当前 Review、revision、generation 和 acceptance slot 均匹配时显式执行。Host 在锁内创建 Worktree-only Commit、持久化 operation journal 与内部 artifact、执行写后验证，并让旧 Review/Preview/proof 失效；相同 request ID 的完成请求可安全重放。active Preview 会在同一个 Host 操作中先安全撤回，撤回无法证明时保留恢复证据并停止。Local branch/HEAD、index、staged、unstaged、untracked 与 working tree 不参与 Checkpoint Commit；多次 Checkpoint 也不会把最终 Local 交付拆成多个提交。
 
 如果预检发现 `stale_local`、`stale_isolated` 或冲突，旧 Preview/Finalize 操作会立即停用。`stale_local` 只刷新只读事实；冲突仅在用户点击“让 Agent 解决冲突”后，才由 Host 在锁内重跑 conflict Preflight/CAS、生成并持久化精确恢复凭证、恢复 Working，再通过 Harness 官方 `ISession.prompt()` 将结构化上下文发送给精确 owner Session；`stale_isolated` 的“重新生成验收结果”保持 Ready 与严格 Read Only，由 Host 只读复核并持久化另一种不可互换的凭证，不恢复 Working 或修改文件。发送会等待 Session 加载完成并停止 streaming，并在真正发送前重新逐字段核验 Host proof、checkout/review/revision/cwd；重复点击单飞。未发送请求可在页面刷新后恢复，但浏览器存储只是不可信上下文，必须通过 kind、字段、OID、相对路径预算和 Host 权威复验；发送结果未知或明确失败时由用户显式重试。`project_acceptance_busy` 会显示不含路径的占用任务摘要；只有 Host 再次证明 checkout、owner Session 与 canonical cwd 一致后，界面才会导航到该 Session。Finalize 成功后，Review 界面继续保留 Delivery Proof，而不是只显示“成功”。
 
@@ -172,6 +178,7 @@ Agent 完成实现和验证后生成 Ready for Review，用户可以查看变更
 | Session Target | 会话执行目标 | 当前 Session 被固定到的实际工作位置与执行边界，可以是 Local 或 Isolated Worktree |
 | Isolated Worktree / checkout | 隔离 Worktree / checkout | Agent 独立施工的 Git 工作副本，不直接修改用户的 Local checkout |
 | Review / Ready for Review | 验收稿 / 等待验收 | Agent 完成当前阶段后提交的摘要、文件、验证结果和建议 Commit Message |
+| Checkpoint | 阶段检查点 | 用户确认后在 managed Worktree 内保存当前验收快照并继续开发，不写入 Local |
 | Local Preview | Local 预览 | 将任务增量临时同步到 Local 查看，但暂不创建 Commit |
 | Rollback / Finalize | 撤回预览 / 确认提交 | 分别表示安全移除本次 Preview，或将验收通过的任务增量提交到 Local |
 | acceptance slot | 验收槽位 | 同一 Local 项目唯一的 Preview 写入名额，用于避免多个任务同时写入 Local |
@@ -219,7 +226,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定 Git tag：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.5.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.0
 ```
 
 使用 pnpm 10 或更高版本时，Git 源安装可能需要先在 profile 的 `pnpm-workspace.yaml` 中允许该包执行 `prepare`：
@@ -274,6 +281,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 - acceptance slot blocker 只返回 path-free checkout/Session/state 摘要；打开占用任务前必须重新 inspect 并复验 owner 与 canonical cwd；
 - 自动 Preflight 不创建 plan、slot、Git ref 或 Local 写入；Preview 与 direct Finalize 前必须 bypass 缓存重新检查；slot 从 waiting 释放时废弃旧 busy 结果，自动错误只允许显式重试；
 - Preview receipt 和 internal refs 在写入 Local 前持久化；
+- Checkpoint 绑定 exact owner、checkout、revision、review、generation、request ID 与 acceptance slot；Host 原子撤回 active Preview 后仅提交 managed Worktree snapshot，写后验证并使旧 Review/Preview/proof 失效，Remote 不暴露路径或内部 refs；
 - `preview_detached` Recovery Preflight 严格只读，并在 assessment 前后复验四个 retained artifacts；Remote 只返回 path-free proof，不暴露 Local/Worktree 路径；
 - Preview、Rollback、Finalize、Discard 和继续修改都绑定 checkout、revision、review 与 fingerprint；detached mutation 还必须携带新鲜 generation，Host 在锁内重算 proof 后才可进入 journal；
 - Rollback 只移除可以证明属于本次 Preview 的增量，并尽量保留验收期间新增的无关 Local 修改；Finalize 只提交任务 delta 到最新同分支 Local HEAD；
@@ -293,7 +301,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 - 在已验证的 Harness `0.1.1-rc.2` 包线中，Workflow `agent({ isolation })` 集成尚不可用；
 - 子 Agent 继承父 Session cwd；只有父 Session 已经位于 Worktree Session 时，子 Agent 才处于相同隔离边界；
 - dependency snapshot/restore（依赖快照与恢复）与完整 collaborator handoff UI（协作者交接界面）尚未实现；
-- 暂不支持把已验收阶段固化为内部检查点后继续开发；
+- Checkpoint 目前只支持按创建顺序查看阶段摘要，不支持历史编辑、删除、重排或任意回退；
 - 暂不支持 Isolated Session 申请受控事务直接维修真实 Local；
 - cleanup 会删除本轮 Worktree cwd，但已交付 Session 可以在严格校验后重建路径并开始下一轮。
 
@@ -310,7 +318,7 @@ Web UI 提供日常所需的创建、Preview、撤回、提交、保留、继续
 
 ### 中期
 
-- 增加“保存阶段并继续”：让长任务可以把已验收阶段固化到隔离 checkout、清理工作区后继续开发，并在最终验收中保留阶段记录；
+- 继续完善 Checkpoint 历史展示与真实 Harness 长任务使用反馈；
 - 评估受控 Local 维修事务：由用户批准一次绑定当前 Local 状态的临时授权，让 Isolated Session 在不改变会话执行目标的情况下通过受限工具修复真实 Local，并自动恢复原任务；
 - 迁移 dependency snapshot/restore（依赖快照与恢复），减少不同 Worktree 间重复安装依赖的成本；
 - 完成 collaborator / subagent handoff（协作者 / 子 Agent 交接）生命周期，让协作任务可以安全释放并交付；

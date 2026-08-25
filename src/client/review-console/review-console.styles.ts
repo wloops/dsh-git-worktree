@@ -52,6 +52,9 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
 .dsh-wt-commit-dialog > label:first-child { font-size:12px; font-weight:700; }
 .dsh-wt-commit-dialog textarea { min-height:132px; max-height:240px; resize:vertical; border:1px solid var(--wt-line); border-radius:8px; padding:9px 10px; background:transparent; color:inherit; font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .dsh-wt-character-count { color:var(--wt-muted); font-size:10px; text-align:right; }
+.dsh-wt-checkpoint-note { display:grid; gap:3px; padding:9px 10px; border:1px solid color-mix(in srgb, #3275db 24%, transparent); border-radius:8px; background:color-mix(in srgb, #3275db 6%, transparent); font-size:11px; }
+.dsh-wt-checkpoint-note span,
+.dsh-wt-checkpoint-summary { color:var(--wt-muted); }
 .dsh-wt-retention-check { display:flex; align-items:center; gap:8px; border:1px solid var(--wt-line); border-radius:8px; padding:8px 9px; font-size:12px; }
 .dsh-wt-retention-select { display:grid; gap:5px; padding:9px; border-radius:8px; background:var(--wt-panel); font-size:11px; }
 .dsh-wt-retention-select select { min-height:32px; border:1px solid var(--wt-line); border-radius:7px; padding:0 8px; background:Canvas; color:inherit; }

@@ -106,7 +106,7 @@ export interface ManagedCheckoutCreateJournal extends ManagedCheckoutJournalBase
 }
 
 export interface ManagedCheckoutMutationJournal extends ManagedCheckoutJournalBase {
-  operation: 'apply' | 'preview' | 'rollback_preview' | 'finish' | 'finalize_preview' | 'cleanup'
+  operation: 'apply' | 'preview' | 'checkpoint' | 'rollback_preview' | 'finish' | 'finalize_preview' | 'cleanup'
   step: 'planning' | 'artifacts_retained' | 'writing_local' | 'updating_ref' | 'replacing_index' | 'removing_worktree'
   baseOid?: string
   planRevision?: string
@@ -119,6 +119,13 @@ export interface ManagedCheckoutMutationJournal extends ManagedCheckoutJournalBa
   localHeadOid?: string
   isolatedHeadOid?: string
   commitOid?: string
+  checkpointId?: string
+  checkpointSequence?: number
+  checkpointRequestId?: string
+  checkpointRequestedRevision?: number
+  checkpointMessage?: string
+  checkpointIndexTreeOid?: string
+  parentOid?: string
   retention?: WorktreeRetentionMode
   recoveryGeneration?: string
   /** rollback_preview crash recovery must preserve whether the review returns to working or ready_for_review. */
@@ -129,6 +136,34 @@ export interface ManagedCheckoutMutationJournal extends ManagedCheckoutJournalBa
 }
 
 export type ManagedCheckoutJournal = ManagedCheckoutCreateJournal | ManagedCheckoutMutationJournal
+
+export interface ManagedWorktreeCheckpointRecord {
+  checkpointId: string
+  sequence: number
+  reviewId: string
+  /** Idempotency key for the exact user-confirmed checkpoint request. */
+  requestId?: string
+  /** Review revision and Host generation accepted for the request. */
+  requestedRevision?: number
+  generation?: string
+  iteration: number
+  createdAt: number
+  commitOid: string
+  parentOid: string
+  summary: string
+  commitMessage: string
+  validationStatus: WorktreeValidationStatus
+  changedFiles: string[]
+}
+
+/** Bounded context for the next cumulative review; never replaces the final diff as fact source. */
+export interface ManagedWorktreePreviousReviewRecord {
+  reviewId: string
+  iteration: number
+  summary: string
+  suggestedCommitMessage: string
+  changedFiles: string[]
+}
 
 export interface ManagedWorktreeReviewRecord {
   reviewId: string
@@ -276,6 +311,10 @@ export interface ManagedCheckoutRecord {
   baseOid: string
   /** Last successfully applied isolated snapshot; does not change the user-visible Session Base. */
   applyBaseOid?: string
+  /** Bounded cumulative-review context retained after a review is invalidated. */
+  previousReview?: ManagedWorktreePreviousReviewRecord
+  /** Linear saved stages that remain private to the managed Worktree. */
+  checkpoints?: ManagedWorktreeCheckpointRecord[]
   /** Host-authoritative one-shot context for an explicitly resumed apply conflict. */
   recoveryContinuation?: ManagedRecoveryContinuation
   sourceRef: string

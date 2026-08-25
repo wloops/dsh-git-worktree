@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, open, readFile, rename, rm, unlink } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, open, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, relative, resolve } from 'node:path'
 import type { ApplyBaseStrategy } from './types.js'
@@ -120,6 +120,32 @@ export interface RollbackSuccessResult {
 
 export type RollbackResult = RollbackSuccessResult | ApplyErrorResult
 
+export interface CheckpointInput {
+  isolatedPath: string
+  expectedFingerprint: string
+  expectedHeadOid: string
+  commitMessage: string
+  /** Persist the prepared commit and Host journal before detached HEAD/index mutation. */
+  beforeCommit?(prepared: { commitOid: string; parentOid: string; indexTreeOid: string; changedFiles: string[] }): Promise<void>
+}
+
+export interface CheckpointSuccessResult {
+  status: 'checkpointed'
+  commitOid: string
+  parentOid: string
+  changedFiles: string[]
+  isolatedFingerprint: string
+}
+
+export type CheckpointResult = CheckpointSuccessResult | ApplyErrorResult
+
+export interface CheckpointRecoverySuccessResult {
+  status: 'checkpoint_recovered' | 'checkpoint_aborted'
+  isolatedFingerprint: string
+}
+
+export type CheckpointRecoveryResult = CheckpointRecoverySuccessResult | ApplyErrorResult
+
 export type PreviewRecoveryActionBlockCode =
   | 'stale_local'
   | 'preview_modified'
@@ -211,6 +237,8 @@ export type ApplyError =
 
 export interface SessionCheckoutApplyEngine {
   inspectReview(input: ApplyPlanInput): Promise<InspectReviewResult>
+  checkpoint(input: CheckpointInput): Promise<CheckpointResult>
+  recoverCheckpoint(input: { isolatedPath: string; commitOid: string; parentOid: string; expectedIndexTreeOid: string }): Promise<CheckpointRecoveryResult>
   /** 复用真实 Apply merge 计算，但不持久化可执行 plan，也不修改任一 checkout。 */
   preflight(input: ApplyPlanInput): Promise<ApplyPlanResult>
   plan(input: ApplyPlanInput): Promise<ApplyPlanResult>
@@ -245,6 +273,10 @@ export interface SessionCheckoutApplyEngineOptions {
   beforeFinalLocalValidation?(): Promise<void> | void
   /** 测试/宿主 seam：在 Local 写入完成、独立写后验证开始前执行。 */
   afterLocalWriteBeforeVerification?(): Promise<void> | void
+  /** Test seam immediately before the authoritative managed-Worktree checkpoint CAS. */
+  beforeFinalIsolatedValidation?(): Promise<void> | void
+  /** Test seam after checkpoint HEAD/index writes and before independent verification. */
+  afterIsolatedWriteBeforeVerification?(): Promise<void> | void
 }
 
 interface GitResult {
@@ -456,13 +488,13 @@ async function changedTreePaths(
   checkoutPath: string,
   baseOid: string,
   treeOid: string,
-  objectDirectory: string,
-  sourceObjects: string,
+  objectDirectory: string | null,
+  sourceObjects: string | null,
 ): Promise<string[]> {
   const result = await runGit(
     checkoutPath,
     ['diff', '--name-only', '-z', '--no-ext-diff', '--no-renames', baseOid, treeOid, '--'],
-    { env: gitObjectEnvironment(objectDirectory, sourceObjects) },
+    { env: objectDirectory && sourceObjects ? gitObjectEnvironment(objectDirectory, sourceObjects) : undefined },
   )
   return parseNullSeparated(result.stdout)
 }
@@ -959,6 +991,30 @@ async function resolveIndexPath(checkoutPath: string): Promise<string> {
   )))
 }
 
+async function inspectIndexFileTree(checkoutPath: string, indexPath: string): Promise<{ exists: false } | { exists: true; treeOid: string | null }> {
+  try {
+    const handle = await open(indexPath, 'r')
+    await handle.close()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { exists: false }
+    throw error
+  }
+  try {
+    const treeOid = stdoutText(await runGit(checkoutPath, ['write-tree'], { env: { GIT_INDEX_FILE: indexPath } }))
+    return { exists: true, treeOid }
+  } catch {
+    return { exists: true, treeOid: null }
+  }
+}
+
+async function checkpointLockMarkerOwned(markerPath: string, commitOid: string): Promise<boolean> {
+  try {
+    return (await readFile(markerPath, 'utf8')).trim() === commitOid
+  } catch {
+    return false
+  }
+}
+
 async function removeBestEffort(path: string | null): Promise<void> {
   if (!path) return
   try {
@@ -1000,6 +1056,233 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
   private readonly plans = new Map<string, StoredPlan>()
 
   constructor(private readonly options: SessionCheckoutApplyEngineOptions) {}
+
+  async checkpoint(input: CheckpointInput): Promise<CheckpointResult> {
+    const commitMessage = input.commitMessage.trim()
+    if (!commitMessage || commitMessage.length > 500 || !OID_PATTERN.test(input.expectedHeadOid) || !input.expectedFingerprint.trim()) {
+      return { status: 'error', error: { code: 'invalid_input', message: 'Checkpoint 输入无效' } }
+    }
+
+    let tempRoot: string | null = null
+    let adjacentIndex: string | null = null
+    let indexLockMarker: string | null = null
+    let preserveRecoveryEvidence = false
+    try {
+      tempRoot = await mkdtemp(join(tmpdir(), 'dsh-checkpoint-'))
+      const isolatedGitRoot = await resolveGitRoot(input.isolatedPath)
+      const projectPathPrefix = projectPrefix(isolatedGitRoot, input.isolatedPath)
+      if (projectPathPrefix === null) {
+        return { status: 'error', error: { code: 'invalid_input', message: 'Checkpoint 项目目录不属于当前 Worktree' } }
+      }
+      const snapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'checkpoint.index'), null, null)
+      if (snapshot.headRef !== null) {
+        return { status: 'error', error: { code: 'operation_not_allowed', message: 'Checkpoint 只允许写入 detached managed Worktree' } }
+      }
+      if (snapshot.headOid !== input.expectedHeadOid || snapshot.fingerprint !== input.expectedFingerprint) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 在准备验收后发生变化，不能保存阶段' } }
+      }
+      const changedPaths = await changedTreePaths(isolatedGitRoot, snapshot.headOid, snapshot.treeOid, null, null)
+      if (changedPaths.some((path) => !isProjectPath(path, projectPathPrefix))) {
+        return { status: 'error', error: { code: 'invalid_input', message: 'Worktree 包含项目根目录外的变更，不能保存阶段' } }
+      }
+      const changedFiles = changedPaths.map((path) => toProjectPath(path, projectPathPrefix)).sort()
+      if (changedFiles.length === 0) {
+        return { status: 'error', error: { code: 'operation_not_allowed', message: '当前阶段没有可保存的新修改' } }
+      }
+
+      const commitOid = await createUserCommit(isolatedGitRoot, snapshot.treeOid, snapshot.headOid, commitMessage)
+      await input.beforeCommit?.({ commitOid, parentOid: snapshot.headOid, indexTreeOid: snapshot.indexTreeOid, changedFiles })
+
+      const finalIndexPath = join(tempRoot, 'clean.index')
+      await prepareIndexFromPatch(isolatedGitRoot, finalIndexPath, commitOid, Buffer.alloc(0))
+      const realIndexPath = await resolveIndexPath(isolatedGitRoot)
+      const indexLockPath = `${realIndexPath}.lock`
+      indexLockMarker = `${indexLockPath}.dsh-${commitOid}`
+      await writeFile(indexLockMarker, `${commitOid}\n`, { flag: 'wx' })
+      const indexLock = await open(indexLockPath, 'wx')
+      adjacentIndex = indexLockPath
+      await indexLock.close()
+      await copyFile(finalIndexPath, adjacentIndex)
+
+      await this.options.beforeFinalIsolatedValidation?.()
+      const finalSnapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'final-checkpoint.index'), null, null)
+      if (finalSnapshot.headOid !== snapshot.headOid || finalSnapshot.fingerprint !== snapshot.fingerprint) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 在保存阶段前发生变化，请重新准备验收' } }
+      }
+
+      let headUpdated = false
+      try {
+        await runGit(isolatedGitRoot, ['update-ref', '--no-deref', 'HEAD', commitOid, snapshot.headOid])
+        headUpdated = true
+        await rename(adjacentIndex, realIndexPath)
+        adjacentIndex = null
+        await removeBestEffort(indexLockMarker)
+        indexLockMarker = null
+      } catch (error) {
+        if (headUpdated) {
+          try {
+            await runGit(isolatedGitRoot, ['update-ref', '--no-deref', 'HEAD', snapshot.headOid, commitOid])
+          } catch (rollbackError) {
+            preserveRecoveryEvidence = true
+            return {
+              status: 'error',
+              error: {
+                code: 'git_error',
+                message: `Checkpoint index 写入失败且 HEAD 无法回滚：${this.errorMessage(error)}；${this.errorMessage(rollbackError)}`,
+                recoveryState: 'uncertain',
+              },
+            }
+          }
+        }
+        return {
+          status: 'error',
+          error: {
+            code: 'git_error',
+            message: `Checkpoint 写入失败，已回滚：${this.errorMessage(error)}`,
+            recoveryState: 'unchanged',
+          },
+        }
+      }
+
+      try {
+        await this.options.afterIsolatedWriteBeforeVerification?.()
+        const completed = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'completed.index'), null, null)
+        if (
+          completed.headOid !== commitOid
+          || completed.headRef !== null
+          || completed.headTreeOid !== snapshot.treeOid
+          || completed.indexTreeOid !== snapshot.treeOid
+          || completed.treeOid !== snapshot.treeOid
+        ) {
+          return {
+            status: 'error',
+            error: { code: 'git_error', message: 'Checkpoint 已写入，但 Worktree 未收敛到 clean 状态', recoveryState: 'uncertain' },
+          }
+        }
+        return {
+          status: 'checkpointed',
+          commitOid,
+          parentOid: snapshot.headOid,
+          changedFiles,
+          isolatedFingerprint: completed.fingerprint,
+        }
+      } catch (error) {
+        return {
+          status: 'error',
+          error: {
+            code: 'git_error',
+            message: `Checkpoint 写后无法完成验证，需要保留现场确认：${this.errorMessage(error)}`,
+            recoveryState: 'uncertain',
+          },
+        }
+      }
+    } catch (error) {
+      const stale = isIndexLockContention(error)
+      return {
+        status: 'error',
+        error: stale
+          ? { code: 'stale_isolated', message: 'Worktree index 正在被其他 Git 操作更新，请重试' }
+          : { code: 'git_error', message: this.errorMessage(error) },
+      }
+    } finally {
+      if (!preserveRecoveryEvidence) {
+        await removeBestEffort(adjacentIndex)
+        await removeBestEffort(indexLockMarker)
+      }
+      if (tempRoot) await this.cleanup(tempRoot)
+    }
+  }
+
+  async recoverCheckpoint(input: { isolatedPath: string; commitOid: string; parentOid: string; expectedIndexTreeOid: string }): Promise<CheckpointRecoveryResult> {
+    if (!OID_PATTERN.test(input.commitOid) || !OID_PATTERN.test(input.parentOid) || !OID_PATTERN.test(input.expectedIndexTreeOid)) {
+      return { status: 'error', error: { code: 'invalid_input', message: 'Checkpoint 恢复 OID 无效' } }
+    }
+    let tempRoot: string | null = null
+    let ownedIndexLock: string | null = null
+    let ownedLockMarker: string | null = null
+    try {
+      tempRoot = await mkdtemp(join(tmpdir(), 'dsh-checkpoint-recovery-'))
+      const isolatedGitRoot = await resolveGitRoot(input.isolatedPath)
+      const realIndexPath = await resolveIndexPath(isolatedGitRoot)
+      const indexLockPath = `${realIndexPath}.lock`
+      const indexLockMarker = `${indexLockPath}.dsh-${input.commitOid}`
+      const targetTreeOid = stdoutText(await runGit(isolatedGitRoot, ['rev-parse', `${input.commitOid}^{tree}`]))
+      const existingLock = await inspectIndexFileTree(isolatedGitRoot, indexLockPath)
+      const markerOwned = await checkpointLockMarkerOwned(indexLockMarker, input.commitOid)
+      const snapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'current.index'), null, null)
+      if (snapshot.headRef !== null) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 已不再是 detached HEAD' } }
+      }
+
+      if (snapshot.headOid === input.parentOid) {
+        if (existingLock.exists) {
+          if (!markerOwned || (existingLock.treeOid !== null && existingLock.treeOid !== targetTreeOid)) {
+            return { status: 'error', error: { code: 'stale_isolated', message: '遗留 index.lock 无法证明属于当前 Checkpoint，已保留现场' } }
+          }
+          await unlink(indexLockPath)
+        }
+        if (markerOwned) await unlink(indexLockMarker)
+        return { status: 'checkpoint_aborted', isolatedFingerprint: snapshot.fingerprint }
+      }
+      if (snapshot.headOid !== input.commitOid) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree HEAD 与待恢复 Checkpoint 不一致' } }
+      }
+      if (snapshot.treeOid !== snapshot.headTreeOid) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 在 Checkpoint 中断后出现新修改，不能自动恢复 index' } }
+      }
+      if (snapshot.indexTreeOid !== input.expectedIndexTreeOid && snapshot.indexTreeOid !== snapshot.headTreeOid) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Checkpoint 中断后 index 出现新 staged 修改，不能自动覆盖' } }
+      }
+
+      const cleanIndexPath = join(tempRoot, 'clean.index')
+      await prepareIndexFromPatch(isolatedGitRoot, cleanIndexPath, input.commitOid, Buffer.alloc(0))
+      if (existingLock.exists) {
+        if (!markerOwned || (existingLock.treeOid !== null && existingLock.treeOid !== targetTreeOid)) {
+          return { status: 'error', error: { code: 'stale_isolated', message: '遗留 index.lock 与 Checkpoint 目标不一致，已保留现场' } }
+        }
+        if (existingLock.treeOid === null) await copyFile(cleanIndexPath, indexLockPath)
+      } else {
+        if (!markerOwned) {
+          await writeFile(indexLockMarker, `${input.commitOid}\n`, { flag: 'wx' })
+          ownedLockMarker = indexLockMarker
+        }
+        const indexLock = await open(indexLockPath, 'wx')
+        ownedIndexLock = indexLockPath
+        await indexLock.close()
+        await copyFile(cleanIndexPath, indexLockPath)
+      }
+
+      await this.options.beforeFinalIsolatedValidation?.()
+      const lockedSnapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'locked-current.index'), null, null)
+      if (
+        lockedSnapshot.headOid !== snapshot.headOid
+        || lockedSnapshot.fingerprint !== snapshot.fingerprint
+        || (lockedSnapshot.indexTreeOid !== input.expectedIndexTreeOid && lockedSnapshot.indexTreeOid !== lockedSnapshot.headTreeOid)
+      ) {
+        return { status: 'error', error: { code: 'stale_isolated', message: 'Checkpoint 恢复加锁前 Worktree 或 index 已变化' } }
+      }
+      await rename(indexLockPath, realIndexPath)
+      ownedIndexLock = null
+      await removeBestEffort(indexLockMarker)
+      ownedLockMarker = null
+      const completed = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'completed.index'), null, null)
+      if (
+        completed.headOid !== input.commitOid
+        || completed.headRef !== null
+        || completed.indexTreeOid !== completed.headTreeOid
+        || completed.treeOid !== completed.headTreeOid
+      ) {
+        return { status: 'error', error: { code: 'git_error', message: 'Checkpoint index 恢复后仍未收敛到 clean 状态', recoveryState: 'uncertain' } }
+      }
+      return { status: 'checkpoint_recovered', isolatedFingerprint: completed.fingerprint }
+    } catch (error) {
+      return { status: 'error', error: { code: 'git_error', message: this.errorMessage(error), recoveryState: 'uncertain' } }
+    } finally {
+      await removeBestEffort(ownedIndexLock)
+      await removeBestEffort(ownedLockMarker)
+      if (tempRoot) await this.cleanup(tempRoot)
+    }
+  }
 
   async inspectReview(input: ApplyPlanInput): Promise<InspectReviewResult> {
     if (!OID_PATTERN.test(input.baseOid)) {

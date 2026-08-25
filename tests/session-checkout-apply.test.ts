@@ -69,6 +69,121 @@ async function readyPlan(engine: SessionCheckoutApplyEngine, fixture: CheckoutFi
 }
 
 describe('SessionCheckoutApplyEngine', () => {
+  test('Given a reviewed detached Worktree with staged, unstaged and untracked changes When checkpoint succeeds Then it creates one clean Worktree-only commit and leaves Local byte-for-byte unchanged', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'staged version\n')
+    await runGit(fixture.isolatedPath, ['add', 'tracked.txt'])
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'final unstaged version\n')
+    await writeFile(join(fixture.isolatedPath, 'stage-new.txt'), 'staged new\n')
+    await runGit(fixture.isolatedPath, ['add', 'stage-new.txt'])
+    await writeFile(join(fixture.isolatedPath, 'untracked.txt'), 'untracked\n')
+    const localHeadBefore = await runGit(fixture.localPath, ['rev-parse', 'HEAD'])
+    const localStatusBefore = await runGit(fixture.localPath, ['status', '--porcelain=v1', '-uall'])
+    const localRefsBefore = await runGit(fixture.localPath, ['for-each-ref', '--format=%(refname) %(objectname)'])
+    const engine = createSessionCheckoutApplyEngine()
+    const review = await engine.inspectReview(fixture)
+    if (review.status !== 'ready') throw new Error('expected reviewed snapshot')
+    let prepared: { commitOid: string; parentOid: string; indexTreeOid: string; changedFiles: string[] } | undefined
+
+    const result = await engine.checkpoint({
+      isolatedPath: fixture.isolatedPath,
+      expectedHeadOid: review.isolatedHeadOid,
+      expectedFingerprint: review.isolatedFingerprint,
+      commitMessage: 'feat(checkpoint): save exact stage',
+      beforeCommit: value => { prepared = value },
+    })
+
+    expect(result).toMatchObject({
+      status: 'checkpointed',
+      parentOid: fixture.baseOid,
+      changedFiles: ['stage-new.txt', 'tracked.txt', 'untracked.txt'],
+    })
+    if (result.status !== 'checkpointed') throw new Error('expected checkpointed')
+    expect(prepared?.commitOid).toBe(result.commitOid)
+    expect(await runGit(fixture.isolatedPath, ['rev-parse', 'HEAD'])).toBe(result.commitOid)
+    expect(await runGit(fixture.isolatedPath, ['show', '-s', '--format=%s', 'HEAD'])).toBe('feat(checkpoint): save exact stage')
+    expect(await runGit(fixture.isolatedPath, ['status', '--porcelain=v1', '-uall'])).toBe('')
+    expect(await readFile(join(fixture.isolatedPath, 'tracked.txt'), 'utf8')).toBe('final unstaged version\n')
+    expect(await runGit(fixture.localPath, ['rev-parse', 'HEAD'])).toBe(localHeadBefore)
+    expect(await runGit(fixture.localPath, ['status', '--porcelain=v1', '-uall'])).toBe(localStatusBefore)
+    expect(await runGit(fixture.localPath, ['for-each-ref', '--format=%(refname) %(objectname)'])).toBe(localRefsBefore)
+  })
+
+  test('Given a checkpoint review becomes stale before final isolated CAS When checkpoint runs Then it preserves the concurrent Worktree change and does not move HEAD', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'reviewed stage\n')
+    const headBefore = await runGit(fixture.isolatedPath, ['rev-parse', 'HEAD'])
+    const inspected = await createSessionCheckoutApplyEngine().inspectReview(fixture)
+    if (inspected.status !== 'ready') throw new Error('expected reviewed snapshot')
+    const engine = createSessionCheckoutApplyEngine({
+      beforeFinalIsolatedValidation: async () => {
+        await writeFile(join(fixture.isolatedPath, 'late.txt'), 'concurrent edit\n')
+      },
+    })
+
+    const result = await engine.checkpoint({
+      isolatedPath: fixture.isolatedPath,
+      expectedHeadOid: inspected.isolatedHeadOid,
+      expectedFingerprint: inspected.isolatedFingerprint,
+      commitMessage: 'test: stale checkpoint',
+    })
+
+    expect(result).toMatchObject({ status: 'error', error: { code: 'stale_isolated' } })
+    expect(await runGit(fixture.isolatedPath, ['rev-parse', 'HEAD'])).toBe(headBefore)
+    expect(await readFile(join(fixture.isolatedPath, 'late.txt'), 'utf8')).toBe('concurrent edit\n')
+    expect(await runGit(fixture.isolatedPath, ['rev-parse', '--git-path', 'index.lock']).then(async path => {
+      try { await lstat(path); return true } catch { return false }
+    })).toBe(false)
+  })
+
+  test('Given a prepared checkpoint crashes after HEAD moves but before the clean index lands When recovery runs Then it converges the exact checkpoint to a clean detached Worktree', async () => {
+    const fixture = await createFixture()
+    await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'checkpoint recovery\n')
+    await runGit(fixture.isolatedPath, ['add', 'tracked.txt'])
+    await writeFile(join(fixture.isolatedPath, 'untracked.txt'), 'recover me\n')
+    const inspected = await createSessionCheckoutApplyEngine().inspectReview(fixture)
+    if (inspected.status !== 'ready') throw new Error('expected reviewed snapshot')
+    let prepared: { commitOid: string; parentOid: string; indexTreeOid: string; changedFiles: string[] } | undefined
+    const interrupted = await createSessionCheckoutApplyEngine().checkpoint({
+      isolatedPath: fixture.isolatedPath,
+      expectedHeadOid: inspected.isolatedHeadOid,
+      expectedFingerprint: inspected.isolatedFingerprint,
+      commitMessage: 'test: recover checkpoint',
+      beforeCommit: value => {
+        prepared = value
+        throw new Error('simulated host crash before ref retention')
+      },
+    })
+    expect(interrupted).toMatchObject({ status: 'error', error: { code: 'git_error' } })
+    if (!prepared) throw new Error('expected prepared checkpoint facts')
+    await runGit(fixture.isolatedPath, ['update-ref', '--no-deref', 'HEAD', prepared.commitOid, prepared.parentOid])
+
+    const recovered = await createSessionCheckoutApplyEngine().recoverCheckpoint({
+      isolatedPath: fixture.isolatedPath,
+      commitOid: prepared.commitOid,
+      parentOid: prepared.parentOid,
+      expectedIndexTreeOid: prepared.indexTreeOid,
+    })
+
+    expect(recovered).toMatchObject({ status: 'checkpoint_recovered' })
+    expect(await runGit(fixture.isolatedPath, ['rev-parse', 'HEAD'])).toBe(prepared.commitOid)
+    expect(await runGit(fixture.isolatedPath, ['status', '--porcelain=v1', '-uall'])).toBe('')
+  })
+
+  test('Given a reviewed Worktree has no delta When checkpoint runs Then it refuses an empty stage', async () => {
+    const fixture = await createFixture()
+    const engine = createSessionCheckoutApplyEngine()
+    const inspected = await engine.inspectReview(fixture)
+    if (inspected.status !== 'ready') throw new Error('expected reviewed snapshot')
+
+    expect(await engine.checkpoint({
+      isolatedPath: fixture.isolatedPath,
+      expectedHeadOid: inspected.isolatedHeadOid,
+      expectedFingerprint: inspected.isolatedFingerprint,
+      commitMessage: 'test: empty checkpoint',
+    })).toMatchObject({ status: 'error', error: { code: 'operation_not_allowed' } })
+  })
+
   test('Given a read-only preflight When it reports a ready merge Then it exposes the real merge facts without creating an executable plan or modifying Local', async () => {
     const fixture = await createFixture()
     await writeFile(join(fixture.isolatedPath, 'tracked.txt'), 'preflight only\n')

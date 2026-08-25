@@ -19,7 +19,7 @@ pnpm pack --dry-run
 - Host `lib/index.js` 命名导出 `apply` 与 `inject`；
 - `dsh.client` 声明 Web 平台和 client injection；
 - `lib/client.js` 执行时调用 `window.__ModuleLoader__.load({ id, factory })`，注册 ID 精确等于包名，且 factory 返回 Client `apply` 与 `inject`；
-- Typert Loader/Remote discovery 必须从本轮刚生成的 `lib` 读取完整方法面；当前包括 `previewRecoveryPreflight`、`preparePreviewRecoveryAnalysis`、`createPreviewRecoveryHandoff` 与 proof-bearing Rollback/Finalize，source descriptor 和 build artifact 不一致会阻断发布；
+- Typert Loader/Remote discovery 必须从本轮刚生成的 `lib` 读取完整方法面；当前包括 generation-bound `checkpoint`、`previewRecoveryPreflight`、`preparePreviewRecoveryAnalysis`、`createPreviewRecoveryHandoff` 与 proof-bearing Rollback/Finalize，source descriptor 和 build artifact 不一致会阻断发布；
 - 失效 export（例如历史 `./manager`）会直接阻断发布。
 
 正式发布或 tag CI 使用：
@@ -47,6 +47,11 @@ pnpm run check:publish:release
 12. 在 recovery proof 生成后改变 Local、retained artifact 或 acceptance-slot holder；旧 generation 必须在 journal/Local 写入前以 stale/blocked 结果拒绝。
 13. detached Rollback/Finalize 保留后续 Local Commit 与 staged/unstaged/untracked 层；写后验证 fault 进入 `recovery_required` 并保留 journal，不把 matching Commit HEAD 猜成成功。
 14. Recovery analysis prompt 明确只读；fresh Worktree handoff 从最新 Local HEAD 创建，任何失败都不改变旧 detached delivery、receipt、refs、Local 或旧 Worktree。
+15. 在 Ready Review 点击“保存阶段并继续”：Worktree 产生一个阶段 Commit、状态回到 clean Working、Review/Preview/proof 失效，Local HEAD/branch/index/staged/unstaged/untracked/文件 bytes 与 refs 完全不变。
+16. 对同一 checkpoint request ID 重复提交只返回同一阶段；旧 revision/review/generation、外来 Session、acceptance slot busy、空阶段与重复点击均在写入前拒绝或去重。
+17. active Preview 点击“撤回 Preview，保存阶段并继续”：Host 原子撤回 Preview 后保存 Worktree 阶段；制造 rollback fault 时必须保留 journal/artifacts 与恢复证据，不能继续创建 Checkpoint。
+18. 重启 Host 后恢复 `checkpoint` journal：prepared commit 尚未移动 HEAD、HEAD 已移动但 index 未清理、内部 ref 已保留等中断点都应收敛或进入 `recovery_required`；不得留下未知 `index.lock` 或泄漏内部 refs 到 Remote。
+19. 连续保存至少两个阶段后完成 Finalize；Local 最终只新增一个累计任务 Commit，Review/Manager 只展示阶段摘要/数量，Manager 不出现 Checkpoint mutation 控件。
 
 ## 3. 版本、提交、CI 与 tag
 

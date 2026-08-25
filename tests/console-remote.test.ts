@@ -44,6 +44,7 @@ const METHODS = [
   'preparePreviewRecoveryAnalysis',
   'createPreviewRecoveryHandoff',
   'preview',
+  'checkpoint',
   'resumeRevision',
   'prepareReviewRegeneration',
   'rollbackPreview',
@@ -140,6 +141,36 @@ describe('manual strict Worktree Console Remote contribution', () => {
     expect(() => preview.result.schema.parse({
       ...response,
       error: { ...response.error, continuation: { ...response.error.continuation, conflictingFiles: ['/unsafe'.repeat(1001)] } },
+    })).toThrow()
+  })
+
+  it('keeps checkpoint request and response strict, path-free, and generation-bound', () => {
+    const descriptor = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'checkpoint')!
+    const parameter = (name: string) => descriptor.parameters.find(item => item.name === name)!
+    expect(() => parameter('expectedGeneration').codec.mode === 'strict'
+      && parameter('expectedGeneration').codec.schema.parse('bad')).toThrow()
+    expect(() => parameter('requestId').codec.mode === 'strict'
+      && parameter('requestId').codec.schema.parse('checkpoint:\nunsafe')).toThrow()
+    expect(() => parameter('commitMessage').codec.mode === 'strict'
+      && parameter('commitMessage').codec.schema.parse(' '.repeat(20))).toThrow()
+
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const checkpoint = {
+      checkpointId: 'checkpoint-1', sequence: 1, reviewId: 'review-1', createdAt: 2,
+      summary: 'saved stage', validationStatus: 'passed' as const, changedFiles: ['src/index.ts'],
+    }
+    const { managedRoot: _managedRoot, sourceRoot: _sourceRoot, sourceOid: _sourceOid, currentBranch: _currentBranch, ...target } = fixture.target
+    const response = { ok: true as const, value: { target: { ...target, checkpoints: [checkpoint] }, checkpoint } }
+    expect(descriptor.result.mode).toBe('strict')
+    if (descriptor.result.mode !== 'strict') throw new Error('expected strict result')
+    expect(descriptor.result.schema.parse(response)).toEqual(response)
+    expect(() => descriptor.result.schema.parse({
+      ...response,
+      value: { ...response.value, checkpoint: { ...checkpoint, changedFiles: ['../secret'] } },
+    })).toThrow()
+    expect(() => descriptor.result.schema.parse({
+      ...response,
+      value: { ...response.value, checkpoint: { ...checkpoint, internalRef: 'refs/dsh/private' } },
     })).toThrow()
   })
 
@@ -312,6 +343,22 @@ describe('manual strict Worktree Console Remote contribution', () => {
     })
 
     const fixture = createWorktreeConsoleAdapterFixture()
+    const checkpoint = vi.fn().mockResolvedValue({
+      ok: true,
+      value: await fixture.adapter.checkpoint({
+        sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+        expectedGeneration: '9'.repeat(64), requestId: `checkpoint:${'9'.repeat(64)}`, commitMessage: 'feat: save stage',
+      }),
+    })
+    const checkpointAdapter = createWorktreeConsoleRemoteAdapter({ checkpoint } as never)
+    await expect(checkpointAdapter.checkpoint({
+      sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
+      expectedGeneration: '9'.repeat(64), requestId: `checkpoint:${'9'.repeat(64)}`, commitMessage: 'feat: save stage',
+    })).resolves.toMatchObject({ ok: true, value: { checkpoint: { sequence: 1 }, target: { state: 'working' } } })
+    expect(checkpoint).toHaveBeenCalledWith(
+      'agent-1', 'checkout-1', 7, 'review-1', '9'.repeat(64), `checkpoint:${'9'.repeat(64)}`, 'feat: save stage',
+    )
+
     const resumeRevision = vi.fn().mockResolvedValue({
       ok: true,
       value: await fixture.adapter.resumeRevision({

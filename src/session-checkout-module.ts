@@ -20,8 +20,10 @@ import type {
   WorktreeCleanupReason,
   WorktreeDeliveryProofView,
   WorktreeRetentionMode,
+  WorktreeCheckpointView,
 } from './types.js'
 import { SessionCheckoutError } from './index.js'
+import { checkpointGenerationForRecord } from './checkpoint.js'
 import {
   createManagedWorktreePathCandidates,
   createManagedWorktreeRepositoryKey,
@@ -44,6 +46,9 @@ import type {
   ManagedPreviewRecoveryAnalysisContinuation,
   ManagedPreviewRecoveryHandoffContinuation,
   ManagedReviewRegenerationContinuation,
+  ManagedWorktreeCheckpointRecord,
+  ManagedWorktreePreviousReviewRecord,
+  ManagedWorktreeReviewRecord,
   SessionBindingRecord,
   SessionCheckoutDependencies,
   SessionCheckoutProjectRecord,
@@ -205,6 +210,28 @@ export function createSessionCheckoutModule(
     }
   }
 
+  function projectPreviousReview(review: ManagedWorktreeReviewRecord): ManagedWorktreePreviousReviewRecord {
+    return {
+      reviewId: review.reviewId,
+      iteration: review.iteration,
+      summary: review.summary,
+      suggestedCommitMessage: review.suggestedCommitMessage,
+      changedFiles: review.changedFiles.slice(0, 50),
+    }
+  }
+
+  function projectCheckpoint(checkpoint: ManagedWorktreeCheckpointRecord): WorktreeCheckpointView {
+    return {
+      checkpointId: checkpoint.checkpointId,
+      sequence: checkpoint.sequence,
+      reviewId: checkpoint.reviewId,
+      createdAt: checkpoint.createdAt,
+      summary: checkpoint.summary,
+      validationStatus: checkpoint.validationStatus,
+      changedFiles: [...checkpoint.changedFiles],
+    }
+  }
+
   function projectDelivery(
     record: ManagedCheckoutRecord,
     commitInLocalHistory: boolean | null = null,
@@ -307,6 +334,8 @@ export function createSessionCheckoutModule(
       dirty,
       revision: record?.revision ?? binding.revision,
       ...(record ? { delivery: projectDelivery(record) } : {}),
+      ...((record?.checkpoints?.length ?? 0) > 0 ? { checkpoints: record!.checkpoints!.map(projectCheckpoint) } : {}),
+      ...(record && checkpointGenerationForRecord(record) ? { checkpointGeneration: checkpointGenerationForRecord(record) } : {}),
     }
   }
 
@@ -412,6 +441,31 @@ export function createSessionCheckoutModule(
     | { status: 'invalid' }
     | { status: 'unavailable' }
 
+  async function checkpointHeadInvariantHolds(
+    record: ManagedCheckoutRecord,
+    managedRoot: string,
+    headOid: string,
+  ): Promise<boolean> {
+    const checkpoints = record.checkpoints ?? []
+    if (checkpoints.length === 0) return true
+    const checkpointIds = new Set<string>()
+    const reviewIds = new Set<string>()
+    for (let index = 0; index < checkpoints.length; index += 1) {
+      const checkpoint = checkpoints[index]!
+      if (
+        checkpoint.sequence !== index + 1
+        || checkpointIds.has(checkpoint.checkpointId)
+        || reviewIds.has(checkpoint.reviewId)
+      ) return false
+      checkpointIds.add(checkpoint.checkpointId)
+      reviewIds.add(checkpoint.reviewId)
+      if (await dependencies.git.readInternalArtifact(record.localRoot, record.checkoutId, `checkpoints/${checkpoint.checkpointId}`) !== checkpoint.commitOid) return false
+      if (!(await dependencies.git.isAncestor(managedRoot, checkpoint.parentOid, checkpoint.commitOid))) return false
+      if (index > 0 && !(await dependencies.git.isAncestor(managedRoot, checkpoints[index - 1]!.commitOid, checkpoint.parentOid))) return false
+    }
+    return dependencies.git.isAncestor(managedRoot, checkpoints[checkpoints.length - 1]!.commitOid, headOid)
+  }
+
   async function validateManagedCheckoutDetailed(
     binding: SessionBindingRecord,
     record: ManagedCheckoutRecord,
@@ -452,6 +506,7 @@ export function createSessionCheckoutModule(
         || !pathsEqual(resolve(snapshot.root, projectRelativePath), canonicalManagedRoot)
         || (!requireCreateBase && !pathsEqual(snapshot.gitDir, record.gitDir))
         || (requireCreateBase && snapshot.headOid !== record.baseOid)
+        || (!requireCreateBase && !(await checkpointHeadInvariantHolds(record, canonicalManagedRoot, snapshot.headOid)))
       ) return { status: 'invalid' }
 
       const status = await dependencies.git.status(canonicalManagedRoot)
@@ -674,6 +729,8 @@ export function createSessionCheckoutModule(
       dirty: status.dirty,
       revision: record.revision,
       delivery,
+      ...((record.checkpoints?.length ?? 0) > 0 ? { checkpoints: record.checkpoints!.map(projectCheckpoint) } : {}),
+      ...(checkpointGenerationForRecord(record) ? { checkpointGeneration: checkpointGenerationForRecord(record) } : {}),
       ...(delivery?.state === 'ready_for_review'
         ? {
             reviewSlot: activePreview ? 'waiting' as const : 'available' as const,
@@ -742,6 +799,12 @@ export function createSessionCheckoutModule(
       `Original Local boundary: ${record.localRoot}`,
       'Make task changes only in the authoritative cwd; never write directly to the Original Local boundary.',
     ]
+    if ((record.checkpoints?.length ?? 0) > 0) {
+      lines.push(
+        `Saved Worktree checkpoints: ${record.checkpoints!.length}. They remain unpublished to Local.`,
+        'Final review and commit wording must summarize the cumulative diff from the original delivery base to the final Worktree snapshot. Do not manually reset, rewrite, or publish checkpoint commits.',
+      )
+    }
     if (record.delivery.state === 'ready_for_review') {
       lines.push('Delivery state: Ready for Review, not yet synchronized to Local. Continue ordinary discussion and answer questions without changing this Review. If the user requests new code or file changes, call worktree_resume_revision first, then continue the requested work in this same Session; do not ask the user to click a recovery control and do not synchronize Local. Until that tool succeeds, treat the Worktree as read-only. The user may still preview, directly finish, or discard through the Worktree acceptance UI.')
     } else if (record.delivery.state === 'preview_active') {
@@ -961,6 +1024,85 @@ export function createSessionCheckoutModule(
         recoveryRequiredCheckoutIds.push(checkoutId)
         changed = true
       } else if (
+        (current.phase === 'mutating' || current.phase === 'recovery_required')
+        && current.journal?.operation === 'checkpoint'
+        && current.delivery.state === 'ready_for_review'
+      ) {
+        const journal = current.journal
+        if (journal.step === 'planning') {
+          record = { ...current, phase: 'ready', journal: null, revision: current.revision + 1 }
+        } else if (
+          journal.step === 'updating_ref'
+          && typeof journal.commitOid === 'string'
+          && typeof journal.parentOid === 'string'
+          && typeof journal.checkpointId === 'string'
+          && typeof journal.checkpointSequence === 'number'
+          && typeof journal.checkpointRequestId === 'string'
+          && typeof journal.checkpointRequestedRevision === 'number'
+          && typeof journal.recoveryGeneration === 'string'
+          && typeof journal.checkpointMessage === 'string'
+          && typeof journal.checkpointIndexTreeOid === 'string'
+          && Array.isArray(journal.changedFiles)
+        ) {
+          const recovered = await dependencies.applyEngine.recoverCheckpoint({
+            isolatedPath: current.managedRoot,
+            commitOid: journal.commitOid,
+            parentOid: journal.parentOid,
+            expectedIndexTreeOid: journal.checkpointIndexTreeOid,
+          })
+          if (recovered.status === 'checkpoint_aborted') {
+            try {
+              await dependencies.git.releaseInternalArtifacts(current.localRoot, current.checkoutId, `checkpoints/${journal.checkpointId}`)
+            } catch {
+              console.warn('[session-checkout] 清理未生效 Checkpoint ref 失败，已保守保留不可见引用')
+            }
+            record = { ...current, phase: 'ready', journal: null, revision: current.revision + 1 }
+          } else if (recovered.status === 'checkpoint_recovered') {
+            const retained = await dependencies.git.readInternalArtifact(current.localRoot, current.checkoutId, `checkpoints/${journal.checkpointId}`)
+            if (retained !== journal.commitOid) {
+              record = { ...current, phase: 'recovery_required', revision: current.revision + 1 }
+              recoveryRequiredCheckoutIds.push(checkoutId)
+            } else {
+              const review = current.delivery.review
+              const checkpoint: ManagedWorktreeCheckpointRecord = {
+                checkpointId: journal.checkpointId,
+                sequence: journal.checkpointSequence,
+                reviewId: review.reviewId,
+                requestId: journal.checkpointRequestId,
+                requestedRevision: journal.checkpointRequestedRevision,
+                generation: journal.recoveryGeneration,
+                iteration: review.iteration,
+                createdAt: journal.startedAt,
+                commitOid: journal.commitOid,
+                parentOid: journal.parentOid,
+                summary: review.summary,
+                commitMessage: journal.checkpointMessage,
+                validationStatus: review.validationStatus,
+                changedFiles: [...journal.changedFiles],
+              }
+              record = {
+                ...current,
+                phase: 'ready',
+                previousReview: projectPreviousReview(review),
+                checkpoints: [...(current.checkpoints ?? []), checkpoint],
+                delivery: { state: 'working', iteration: review.iteration },
+                recoveryContinuation: undefined,
+                journal: null,
+                revision: current.revision + 1,
+              }
+            }
+          } else {
+            record = { ...current, phase: 'recovery_required', revision: current.revision + 1 }
+            recoveryRequiredCheckoutIds.push(checkoutId)
+          }
+        } else {
+          record = { ...current, phase: 'recovery_required', revision: current.revision + 1 }
+          recoveryRequiredCheckoutIds.push(checkoutId)
+        }
+        registry.managedCheckouts[checkoutId] = record
+        registry.revision += 1
+        changed = true
+      } else if (
         current.phase === 'mutating'
         && current.journal?.operation === 'preview'
         && (
@@ -1112,6 +1254,9 @@ export function createSessionCheckoutModule(
       const { recoveryContinuation: _recovery, ...withoutRecovery } = current
       return {
       ...withoutRecovery,
+      ...(current.delivery.state !== 'working' && current.delivery.state !== 'delivered'
+        ? { previousReview: projectPreviousReview(current.delivery.review) }
+        : {}),
       delivery: {
         state: 'ready_for_review',
         review: {
@@ -1141,6 +1286,237 @@ export function createSessionCheckoutModule(
     }
     })
     return inspectIsolated(binding)
+  }
+
+  async function operateCheckpoint(
+    input: Extract<SessionCheckoutOperation, { action: 'checkpoint' }>,
+    binding: SessionBindingRecord,
+  ): Promise<SessionCheckoutOperationResult> {
+    if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
+      return operationError('not_owner', '只有 owner Isolated 会话可以保存阶段')
+    }
+    const commitMessage = input.commitMessage.trim()
+    if (
+      !commitMessage
+      || commitMessage.length > 500
+      || !input.expectedReviewId.trim()
+      || !/^[0-9a-f]{64}$/u.test(input.expectedGeneration)
+      || !input.requestId.trim()
+      || input.requestId.length > 200
+      || /[\0\r\n]/u.test(input.requestId)
+    ) return operationError('invalid_input', 'Checkpoint 请求或 Commit Message 无效')
+
+    let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
+    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    const previousRequest = record.checkpoints?.find(checkpoint => checkpoint.requestId === input.requestId)
+    if (previousRequest) {
+      const exactReplay = record.delivery.state === 'working'
+        && record.checkpoints?.at(-1)?.checkpointId === previousRequest.checkpointId
+        && previousRequest.reviewId === input.expectedReviewId
+        && previousRequest.requestedRevision === input.expectedRevision
+        && previousRequest.generation === input.expectedGeneration
+        && previousRequest.commitMessage === commitMessage
+      if (!exactReplay) return operationError('stale_target', 'Checkpoint requestId 已被其他状态使用，请刷新')
+      return {
+        status: 'checkpointed',
+        target: await inspectIsolated(binding),
+        checkpoint: projectCheckpoint(previousRequest),
+        changedFiles: [...previousRequest.changedFiles],
+      }
+    }
+    if (record.revision !== input.expectedRevision) {
+      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+    }
+    if (record.phase !== 'ready' || (record.delivery.state !== 'ready_for_review' && record.delivery.state !== 'preview_active')) {
+      return operationError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能保存阶段`, await inspectIsolated(binding))
+    }
+    if (record.delivery.review.reviewId !== input.expectedReviewId || checkpointGenerationForRecord(record) !== input.expectedGeneration) {
+      return operationError('stale_target', 'Checkpoint Review 或 generation 已变化，请刷新后重试', await inspectIsolated(binding))
+    }
+    const holder = findProjectAcceptanceHolder(record)
+    if (holder) {
+      return operationError('project_acceptance_busy', '另一个任务正在占用该项目的 Local 验收槽位', await inspectIsolated(binding))
+    }
+    const inspected = await inspectIsolated(binding)
+    if (inspected.checkout.phase !== 'ready') {
+      return operationError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复', inspected)
+    }
+    record = dependencies.registry.read().managedCheckouts[record.checkoutId]
+    if (
+      !record
+      || record.revision !== input.expectedRevision
+      || record.phase !== 'ready'
+      || (record.delivery.state !== 'ready_for_review' && record.delivery.state !== 'preview_active')
+      || record.delivery.review.reviewId !== input.expectedReviewId
+      || checkpointGenerationForRecord(record) !== input.expectedGeneration
+    ) return operationError('stale_target', 'Checkpoint 状态在 Host CAS 前发生变化，请刷新后重试')
+
+    if (record.delivery.state === 'preview_active') {
+      const { preview, review } = record.delivery
+      const rollbackOperationId = dependencies.createCheckoutId()
+      updateManagedCheckout(record.checkoutId, (current) => ({
+        ...current,
+        phase: 'mutating',
+        journal: {
+          operation: 'rollback_preview',
+          operationId: rollbackOperationId,
+          step: 'planning',
+          startedAt: Date.now(),
+          previewId: preview.previewId,
+          reviewId: review.reviewId,
+          resumeRevision: false,
+        },
+        revision: current.revision + 1,
+      }))
+      const rollback = await dependencies.applyEngine.rollback({
+        localPath: record.localRoot,
+        receipt: preview,
+        beforeWrite: async () => {
+          updateManagedCheckout(record!.checkoutId, (current) => ({
+            ...current,
+            journal: current.journal?.operation === 'rollback_preview'
+              ? { ...current.journal, step: 'writing_local' }
+              : current.journal,
+            revision: current.revision + 1,
+          }))
+        },
+      })
+      if (rollback.status === 'error') {
+        const current = dependencies.registry.read().managedCheckouts[record.checkoutId]
+        const writeStarted = current?.journal?.operation === 'rollback_preview' && current.journal.step === 'writing_local'
+        if (rollback.error.code === 'stale_local' || rollback.error.code === 'preview_modified') {
+          return detachPreviewAfterLocalDrift(record, binding, rollback.error.code, 'rollback_preview')
+        }
+        if (!writeStarted || (rollback.error.code === 'git_error' && rollback.error.recoveryState === 'unchanged')) {
+          updateManagedCheckout(record.checkoutId, (currentRecord) => ({ ...currentRecord, phase: 'ready', journal: null, revision: currentRecord.revision + 1 }))
+        } else {
+          updateManagedCheckout(record.checkoutId, (currentRecord) => ({ ...currentRecord, phase: 'recovery_required', revision: currentRecord.revision + 1 }))
+        }
+        return operationError(rollback.error.code, rollback.error.message, await inspectIsolated(binding))
+      }
+      const restored = updateManagedCheckout(record.checkoutId, (current) => ({
+        ...current,
+        phase: 'ready',
+        delivery: { state: 'ready_for_review', review },
+        journal: null,
+        revision: current.revision + 1,
+      }))
+      if (!restored) return operationError('checkout_missing', 'Preview 已撤回，但 Checkout 记录丢失')
+      await releasePreviewArtifactsBestEffort(record, preview.previewId)
+      record = restored
+    }
+
+    if (record.delivery.state !== 'ready_for_review') {
+      return operationError('operation_not_allowed', '当前没有可保存的验收阶段', await inspectIsolated(binding))
+    }
+    const review = record.delivery.review
+    const checkpointId = dependencies.createCheckoutId()
+    const checkpointSequence = (record.checkpoints?.length ?? 0) + 1
+    const operationId = dependencies.createCheckoutId()
+    const startedAt = Date.now()
+    const mutating = updateManagedCheckout(record.checkoutId, (current) => ({
+      ...current,
+      phase: 'mutating',
+      journal: {
+        operation: 'checkpoint',
+        operationId,
+        step: 'planning',
+        startedAt,
+        reviewId: review.reviewId,
+        checkpointId,
+        checkpointSequence,
+        checkpointRequestId: input.requestId,
+        checkpointRequestedRevision: input.expectedRevision,
+        checkpointMessage: commitMessage,
+        recoveryGeneration: input.expectedGeneration,
+        isolatedFingerprint: review.isolatedFingerprint,
+        isolatedHeadOid: review.isolatedHeadOid,
+      },
+      revision: current.revision + 1,
+    }))
+    if (!mutating) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+
+    const result = await dependencies.applyEngine.checkpoint({
+      isolatedPath: mutating.managedRoot,
+      expectedFingerprint: review.isolatedFingerprint,
+      expectedHeadOid: review.isolatedHeadOid,
+      commitMessage,
+      beforeCommit: async (prepared) => {
+        const journaled = updateManagedCheckout(mutating.checkoutId, (current) => ({
+          ...current,
+          journal: current.journal?.operation === 'checkpoint'
+            ? {
+                ...current.journal,
+                step: 'updating_ref',
+                commitOid: prepared.commitOid,
+                parentOid: prepared.parentOid,
+                checkpointIndexTreeOid: prepared.indexTreeOid,
+                changedFiles: [...prepared.changedFiles],
+              }
+            : current.journal,
+          revision: current.revision + 1,
+        }))
+        if (!journaled?.journal || journaled.journal.operation !== 'checkpoint' || journaled.journal.commitOid !== prepared.commitOid) {
+          throw new SessionCheckoutError('stale_target', 'Checkpoint journal 在保留内部 ref 前发生变化')
+        }
+        await dependencies.git.retainInternalArtifact(mutating.localRoot, mutating.checkoutId, `checkpoints/${checkpointId}`, prepared.commitOid)
+      },
+    })
+    if (result.status === 'error') {
+      const current = dependencies.registry.read().managedCheckouts[mutating.checkoutId]
+      const commitPrepared = current?.journal?.operation === 'checkpoint' && typeof current.journal.commitOid === 'string'
+      if (!commitPrepared) {
+        updateManagedCheckout(mutating.checkoutId, (checkout) => ({
+          ...checkout,
+          phase: 'ready',
+          ...(result.error.code === 'stale_isolated' ? { previousReview: projectPreviousReview(review) } : {}),
+          delivery: result.error.code === 'stale_isolated'
+            ? { state: 'working', iteration: review.iteration }
+            : { state: 'ready_for_review', review },
+          journal: null,
+          revision: checkout.revision + 1,
+        }))
+      } else {
+        updateManagedCheckout(mutating.checkoutId, (checkout) => ({ ...checkout, phase: 'recovery_required', revision: checkout.revision + 1 }))
+      }
+      return operationError(result.error.code, result.error.message, await inspectIsolated(binding, false))
+    }
+
+    const checkpoint: ManagedWorktreeCheckpointRecord = {
+      checkpointId,
+      sequence: checkpointSequence,
+      reviewId: review.reviewId,
+      requestId: input.requestId,
+      requestedRevision: input.expectedRevision,
+      generation: input.expectedGeneration,
+      iteration: review.iteration,
+      createdAt: startedAt,
+      commitOid: result.commitOid,
+      parentOid: result.parentOid,
+      summary: review.summary,
+      commitMessage,
+      validationStatus: review.validationStatus,
+      changedFiles: [...result.changedFiles],
+    }
+    const completed = updateManagedCheckout(mutating.checkoutId, (current) => {
+      const { recoveryContinuation: _continuation, ...withoutContinuation } = current
+      return {
+        ...withoutContinuation,
+        phase: 'ready',
+        previousReview: projectPreviousReview(review),
+        checkpoints: [...(current.checkpoints ?? []), checkpoint],
+        delivery: { state: 'working', iteration: review.iteration },
+        journal: null,
+        revision: current.revision + 1,
+      }
+    })
+    if (!completed) return operationError('checkout_missing', 'Checkpoint 已创建，但 Checkout 记录丢失')
+    return {
+      status: 'checkpointed',
+      target: await inspectIsolated(binding),
+      checkpoint: projectCheckpoint(checkpoint),
+      changedFiles: [...checkpoint.changedFiles],
+    }
   }
 
   async function resumeRevisionTarget(
@@ -1199,11 +1575,13 @@ export function createSessionCheckoutModule(
         || record.delivery.review.reviewId !== expectedReviewId
       ) throw new SessionCheckoutError('stale_target', '验收状态在冲突恢复前发生变化，请刷新后重试')
     }
-    const iteration = record.delivery.review.iteration
+    const reviewBeforeResume = record.delivery.review
+    const iteration = reviewBeforeResume.iteration
     updateManagedCheckout(record.checkoutId, (current) => {
       const { recoveryContinuation: _previousRecovery, ...withoutRecovery } = current
       return {
         ...withoutRecovery,
+        previousReview: projectPreviousReview(reviewBeforeResume),
         ...(recovery ? {
           recoveryContinuation: { ...recovery, workingRevision: current.revision + 1 },
         } : {}),
@@ -2814,17 +3192,20 @@ export function createSessionCheckoutModule(
       if (!record || record.phase !== 'ready') {
         return operationError('recovery_required', 'Isolated Checkout 状态已变化，需要恢复')
       }
-      dirty = (await dependencies.git.status(record.managedRoot)).dirty
+      dirty = (await dependencies.git.status(record.managedRoot)).dirty || (record.checkpoints?.length ?? 0) > 0
     } else {
       try {
-        dirty = (await dependencies.git.status(record.managedRoot)).dirty
+        dirty = (await dependencies.git.status(record.managedRoot)).dirty || (record.checkpoints?.length ?? 0) > 0
       } catch {
         dirty = true
       }
       inspected = recoveryView(binding, record, dirty)
     }
     if (dirty && !input.confirmDirty) {
-      return operationError('dirty_confirmation_required', 'Isolated Checkout 含未提交修改或状态无法确认，需要明确确认', inspected)
+      const checkpointDetail = (record.checkpoints?.length ?? 0) > 0
+        ? `；确认后会永久删除 ${record.checkpoints!.length} 个尚未交付到 Local 的阶段`
+        : ''
+      return operationError('dirty_confirmation_required', `Isolated Checkout 含未提交修改、未交付阶段或状态无法确认，需要明确确认${checkpointDetail}`, inspected)
     }
 
     try {
@@ -2893,6 +3274,7 @@ export function createSessionCheckoutModule(
       if (input.action === 'apply') return await operateApply(input, binding)
       if (input.action === 'finish') return await operateFinish(input, binding)
       if (input.action === 'preview') return await operatePreview(input, binding)
+      if (input.action === 'checkpoint') return await operateCheckpoint(input, binding)
       if (input.action === 'rollback_preview') return await operateRollbackPreview(input, binding)
       if (input.action === 'finalize_preview') return await operateFinalizePreview(input, binding)
       if (input.action === 'retry_cleanup') return await operateRetryCleanup(input, binding)
@@ -2992,6 +3374,7 @@ export function createSessionCheckoutModule(
       phase: record.phase,
       dirty,
       commitOid,
+      ...((record.checkpoints?.length ?? 0) > 0 ? { checkpointCount: record.checkpoints!.length } : {}),
       ...(delivery.state === 'retained' ? {
         retention: delivery.retention,
         retainedAt: delivery.retainedAt,

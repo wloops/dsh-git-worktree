@@ -72,6 +72,15 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): W
       request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, request.recoveryProof,
     )),
     preview: request => invoke<WorktreeConsoleMutationResponse>('preview', () => remote.preview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
+    checkpoint: request => invoke<WorktreeConsoleMutationResponse>('checkpoint', () => remote.checkpoint(
+      request.sessionId,
+      request.checkoutId,
+      request.expectedRevision,
+      request.expectedReviewId,
+      request.expectedGeneration,
+      request.requestId,
+      request.commitMessage,
+    )),
     resumeRevision: request => invoke<WorktreeConsoleMutationResponse>('resumeRevision', () => request.conflictContinuation
       ? remote.resumeRevision(
           request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.conflictContinuation,

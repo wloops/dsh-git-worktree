@@ -20,6 +20,7 @@ import {
   type WorktreeDeliveryProofView,
   type WorktreeValidationItem,
   type WorktreeValidationStatus,
+  type WorktreeCheckpointView,
 } from './types.js'
 
 export const WORKTREE_CONSOLE_TARGET_STATES = [
@@ -79,6 +80,8 @@ export interface WorktreeConsoleCapabilities {
   discard: boolean
   preflight: boolean
   preview: boolean
+  /** Save the exact reviewed snapshot as a managed-Worktree-only stage and continue editing. */
+  checkpoint: boolean
   /** Invalidate an unsynced review and resume the same iteration without touching Local. */
   resumeRevision: boolean
   rollbackPreview: boolean
@@ -133,6 +136,8 @@ export interface WorktreeConsoleTargetSummary {
   cleanupMessage?: string
   deliveryProof?: WorktreeConsoleDeliveryProof
   review?: WorktreeConsoleReviewSummary
+  checkpoints?: WorktreeCheckpointView[]
+  checkpointGeneration?: string
   reviewSlot?: 'available' | 'waiting'
   reviewSlotOwnerSessionId?: string
   reviewSlotHolder?: WorktreeAcceptanceBlockerView
@@ -214,6 +219,16 @@ export interface WorktreeConsolePreviewRequest {
   checkoutId: string
   expectedRevision: number
   expectedReviewId: string
+}
+
+export interface WorktreeConsoleCheckpointRequest {
+  sessionId: string
+  checkoutId: string
+  expectedRevision: number
+  expectedReviewId: string
+  expectedGeneration: string
+  requestId: string
+  commitMessage: string
 }
 
 export interface WorktreeConsoleResumeRevisionRequest {
@@ -300,6 +315,7 @@ export interface WorktreeConsoleMutationResponse {
   target: WorktreeConsoleTargetSummary
   changedFiles?: string[]
   commitOid?: string | null
+  checkpoint?: WorktreeCheckpointView
   recoveryContinuation?: WorktreeRecoveryProof
 }
 
@@ -480,6 +496,7 @@ export interface WorktreeConsoleAdapter {
   preparePreviewRecoveryAnalysis(request: WorktreeConsolePreparePreviewRecoveryAnalysisRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   createPreviewRecoveryHandoff(request: WorktreeConsoleCreatePreviewRecoveryHandoffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>>
   preview(request: WorktreeConsolePreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
+  checkpoint(request: WorktreeConsoleCheckpointRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   resumeRevision(request: WorktreeConsoleResumeRevisionRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   prepareReviewRegeneration(request: WorktreeConsolePrepareRegenerationRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>
   rollbackPreview(request: WorktreeConsoleRollbackPreviewRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>>

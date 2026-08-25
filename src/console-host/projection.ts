@@ -8,6 +8,7 @@ import {
 } from '../console-contract.js'
 import type { GitCheckoutSnapshot, ManagedCheckoutRecord } from '../ports.js'
 import type { ManagedWorktreeSummaryView, SessionTargetView } from '../types.js'
+import { checkpointGenerationForRecord } from '../checkpoint.js'
 
 function review(record: ManagedCheckoutRecord): WorktreeConsoleReviewSummary | undefined {
   if (!('review' in record.delivery)) return undefined
@@ -82,6 +83,7 @@ export function capabilities(
     discard: (owner || sourceReservation) && active && !cleanup && !previewDetached,
     preflight: owner && ready,
     preview: owner && ready,
+    checkpoint: owner && (ready || previewActive),
     resumeRevision: owner && ready,
     rollbackPreview: owner && (previewActive || previewDetached || previewRecovery),
     finalize: owner && ready,
@@ -137,6 +139,18 @@ export function projectRecord(
       : {}),
     ...(projectedProof === undefined ? {} : { deliveryProof: projectedProof }),
     ...(projectedReview === undefined ? {} : { review: projectedReview }),
+    ...((record.checkpoints?.length ?? 0) > 0 ? {
+      checkpoints: record.checkpoints!.map(checkpoint => ({
+        checkpointId: checkpoint.checkpointId,
+        sequence: checkpoint.sequence,
+        reviewId: checkpoint.reviewId,
+        createdAt: checkpoint.createdAt,
+        summary: checkpoint.summary,
+        validationStatus: checkpoint.validationStatus,
+        changedFiles: [...checkpoint.changedFiles],
+      })),
+    } : {}),
+    ...(checkpointGenerationForRecord(record) ? { checkpointGeneration: checkpointGenerationForRecord(record) } : {}),
     ...(delivery.state === 'ready_for_review' ? { reviewSlot: 'available' as const } : {}),
     ...(delivery.state === 'preview_detached' ? {
       previewRecovery: {
@@ -243,6 +257,7 @@ export function projectLocal(target: SessionTargetView, sessionId: string): Work
       discard: false,
       preflight: false,
       preview: false,
+      checkpoint: false,
       resumeRevision: false,
       rollbackPreview: false,
       finalize: false,

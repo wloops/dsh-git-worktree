@@ -547,6 +547,7 @@ describe('Worktree Console loading and inspection', () => {
     const row = await screen.findByRole('listitem')
     expect(within(row).queryByRole('button', { name: '检查 checkout-1' })).toBeNull()
     expect(within(row).queryByRole('button', { name: '验收 checkout-1' })).toBeNull()
+    expect(within(row).queryByRole('button', { name: /保存阶段/ })).toBeNull()
     expect(screen.queryByText(fixture.target.managedRoot!)).toBeNull()
     expect(within(row).getByRole('button', { name: '打开 checkout-1' })).toBeTruthy()
     expect(within(row).getByRole('button', { name: '放弃 checkout-1' })).toBeTruthy()

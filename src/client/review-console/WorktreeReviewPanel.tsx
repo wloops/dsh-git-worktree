@@ -86,6 +86,9 @@ export function WorktreeReviewPanel({
     target.deliveryProof?.commitInLocalHistory,
     target.deliveryProof?.validationStatus,
     target.deliveryProof?.validationSummary,
+    target.checkpoints?.length,
+    target.checkpoints?.at(-1)?.checkpointId,
+    target.checkpointGeneration,
     target.reviewSlot,
     target.reviewSlotHolder?.checkoutId,
     target.reviewSlotHolder?.ownerSessionId,
@@ -162,6 +165,9 @@ export function WorktreeReviewPanel({
       <div className="dsh-wt-review-meta">
         <span data-validation={review.validationStatus}>{validationLabel(review.validationStatus)}</span>
         <span>{review.changedFiles.length} 个文件</span>
+        {(currentTarget?.checkpoints?.length ?? 0) > 0 ? (
+          <span className="dsh-wt-checkpoint-summary">已保存 {currentTarget!.checkpoints!.length} 个阶段 · 尚未发布到 Local</span>
+        ) : null}
         {hasValidationDetails ? (
           <button
             type="button"

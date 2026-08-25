@@ -394,6 +394,7 @@ export function WorktreeConsoleView({
                       <div className="dsh-wtc-facts">
                         <span>第 {target.iteration} 轮</span>
                         {target.dirty ? <span>有未提交修改</span> : <span>干净</span>}
+                        {(target.checkpoints?.length ?? 0) > 0 ? <span>已保存 {target.checkpoints!.length} 个未交付阶段</span> : null}
                         {target.retention ? <span>保留方式：{retentionLabel(target.retention)}</span> : null}
                         {target.expiresAt ? <span>到期时间：{new Date(target.expiresAt).toLocaleString()}</span> : null}
                         {target.cleanupMessage ? <span className="dsh-wtc-recovery-message">{target.cleanupMessage}</span> : null}

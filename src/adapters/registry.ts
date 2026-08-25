@@ -29,6 +29,20 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
+function isOid(value: unknown): value is string {
+  return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(value)
+}
+
+function isBoundedText(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= max && !/[\0]/u.test(value)
+}
+
+function isSafeRelativePath(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.length > 1000 || /[\0-\x1f\x7f]/u.test(value)) return false
+  if (/^(?:[A-Za-z]:[\\/]|[\\/])/u.test(value)) return false
+  return !value.split(/[\\/]/u).some((segment) => segment === '' || segment === '.' || segment === '..')
+}
+
 function isTargetRef(value: unknown): boolean {
   if (!isRecord(value) || typeof value.kind !== 'string') return false
   return value.kind === 'unselected'
@@ -66,6 +80,35 @@ function isReview(value: unknown): boolean {
     && typeof value.suggestedCommitMessage === 'string'
     && typeof value.isolatedFingerprint === 'string'
     && typeof value.isolatedHeadOid === 'string'
+}
+
+function isPreviousReview(value: unknown): boolean {
+  return isRecord(value)
+    && isBoundedText(value.reviewId, 200)
+    && Number.isSafeInteger(value.iteration) && (value.iteration as number) >= 1
+    && isBoundedText(value.summary, 1000)
+    && isBoundedText(value.suggestedCommitMessage, 500)
+    && Array.isArray(value.changedFiles) && value.changedFiles.length <= 50
+    && value.changedFiles.every(isSafeRelativePath)
+}
+
+function isCheckpoint(value: unknown): boolean {
+  return isRecord(value)
+    && isBoundedText(value.checkpointId, 200)
+    && Number.isSafeInteger(value.sequence) && (value.sequence as number) >= 1
+    && isBoundedText(value.reviewId, 200)
+    && (value.requestId === undefined || (isBoundedText(value.requestId, 200) && !/[\r\n]/u.test(value.requestId)))
+    && (value.requestedRevision === undefined || (Number.isSafeInteger(value.requestedRevision) && (value.requestedRevision as number) >= 0))
+    && (value.generation === undefined || (typeof value.generation === 'string' && /^[0-9a-f]{64}$/u.test(value.generation)))
+    && Number.isSafeInteger(value.iteration) && (value.iteration as number) >= 1
+    && Number.isSafeInteger(value.createdAt) && (value.createdAt as number) >= 0
+    && isOid(value.commitOid)
+    && isOid(value.parentOid)
+    && isBoundedText(value.summary, 1000)
+    && isBoundedText(value.commitMessage, 500)
+    && (value.validationStatus === 'passed' || value.validationStatus === 'failed' || value.validationStatus === 'partial' || value.validationStatus === 'not_run')
+    && Array.isArray(value.changedFiles) && value.changedFiles.length <= 500
+    && value.changedFiles.every(isSafeRelativePath)
 }
 
 function isPreviewReceipt(value: unknown): boolean {
@@ -156,6 +199,7 @@ function isJournal(value: unknown): boolean {
   if (value.operation === 'create') return value.step === 'creating_worktree'
   const validOperation = value.operation === 'apply'
     || value.operation === 'preview'
+    || value.operation === 'checkpoint'
     || value.operation === 'rollback_preview'
     || value.operation === 'finish'
     || value.operation === 'finalize_preview'
@@ -178,7 +222,14 @@ function isJournal(value: unknown): boolean {
     && (value.baseStrategy === undefined || value.baseStrategy === 'recorded_base' || value.baseStrategy === 'isolated_contains_local_head' || value.baseStrategy === 'local_contains_isolated_head')
     && (value.localHeadOid === undefined || typeof value.localHeadOid === 'string')
     && (value.isolatedHeadOid === undefined || typeof value.isolatedHeadOid === 'string')
-    && (value.commitOid === undefined || typeof value.commitOid === 'string')
+    && (value.commitOid === undefined || isOid(value.commitOid))
+    && (value.checkpointId === undefined || isBoundedText(value.checkpointId, 200))
+    && (value.checkpointSequence === undefined || (Number.isSafeInteger(value.checkpointSequence) && (value.checkpointSequence as number) >= 1))
+    && (value.checkpointRequestId === undefined || (isBoundedText(value.checkpointRequestId, 200) && !/[\r\n]/u.test(value.checkpointRequestId)))
+    && (value.checkpointRequestedRevision === undefined || (Number.isSafeInteger(value.checkpointRequestedRevision) && (value.checkpointRequestedRevision as number) >= 0))
+    && (value.checkpointMessage === undefined || isBoundedText(value.checkpointMessage, 500))
+    && (value.checkpointIndexTreeOid === undefined || isOid(value.checkpointIndexTreeOid))
+    && (value.parentOid === undefined || isOid(value.parentOid))
     && (value.retention === undefined || value.retention === 'cleanup' || value.retention === 'retain_24h' || value.retention === 'retain_3d' || value.retention === 'retain_manual')
     && (value.recoveryGeneration === undefined || (typeof value.recoveryGeneration === 'string' && /^[0-9a-f]{64}$/u.test(value.recoveryGeneration)))
     && (value.resumeRevision === undefined || typeof value.resumeRevision === 'boolean')
@@ -240,6 +291,17 @@ function isManagedCheckout(value: unknown): boolean {
     && typeof value.gitDir === 'string'
     && typeof value.baseOid === 'string'
     && (value.applyBaseOid === undefined || typeof value.applyBaseOid === 'string')
+    && (value.previousReview === undefined || isPreviousReview(value.previousReview))
+    && (value.checkpoints === undefined || (
+      Array.isArray(value.checkpoints)
+      && value.checkpoints.length <= 100
+      && value.checkpoints.every(isCheckpoint)
+      && value.checkpoints.every((checkpoint, index) => checkpoint.sequence === index + 1)
+      && new Set(value.checkpoints.map(checkpoint => checkpoint.checkpointId)).size === value.checkpoints.length
+      && new Set(value.checkpoints.map(checkpoint => checkpoint.reviewId)).size === value.checkpoints.length
+      && new Set(value.checkpoints.flatMap(checkpoint => checkpoint.requestId === undefined ? [] : [checkpoint.requestId])).size
+        === value.checkpoints.filter(checkpoint => checkpoint.requestId !== undefined).length
+    ))
     && (value.recoveryContinuation === undefined || isRecoveryContinuation(value.recoveryContinuation))
     && typeof value.sourceRef === 'string'
     && (value.phase === 'preparing' || value.phase === 'ready' || value.phase === 'mutating' || value.phase === 'recovery_required' || value.phase === 'finalized' || value.phase === 'retained' || value.phase === 'discarded')
