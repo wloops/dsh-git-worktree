@@ -37,7 +37,7 @@ stateDiagram-v2
 3. 启用 **Worktree**。
 4. 输入任务并确认。
 
-确认前不会创建 Worktree。确认后，草稿会迁移到新的隔离 Session，Local Session 不会被偷偷切换 cwd。
+确认前不会创建 Worktree。确认后，草稿会迁移到新的隔离 Session，Local Session 不会被偷偷切换 cwd。迁移成功后，空白 source launcher 会自动归档，避免“新会话”复用它并阻塞下一项并发任务；owner Worktree Session 仍保留在对应 Workspace 中。
 
 ### 已有 Local Session
 

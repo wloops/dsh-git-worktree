@@ -130,6 +130,12 @@ export class PreSessionWorktreeController {
       this.services.sessions.open(created.targetSessionId)
       request.inputActions.setDraft('')
       for (const imageId of request.input.imageIds) request.inputActions.removeImage(imageId)
+      // The source is now an empty launcher. Retire it so Harness's New Session
+      // reuse cannot route a concurrent task back into this reserved source.
+      // A failed retirement must not roll back the already-safe target handoff:
+      // the source no longer owns draft/image state and the target remains the
+      // only writable Session for this task.
+      try { await this.services.workspaces.archiveSession(request.sessionId) } catch { /* target handoff remains authoritative */ }
       return created.target
     } catch (error) {
       if (created !== undefined) {

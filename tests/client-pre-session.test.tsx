@@ -69,7 +69,7 @@ function successFixture() {
         return { workspaceId: 'workspace-target', path }
       }),
       openPath: vi.fn(async () => undefined),
-      archiveSession: vi.fn(async () => undefined),
+      archiveSession: vi.fn(async (sessionId: string) => { events.push(`session:archive:${sessionId}`) }),
       delete: vi.fn(async () => undefined),
     },
     sessions: {
@@ -148,9 +148,31 @@ describe('Pre-session Worktree preparation', () => {
       'session:open:target-session',
       'source:draft:',
       'source:remove:image-1',
+      'session:archive:source-session',
       'block:clear:source-session',
     ])
     expect(fixture.sourceActions.submit).not.toHaveBeenCalled()
+  })
+
+  test('keeps the migrated target usable when retiring the empty source launcher fails', async () => {
+    const fixture = successFixture()
+    fixture.services.workspaces.archiveSession = vi.fn(async (sessionId: string) => {
+      fixture.events.push(`session:archive-failed:${sessionId}`)
+      throw new Error('archive unavailable')
+    })
+    const controller = createPreSessionWorktreeController(fixture.adapter, fixture.services)
+
+    await expect(controller.prepare({
+      sessionId: 'source-session',
+      input: { draft: 'keep the target', imageIds: [], occurrences: [], phase: 'plain' },
+      inputActions: fixture.sourceActions,
+    })).resolves.toEqual(fixture.target)
+
+    expect(fixture.services.sessions.open).toHaveBeenCalledWith('target-session')
+    expect(fixture.sourceActions.setDraft).toHaveBeenCalledWith('')
+    expect(fixture.events.some(event => event.startsWith('remote:discard:'))).toBe(false)
+    expect(fixture.services.workspaces.delete).not.toHaveBeenCalled()
+    expect(fixture.events).toContain('session:archive-failed:source-session')
   })
 
   test('keeps the source draft untouched and never creates Harness objects when Host create fails', async () => {
@@ -205,6 +227,7 @@ describe('Pre-session Worktree preparation', () => {
       'session:create:failed',
       'remote:discard:target-session',
       'remote:discard:source-session',
+      'session:archive:target-session',
       'block:clear:source-session',
     ])
   })

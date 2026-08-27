@@ -9,6 +9,10 @@
 - Review 主操作改为更直接的任务文案：Ready 使用“预览修改”，Preview 使用“确认并保存”，Direct Finish 使用“跳过预览并保存”；同步更新恢复、Checkpoint 与确认弹窗文案，不改变 Host 交付语义。
 - 将中英文 README 收敛为 Mermaid 驱动的项目首页，新增双语 Usage 指南承接完整操作、恢复、命令与排错；同时修正 Checkpoint 迁移状态，并明确项目级 Worktree 插件与 Domi 桌面工作台之间的产品边界。
 
+### Fixed
+
+- pre-session handoff 成功后自动归档已清空的 Local source launcher，防止 Harness 的 New Session 复用该 reserved source 并错误阻塞下一项并发 Worktree 任务；owner Session 与项目级 Preview 串行约束保持不变。
+
 ## [0.6.0] - 2026-08-25
 
 `0.6.0` 为长任务增加 Host-authoritative Worktree Checkpoint：用户可以把精确 Ready/Preview 阶段保存为隔离 Worktree 内部 Commit，清理当前施工状态后继续开发，同时保持 Local 完全不参与阶段提交，最终仍只交付一个累计任务 Commit。

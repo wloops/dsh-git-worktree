@@ -37,7 +37,7 @@ stateDiagram-v2
 3. Enable **Worktree**.
 4. Enter the task and confirm.
 
-No Worktree is created before confirmation. The draft moves to a new isolated Session, and the Local Session is never silently switched to another cwd.
+No Worktree is created before confirmation. The draft moves to a new isolated Session, and the Local Session is never silently switched to another cwd. After a successful handoff, the empty source launcher is archived so New Session cannot reuse it and block another concurrent task; the owner Worktree Session remains available in its Workspace.
 
 ### Existing Local Session
 
