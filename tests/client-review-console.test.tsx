@@ -175,7 +175,7 @@ describe('Domi-style Worktree Review', () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={{ ...fixture.target, revision: 8 }} />)
     expect(screen.getByText(/验收结果已过期，请刷新/)).toBeTruthy()
-    const action = screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement
+    const action = screen.getByRole('button', { name: '预览修改' }) as HTMLButtonElement
     expect(action.disabled).toBe(true)
     fireEvent.click(action)
     expect(fixture.calls).toEqual([])
@@ -192,7 +192,7 @@ describe('Domi-style Worktree Review', () => {
     expect(screen.getByText('同步条件已确认')).toBeTruthy()
     expect(fixture.adapter.preview).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
 
     await waitFor(() => expect(fixture.adapter.preflight).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(fixture.adapter.preview).toHaveBeenCalledWith(identity()))
@@ -293,7 +293,7 @@ describe('Domi-style Worktree Review', () => {
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} services={services} identity={identity()} target={fixture.target} />)
 
     await waitFor(() => expect(screen.getByText('同步条件已确认')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
     await waitFor(() => expect(screen.getByText(/实时写入校验发现冲突/)).toBeTruthy())
     expect(fixture.adapter.resumeRevision).not.toHaveBeenCalled()
     expect(services.sessions.binding('target-session')?.session.prompt).not.toHaveBeenCalled()
@@ -320,11 +320,11 @@ describe('Domi-style Worktree Review', () => {
 
     fireEvent.click(screen.getByLabelText('更多交付操作'))
     fireEvent.click(screen.getByRole('menuitem', { name: '保存阶段并继续' }))
-    expect(screen.getByRole('dialog', { name: '保存 Worktree 阶段并继续？' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '保存当前进度并继续？' })).toBeTruthy()
     expect(screen.getByText(/阶段不会发布到 Local/)).toBeTruthy()
     const message = screen.getByRole('textbox', { name: 'Checkpoint Commit Message' })
     fireEvent.change(message, { target: { value: 'feat(checkpoint): save stage one' } })
-    const confirm = screen.getByRole('button', { name: '确认保存并继续' })
+    const confirm = screen.getByRole('button', { name: '保存进度并继续' })
     fireEvent.click(confirm)
     fireEvent.click(confirm)
 
@@ -340,16 +340,16 @@ describe('Domi-style Worktree Review', () => {
     expect(screen.getByText(/已保存第 1 个 Worktree 阶段并继续修改/)).toBeTruthy()
   })
 
-  test('Preview active 保存阶段明确由 Host 先安全撤回 Preview，Client 不拆成两个写请求', async () => {
+  test('Preview active 保存阶段明确由 Host 先恢复并撤回预览，Client 不拆成两个写请求', async () => {
     const { fixture, target } = previewTarget()
     fixture.adapter.checkpoint = vi.fn(fixture.adapter.checkpoint)
     fixture.adapter.rollbackPreview = vi.fn(fixture.adapter.rollbackPreview)
     render(<WorktreeReviewPanel review={review({ revision: 8 })} adapter={fixture.adapter} identity={identity(8)} target={target} />)
 
     fireEvent.click(screen.getByLabelText('更多交付操作'))
-    fireEvent.click(screen.getByRole('menuitem', { name: '撤回 Preview，保存阶段并继续' }))
-    expect(screen.getByRole('dialog', { name: '保存 Worktree 阶段并继续？' }).textContent).toContain('先按现有 receipt 安全撤回 Local Preview')
-    fireEvent.click(screen.getByRole('button', { name: '确认保存并继续' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '保存阶段并继续' }))
+    expect(screen.getByRole('dialog', { name: '保存当前进度并继续？' }).textContent).toContain('先安全撤回当前预览')
+    fireEvent.click(screen.getByRole('button', { name: '保存进度并继续' }))
 
     await waitFor(() => expect(fixture.adapter.checkpoint).toHaveBeenCalledTimes(1))
     expect(fixture.adapter.rollbackPreview).not.toHaveBeenCalled()
@@ -369,35 +369,35 @@ describe('Domi-style Worktree Review', () => {
     expect(screen.getByText(/已恢复编辑；请重新检查、验证并生成新的验收稿/)).toBeTruthy()
   })
 
-  test('Ready 更多菜单提供跳过验收直接提交，并保持 Commit Message/Retention 确认', async () => {
+  test('Ready 更多菜单提供跳过预览并保存，并保持 Commit Message/Retention 确认', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     fixture.adapter.finalize = vi.fn(fixture.adapter.finalize)
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} />)
 
     await waitFor(() => expect(screen.getByText('同步条件已确认')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('更多交付操作'))
-    fireEvent.click(screen.getByRole('menuitem', { name: '跳过验收，直接提交' }))
-    expect(screen.getByRole('dialog', { name: '跳过 Local 验收，直接提交？' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: '跳过预览并保存' }))
+    expect(screen.getByRole('dialog', { name: '跳过预览并直接保存？' })).toBeTruthy()
     const message = screen.getByRole('textbox', { name: 'Commit Message' }) as HTMLTextAreaElement
     fireEvent.change(message, { target: { value: 'feat(review): direct finish' } })
     fireEvent.click(screen.getByRole('checkbox', { name: '提交后暂时保留当前运行环境' }))
     fireEvent.change(screen.getByRole('combobox', { name: '保留时长' }), { target: { value: 'retain_3d' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认提交并保留环境' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认交付并保留环境' }))
 
     await waitFor(() => expect(fixture.adapter.finalize).toHaveBeenCalledWith({
       ...identity(), commitMessage: 'feat(review): direct finish', retention: 'retain_3d',
     }))
   })
 
-  test('Preview active 主操作验收通过并提交，调用 finalizePreview 而不是 direct finish', async () => {
+  test('Preview active 主操作确认并保存，调用 finalizePreview 而不是 direct finish', async () => {
     const { fixture, target } = previewTarget()
     fixture.adapter.finalizePreview = vi.fn(fixture.adapter.finalizePreview)
     fixture.adapter.finalize = vi.fn(fixture.adapter.finalize)
     render(<WorktreeReviewPanel review={review({ revision: 8 })} adapter={fixture.adapter} identity={identity(8)} target={target} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '验收通过并提交' }))
-    expect(screen.getByRole('dialog', { name: '验收通过并提交？' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '确认提交并清理' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认并保存' }))
+    expect(screen.getByRole('dialog', { name: '确认并保存本次修改？' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '确认交付并清理' }))
 
     await waitFor(() => expect(fixture.adapter.finalizePreview).toHaveBeenCalledWith({
       ...identity(8), commitMessage: 'feat(review): add Worktree Review UI', retention: 'cleanup',
@@ -438,14 +438,14 @@ describe('Domi-style Worktree Review', () => {
       onTargetChange={() => undefined}
     />)
 
-    expect(screen.queryByRole('button', { name: '安全撤回 Preview' })).toBeNull()
-    await waitFor(() => expect(screen.getByRole('button', { name: '安全撤回 Preview' })).toBeTruthy())
+    expect(screen.queryByRole('button', { name: '恢复并撤回预览' })).toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: '恢复并撤回预览' })).toBeTruthy())
     expect(screen.getByText(/generation 111111111111/)).toBeTruthy()
     expect(screen.getByText(/撤回：可证明安全/)).toBeTruthy()
     expect(screen.getByText(/提交：可证明安全/)).toBeTruthy()
     expect(recoverySpy).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByRole('button', { name: '安全撤回 Preview' }))
+    fireEvent.click(screen.getByRole('button', { name: '恢复并撤回预览' }))
     await waitFor(() => expect(rollbackSpy).toHaveBeenCalledTimes(1))
     expect(recoverySpy).toHaveBeenCalledTimes(2)
     expect(rollbackSpy.mock.calls[0]?.[0]).toMatchObject({
@@ -477,7 +477,7 @@ describe('Domi-style Worktree Review', () => {
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target} onRefresh={onRefresh} />)
 
     await waitFor(() => expect(screen.getByText('同步条件已确认')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
 
     await waitFor(() => expect(fixture.adapter.preflight).toHaveBeenCalledTimes(3))
     expect(fixture.adapter.preview).toHaveBeenCalledTimes(1)
@@ -511,7 +511,7 @@ describe('Domi-style Worktree Review', () => {
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} services={services} identity={identity()} target={fixture.target} />)
 
     await waitFor(() => expect(screen.getByText('stale review')).toBeTruthy())
-    expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '预览修改' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '重新生成验收结果' }))
 
     await waitFor(() => expect(services.sessions.binding('target-session')?.session.prompt).toHaveBeenCalledTimes(1))
@@ -616,11 +616,11 @@ describe('Domi-style Worktree Review', () => {
     fixture.adapter.current = vi.fn(async () => ({ ok: true as const, value: { target: current } }))
     render(loggedReviewRow(fixture.adapter))
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: '预览修改' })).toBeTruthy())
     current = preview
     window.dispatchEvent(new CustomEvent(WORKTREE_REVIEW_REFRESH_EVENT, { detail: { sessionId: 'target-session' } }))
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '验收通过并提交' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认并保存' })).toBeTruthy())
     expect(fixture.adapter.current).toHaveBeenCalledTimes(2)
   })
 
@@ -630,12 +630,12 @@ describe('Domi-style Worktree Review', () => {
     fixture.adapter.finalizePreview = vi.fn(fixture.adapter.finalizePreview)
     render(loggedReviewRow(fixture.adapter))
     await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'target-session' }))
-    expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole('button', { name: '预览修改' }) as HTMLButtonElement).disabled).toBe(false)
 
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '验收通过并提交' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '验收通过并提交' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认提交并清理' }))
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认并保存' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '确认并保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认交付并清理' }))
     await waitFor(() => expect(fixture.adapter.finalizePreview).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 8 })))
     expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
   })
@@ -644,6 +644,6 @@ describe('Domi-style Worktree Review', () => {
     render(loggedReviewRow())
     expect(screen.getByText('Review summary')).toBeTruthy()
     expect(screen.getByText(/连接后即可执行验收操作/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '同步到 Local 验收' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '预览修改' })).toBeNull()
   })
 })

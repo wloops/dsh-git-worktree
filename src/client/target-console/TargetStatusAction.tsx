@@ -200,7 +200,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
   const footer: MenuEntry[] = target?.capabilities.retryCleanup
     ? [{ id: 'retry_cleanup', label: pendingAction === 'retry_cleanup' ? '处理中…' : '重试清理环境', disabled: pendingAction !== null }]
     : target?.capabilities.discard
-      ? [{ id: 'discard', label: pendingAction === 'discard' ? '处理中…' : target.state === 'preview_active' ? '撤回验收并清理 Worktree' : '放弃任务并清理 Worktree', danger: true, disabled: pendingAction !== null }]
+      ? [{ id: 'discard', label: pendingAction === 'discard' ? '处理中…' : '放弃任务并清理 Worktree', danger: true, disabled: pendingAction !== null }]
       : []
 
   return (
@@ -253,7 +253,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
       <Modal
         open={cleanupConfirmOpen}
         onClose={() => setCleanupConfirmOpen(false)}
-        title={target?.state === 'preview_active' ? '撤回验收并清理 Worktree？' : '放弃任务并清理 Worktree？'}
+        title="放弃任务并清理 Worktree？"
         closeLabel="取消清理 Worktree"
         description={target?.state === 'preview_active'
           ? 'Host 会先安全撤回 Local Preview；无法证明可无损撤回时会停止并保留恢复现场。'

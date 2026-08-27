@@ -1810,7 +1810,7 @@ export function createSessionCheckoutModule(
           reviewId: operationId,
           iteration,
           preparedAt: startedAt,
-          summary: 'Worktree 修改已通过 ApplyWorktree 同步到 Local 验收',
+          summary: 'Worktree 修改已通过 ApplyWorktree 写入 Local Preview',
           validationStatus: 'not_run' as const,
           tests: [],
           changedFiles: [...planResult.plan.changedFiles],
@@ -3140,7 +3140,7 @@ export function createSessionCheckoutModule(
       if (!input.rollbackPreview) {
         return operationError(
           'preview_not_active',
-          'Local 正在验收本任务；放弃任务前必须先安全撤回 Preview',
+          '本任务正在 Local 预览；放弃任务前必须先安全撤回 Preview',
           await inspectIsolated(binding),
         )
       }

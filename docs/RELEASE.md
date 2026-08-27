@@ -49,7 +49,7 @@ pnpm run check:publish:release
 14. Recovery analysis prompt 明确只读；fresh Worktree handoff 从最新 Local HEAD 创建，任何失败都不改变旧 detached delivery、receipt、refs、Local 或旧 Worktree。
 15. 在 Ready Review 点击“保存阶段并继续”：Worktree 产生一个阶段 Commit、状态回到 clean Working、Review/Preview/proof 失效，Local HEAD/branch/index/staged/unstaged/untracked/文件 bytes 与 refs 完全不变。
 16. 对同一 checkpoint request ID 重复提交只返回同一阶段；旧 revision/review/generation、外来 Session、acceptance slot busy、空阶段与重复点击均在写入前拒绝或去重。
-17. active Preview 点击“撤回 Preview，保存阶段并继续”：Host 原子撤回 Preview 后保存 Worktree 阶段；制造 rollback fault 时必须保留 journal/artifacts 与恢复证据，不能继续创建 Checkpoint。
+17. active Preview 点击“保存阶段并继续”：Host 原子撤回 Preview 后保存 Worktree 阶段；制造 rollback fault 时必须保留 journal/artifacts 与恢复证据，不能继续创建 Checkpoint。
 18. 重启 Host 后恢复 `checkpoint` journal：prepared commit 尚未移动 HEAD、HEAD 已移动但 index 未清理、内部 ref 已保留等中断点都应收敛或进入 `recovery_required`；不得留下未知 `index.lock` 或泄漏内部 refs 到 Remote。
 19. 连续保存至少两个阶段后完成 Finalize；Local 最终只新增一个累计任务 Commit，Review/Manager 只展示阶段摘要/数量，Manager 不出现 Checkpoint mutation 控件。
 

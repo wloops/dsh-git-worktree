@@ -114,7 +114,7 @@ describe('Worktree ToolViews', () => {
     expect(screen.getByText('1 个文件')).toBeTruthy()
     expect(screen.queryByText('src/index.ts')).toBeNull()
     expect(screen.getByText(/连接后即可执行验收操作/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '同步到 Local 验收' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '预览修改' })).toBeNull()
     expect(client.commands).toEqual([])
   })
 })

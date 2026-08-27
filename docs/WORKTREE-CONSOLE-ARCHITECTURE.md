@@ -102,7 +102,7 @@ Console 状态由 domain facts 单向投影，不创建第二套持久状态机�
 - `prepareReviewRegeneration`
 - `rollbackPreview`
 - `discard`
-- `finalize`（Ready 跳过验收直接提交）
+- `finalize`（Ready 使用“跳过预览并保存”）
 - `finalizePreview`
 - `setRetention`
 - `retryCleanup`

@@ -267,7 +267,7 @@ describe('Harness-native Session Target slots', () => {
     render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Session Target：Worktree · Local 验收中' }))
-    fireEvent.click(screen.getByRole('button', { name: '撤回验收并清理 Worktree' }))
+    fireEvent.click(screen.getByRole('button', { name: '放弃任务并清理 Worktree' }))
     fireEvent.click(screen.getByRole('button', { name: '确认清理 Worktree' }))
 
     await waitFor(() => expect(fixture.calls).toContainEqual({
@@ -301,7 +301,7 @@ describe('Harness-native Session Target slots', () => {
       managedRoot: null, sourceRoot: null, capabilities: { ...fixture.target.capabilities, create: true, preflight: false, preview: false },
     } } })
 
-    await waitFor(() => expect(screen.queryByText('Worktree 已准备好同步到 Local 验收')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('修改已完成，等待你预览确认')).toBeNull())
   })
 
   test('Dock 切换 Session 时丢弃旧 mutation 结果，不把 A 的 Preview 注入 B', async () => {
@@ -321,8 +321,8 @@ describe('Harness-native Session Target slots', () => {
     const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
     const rendered = render(<Dock session={{ sessionId: 'session-a' }} input={{}} />)
 
-    await waitFor(() => expect((screen.getByRole('button', { name: '同步到 Local 验收' }) as HTMLButtonElement).disabled).toBe(false))
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: '预览修改' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
     await waitFor(() => expect(fixture.adapter.preview).toHaveBeenCalled())
     rendered.rerender(<Dock session={{ sessionId: 'session-b' }} input={{}} />)
     await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'session-b' }))
@@ -330,7 +330,7 @@ describe('Harness-native Session Target slots', () => {
       sessionId: 'session-a', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
     }))
 
-    await waitFor(() => expect(screen.queryByText('本轮修改正在 Local 等待验收')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('正在预览本次修改，确认后即可保存')).toBeNull())
     expect(screen.queryByText('已同步为可撤回的 Local Preview；请在 Local 中验收。')).toBeNull()
   })
 
@@ -348,14 +348,14 @@ describe('Harness-native Session Target slots', () => {
     const Dock = entry!.component
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
-    await waitFor(() => expect(screen.getByText('Worktree 已准备好同步到 Local 验收')).toBeTruthy())
-    expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('修改已完成，等待你预览确认')).toBeTruthy())
+    expect(screen.getByRole('button', { name: '预览修改' })).toBeTruthy()
     expect(screen.getByLabelText('更多交付操作')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Inspect' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
-    await waitFor(() => expect(screen.getByText('本轮修改正在 Local 等待验收')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
+    await waitFor(() => expect(screen.getByText('正在预览本次修改，确认后即可保存')).toBeTruthy())
     expect(fixture.calls).toContainEqual({ method: 'preflight', request: {
       sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
     } })
@@ -371,8 +371,8 @@ describe('Harness-native Session Target slots', () => {
     const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '同步到 Local 验收' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '同步到 Local 验收' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '预览修改' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
     await waitFor(() => expect(screen.getByText('已同步为可撤回的 Local Preview；请在 Local 中验收。')).toBeTruthy())
     const detached = {
       ...fixture.target,
@@ -386,7 +386,7 @@ describe('Harness-native Session Target slots', () => {
 
     window.dispatchEvent(new CustomEvent(WORKTREE_REVIEW_REFRESH_EVENT, { detail: { sessionId: 'target-session' } }))
 
-    await waitFor(() => expect(screen.getByText('Local branch/HEAD 已变化，Preview 等待安全撤回')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('当前项目已有新变化，预览等待安全恢复')).toBeTruthy())
     expect(screen.queryByText('已同步为可撤回的 Local Preview；请在 Local 中验收。')).toBeNull()
     expect(screen.queryByText('同步预检通过，正在创建可撤回的 Local Preview。')).toBeNull()
   })
@@ -408,9 +408,9 @@ describe('Harness-native Session Target slots', () => {
 
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
-    await waitFor(() => expect(screen.getByText('Local branch/HEAD 已变化，Preview 等待安全撤回')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('当前项目已有新变化，预览等待安全恢复')).toBeTruthy())
     expect(screen.getByText('同分支快进可安全重试；切分支或改写历史时不会写入。')).toBeTruthy()
-    expect((screen.getByRole('button', { name: '安全撤回 Preview' }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole('button', { name: '恢复并撤回预览' }) as HTMLButtonElement).disabled).toBe(false)
     expect(fixture.calls).toContainEqual({ method: 'previewRecoveryPreflight', request: {
       sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 9,
       expectedReviewId: 'review-1', expectedPreviewId: 'preview-1',
@@ -434,9 +434,9 @@ describe('Harness-native Session Target slots', () => {
 
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
-    await waitFor(() => expect(screen.getByText('Preview 与 Local 发生冲突，已保留恢复现场')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('预览与 Local 发生冲突，已保留恢复现场')).toBeTruthy())
     expect(screen.getByText('自动撤回会重新检查冲突；无法证明安全时不会写入。')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '安全撤回 Preview' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '恢复并撤回预览' })).toBeTruthy()
     const conclusions = screen.getByRole('list', { name: 'Preview Recovery 结论' })
     expect(conclusions.textContent).toContain('撤回：可证明安全')
     expect(conclusions.textContent).toContain('提交：可证明安全')
@@ -501,7 +501,7 @@ describe('Harness-native Session Target slots', () => {
 
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
-    await waitFor(() => expect(screen.getByText('验收操作中断，需要恢复 Preview')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('预览需要恢复，安全记录已保留')).toBeTruthy())
     expect((screen.getByRole('button', { name: '重新检查' }) as HTMLButtonElement).disabled).toBe(true)
     expect(fixture.calls.some(call => call.method === 'previewRecoveryPreflight')).toBe(false)
   })

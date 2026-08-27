@@ -892,16 +892,16 @@ export function ReviewActions({
         ? '同步中…'
         : autoPreflightEnabled && (preflightSnapshot.status === 'idle' || preflightSnapshot.status === 'loading')
           ? '检查中…'
-          : '同步到 Local 验收'}
+          : '预览修改'}
     </button>
   ) : previewActive ? (
     <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => setCommitMode('finalize_preview')}>
-      验收通过并提交
+      确认并保存
     </button>
   ) : previewRecovery ? (
     rollbackRecoverySafe ? (
       <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview(true) }}>
-        {submitting === 'rollback' ? '处理中…' : '安全撤回 Preview'}
+        {submitting === 'rollback' ? '处理中…' : '恢复并撤回预览'}
       </button>
     ) : (
       <button type="button" className="dsh-wt-button" disabled={allDisabled || target?.state !== 'preview_detached'} onClick={() => { void refreshRecoveryPreflight() }}>
@@ -948,26 +948,26 @@ export function ReviewActions({
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize || !safeReadyPreflight} onClick={() => {
                     setCommitMode('finish')
                     closeMoreMenu()
-                  }}>跳过验收，直接提交</button>
+                  }}>跳过预览并保存</button>
                 </>
               ) : null}
               {previewActive && target.capabilities.checkpoint && target.checkpointGeneration ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled} onClick={() => {
                   openCheckpoint()
                   closeMoreMenu()
-                }}>撤回 Preview，保存阶段并继续</button>
+                }}>保存阶段并继续</button>
               ) : null}
               {previewActive || rollbackRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
                   void rollbackPreview(true)
                   closeMoreMenu()
-                }}>{previewActive ? '撤回本次预览' : '安全撤回 Preview'}</button>
+                }}>{previewActive ? '撤回本次预览' : '重新尝试撤回'}</button>
               ) : null}
               {finalizeRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => {
                   setCommitMode('finalize_preview')
                   closeMoreMenu()
-                }}>直接提交当前任务</button>
+                }}>保存修改</button>
               ) : null}
               {canDiscard ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item dsh-wt-danger-text" disabled={allDisabled} onClick={() => {
@@ -983,16 +983,16 @@ export function ReviewActions({
       <Modal
         open={checkpointOpen}
         onClose={closeCheckpoint}
-        title="保存 Worktree 阶段并继续？"
-        closeLabel="关闭保存阶段确认"
+        title="保存当前进度并继续？"
+        closeLabel="关闭保存进度确认"
         description={previewActive
-          ? '会先按现有 receipt 安全撤回 Local Preview，再把验收快照保存为仅存在于 managed Worktree 的阶段提交。撤回失败或 Local 漂移时会停止。'
-          : '把当前验收快照保存为仅存在于 managed Worktree 的阶段提交，然后在同一 Session 继续开发；Local 不会收到该提交。'}
+          ? '会先安全撤回当前预览，再保存本轮任务进度并继续开发；无法证明可以安全撤回时会停止。当前项目不会立即更新。'
+          : '保存当前任务进度并继续下一阶段；当前项目不会立即更新，最终确认时仍只会生成一次交付。'}
         footer={(
           <div className="dsh-wt-modal-footer">
             <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCheckpoint}>取消</button>
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={submitting !== null || !checkpointMessage.trim() || checkpointMessage.trim().length > 500} onClick={() => { void checkpoint() }}>
-              {submitting === 'checkpoint' ? '正在保存…' : '确认保存并继续'}
+              {submitting === 'checkpoint' ? '正在保存…' : '保存进度并继续'}
             </button>
           </div>
         )}
@@ -1011,18 +1011,20 @@ export function ReviewActions({
       <Modal
         open={commitMode !== null}
         onClose={closeCommit}
-        title={commitMode === 'finalize_preview' ? '验收通过并提交？' : '跳过 Local 验收，直接提交？'}
-        closeLabel="关闭提交确认"
+        title={commitMode === 'finalize_preview'
+          ? '确认并保存本次修改？'
+          : target?.state === 'preview_detached' ? '保存本次修改？' : '跳过预览并直接保存？'}
+        closeLabel="关闭保存确认"
         description={commitMode === 'finalize_preview'
-          ? '只会提交当前可撤回 Preview 对应的任务增量；Local 中无关修改不会进入该 Commit。'
-          : '将跳过 Local Preview 验收并直接提交本轮 Worktree 增量。'}
+          ? '只会保存当前预览对应的本轮任务内容；Local 中已有或之后新增的无关修改不会进入该 Commit。'
+          : '将跳过 Local Preview，直接把本轮 Worktree 增量保存为一个 Commit。'}
         footer={(
           <div className="dsh-wt-modal-footer">
             <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCommit}>取消</button>
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={submitting !== null || !commitMessage.trim() || commitMessage.trim().length > 500} onClick={() => { void submitCommit() }}>
               {submitting === 'finish' || submitting === 'finalize_preview'
-                ? '正在提交…'
-                : retainEnvironment ? '确认提交并保留环境' : '确认提交并清理'}
+                ? '正在保存…'
+                : retainEnvironment ? '确认交付并保留环境' : '确认交付并清理'}
             </button>
           </div>
         )}

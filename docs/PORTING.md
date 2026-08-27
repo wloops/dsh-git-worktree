@@ -93,26 +93,28 @@ The package exports `./client` and declares `dsh.client`. The browser closure re
 
 The ToolViews derive display state from durable logged call/result slices. They do not reconstruct checkout authority from UI state.
 
-## Deliberately deferred
+## Porting boundary
+
+The plugin preserves the project-scoped delivery workflow rather than reproducing the complete desktop workbench.
 
 | Source capability | Current status |
 | --- | --- |
-| Reversible Local Preview / Finalize / Rollback | Implemented through strict Remote with durable receipts, single-project slot, CAS and recovery |
-| Global Worktree Manager sheet | Deferred until a stable Host Remote/Projection management seam is added |
-| Electron reveal/close-session choreography | Web navigation remains simpler, but a successfully cleaned delivered Session now starts the next iteration by safely recreating its immutable cwd path; retained/cleanup-pending environments must be cleaned first |
-| Collaborator release/handoff UI | Partial domain remnants only; no complete Host lifecycle integration |
-| Dependency snapshot/restore | Deferred |
-| Worktree Checkpoint / Save stage and continue | Deferred; Harness has no Host-managed checkpoint commit, stage lineage, or continue-from-clean-stage flow yet |
-| Snapshot-bound Local Maintenance Transaction | Deferred; an Isolated Harness Session cannot currently obtain a user-approved bounded Host lease to repair the real Local checkout outside the normal Preview/Finalize path |
-| Audit timing pipeline | Deferred |
-| Workflow `agent({ isolation })` | Blocked by Harness's deferred workflow isolation option |
+| Reversible Local Preview / Finalize / Rollback | Implemented through strict Remote with durable receipts, a single-project acceptance slot, CAS and detached recovery |
+| Worktree Checkpoint / Save stage and continue | Implemented with review/revision/generation binding, idempotent request IDs, crash recovery and linear checkpoint ancestry |
+| Worktree management | Implemented as a source-linked, project-scoped Console; a cross-project global Manager is intentionally out of scope |
+| Electron reveal/close-session choreography | Replaced by Harness Session/Workspace navigation and safe same-Session iteration recreation |
+| Collaborator release, Fork and ordinary handoff lifecycle | Domi-only workbench capability; intentionally not ported |
+| Dependency snapshot/restore | Domi-only environment optimization; intentionally not ported |
+| Snapshot-bound Local Maintenance Transaction | Domi-only Local repair workflow; intentionally not ported |
+| Audit timing pipeline | Not ported; the plugin keeps focused lifecycle diagnostics and tests |
+| Workflow `agent({ isolation })` | Depends on a stable Harness workflow isolation API |
 
-Subagents inherit their parent's persisted cwd. They are therefore isolated when spawned from the real target Session, but this plugin does not add a separate per-child Worktree policy.
+Subagents inherit their parent's persisted cwd. They are isolated when spawned from the target Session, but this plugin does not add a separate per-child Worktree policy.
 
 ## Verification map
 
 - `tests/lookup.test.ts`: Harness Workspace projection lookup plus the cleanup-only live immutable-cwd fallback, including mismatch, cold, pathless, and ambiguous rejection.
 - `tests/session-checkout-module.test.ts`: real Worktree creation plus same-Session cleaned-path iteration, predecessor crash recovery, Preview→rollback, Preview→finalize, direct finish, Preview-aware discard, Local drift, slot contention, caller scope, and legacy Apply fail-closed.
 - `tests/session-checkout-apply.test.ts`: real Git preflight/Preview/rollback/finalize/Finish/fingerprint behavior, including fresh-engine receipt recovery, same-branch fast-forward rollback, overlap conflicts, branch switches, rewritten history, Local layer preservation, and final CAS.
-- `tests/client-review-console.test.tsx` and `tests/client-target-console.test.tsx`: Ready/Preview/recovery actions, revision refresh, modal confirmation, dock projection and Preview-aware Discard.
+- `tests/client-review-console.test.tsx` and `tests/client-target-console.test.tsx`: Preview changes / Confirm and save actions, checkpoint and recovery flows, revision refresh, modal confirmation, dock projection and Preview-aware Discard.
 - `scripts/check-publish.mjs`: every package export, Host patch, Host metadata, `dsh.client`, and executable browser ModuleLoader closure.

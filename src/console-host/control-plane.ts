@@ -672,7 +672,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
     preview: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以同步到 Local 验收')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以预览修改')
       if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
       const review = readyReview(record)
       if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')

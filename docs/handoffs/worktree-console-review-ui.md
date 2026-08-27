@@ -101,9 +101,9 @@ UI 不得继续显示旧按钮为可用状态，也不得自动重放 Finalize�
 
 ### Preview / Finalize
 
-- Ready 状态条和验收卡只显示一个主按钮“同步到 Local 验收”与一个“更多”菜单；主按钮先执行只读 preflight，再调用 Preview，不打开提交 Modal；
-- Preview active 后主按钮变为“验收通过并提交”，更多菜单提供“撤回本次预览”；Ready 更多菜单提供“跳过验收，直接提交”；
-- 两条提交路径都使用官方 Modal 确认/编辑 1–500 字符 Commit Message，默认 cleanup；只有勾选“提交后暂时保留当前运行环境”后才显示 retain 24h / 3d / manual select；
+- Ready 状态条和验收卡只显示一个主按钮“预览修改”与一个“更多”菜单；主按钮先执行只读 preflight，再调用 Preview，不打开保存 Modal；
+- Preview active 后主按钮变为“确认并保存”，更多菜单提供“撤回本次预览”；Ready 更多菜单提供“跳过预览并保存”；
+- 两条保存路径都使用官方 Modal 确认/编辑 1–500 字符 Commit Message，默认 cleanup；只有勾选“提交后暂时保留当前运行环境”后才显示 retain 24h / 3d / manual select；
 - submitting 时禁用全部 mutation；成功必须使用 Host 响应的新 target/revision 更新 UI，历史 ToolView 也要跟随同一 review 的最新 revision；
 - stale/Local drift 不自动重试。Host 返回 detached/recovery 时保留 Worktree 与恢复证据，并显示重新尝试撤回入口；
 - `Inspect`、Diff、setRetention 与高级 cleanup 诊断留在 Worktree Console。
