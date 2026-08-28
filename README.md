@@ -82,7 +82,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定版本：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.1
 ```
 
 安装后打开 Git Workspace，在新建 Session 时启用 **Worktree**；已有 Local Session 也可以让模型调用 `worktree_create` 创建隔离 Session。

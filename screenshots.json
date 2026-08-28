@@ -1,8 +1,5 @@
 [
+  "docs/screenshots/00-project-sidebar.png",
   "docs/screenshots/01-create-worktree.png",
-  "docs/screenshots/02-ready-for-review.png",
-  "docs/screenshots/03-local-preview.png",
-  "docs/screenshots/04-commit-confirmation.png",
-  "docs/screenshots/06-retain-environment.png",
-  "docs/screenshots/05-next-iteration.png"
+  "docs/screenshots/02-ready-for-review.png"
 ]

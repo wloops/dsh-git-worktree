@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-28
+
+`0.7.1` 修正项目聚合侧边栏的 Managed owner 菜单边界：恢复安全的会话整理操作，隐藏尚不具备 Worktree 生命周期语义的普通 Fork，并继续阻止会破坏唯一 owner 不变量的入口。
+
+### Fixed
+
+- Managed owner 恢复官方重命名与归档；归档仅影响侧边栏可见性，不放弃任务、不清理 Worktree，也不改变交付状态。
+- 普通 Fork 从 Managed 菜单隐藏；Managed Workspace 的“新会话”和跨归属拖动继续被阻止，非法操作不再弹出浏览器原生提示框。
+- 强化冲突 Workspace 的 fail-open 防护，并更新项目聚合、Ready 界面截图与双语使用说明。
+
 ## [0.7.0] - 2026-08-28
 
 `0.7.0` 新增项目聚合侧边栏，将 Managed Worktree 的唯一 owner Session 直接显示为原 Local 项目下的任务行，同时以 fail-open 拓扑、生命周期操作限制和上游版本门禁保持官方 Workspace 行为兼容。
@@ -15,11 +25,10 @@
 ### Changed
 
 - Managed Workspace 不再以 UUID 长路径重复占用顶级项目；cleanup 后的历史 owner Session 继续依据插件 Registry 归入原 Local 项目。
-- Managed 任务行可打开、重命名和归档 owner Session；归档仅影响侧边栏可见性，不改变 Worktree 状态。普通 Fork 本版隐藏，正确的新 Worktree + 新 owner 分叉能力留待后续；Managed 拖动和新建第二 Session 继续阻止。非托管 Workspace 保留官方操作，拓扑不可用时完整回退到原 Workspace 列表。
+- Managed 任务行仅用于打开 owner Session，普通重命名、Fork、归档和拖动会被阻止，避免产生第二个会话或绕过 Worktree 生命周期；非托管 Workspace 保留官方操作，拓扑不可用时完整回退到原 Workspace 列表。
 - 修复项目聚合 Browser 的两阶段真实启动回归：先消除重复 `sidebar.workspaces.directoryFlow` 声明，再改为版本与 SHA-256 门禁的官方 Workspace Client 单次衍生加载，保留 `renderSlot`/目录选择授权，避免 shadow 崩溃后静默回退官方侧栏。
 - Managed Workspace 中可证明为空的预会话 launcher 不再阻止聚合；真实第二个 Session 仍 fail-open，物理 Workspace 未归并时也会禁止通过官方“新会话”入口创建第二个 Session。
 - Managed owner 行改用官方 Branch Icon 与独立状态 Badge，任务标题保持原文；窄侧栏会优先保留 Worktree 身份和交付状态，而不是把状态截断在标题末尾。
-- 修复 Managed owner 的菜单边界：重命名与归档恢复官方行为，普通 Fork 从菜单隐藏，非法 new-session/Fork/drag 的防御路径不再弹出浏览器原生提示框。
 
 ## [0.6.1] - 2026-08-28
 
@@ -225,6 +234,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.7.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.5.0...v0.6.0
