@@ -202,7 +202,7 @@ export function registerTools(ctx: Context, module: SessionCheckoutModule): void
 
   ctx.tools.register(defineTool({
     name: 'worktree_ready_for_review',
-    description: 'Isolated Session 的最后一个模型动作：把完整交付报告、验证证据和建议 Commit Message 仅写入本工具参数，然后立即停止。不要在调用前后用普通回复重复完整报告；最多用一句话提示用户通过底部验收条处理。用户会显式决定是否提交或放弃，模型不得自动提交或清理。',
+    description: '仅用于已经选择 Isolated Checkout 的 Worktree Session，普通 Local Checkout 任务必须用正常助手回复结束且不得调用本工具。它是 Isolated Session 的最后一个模型动作：把完整交付报告、验证证据和建议 Commit Message 仅写入本工具参数，然后立即停止。不要在调用前后用普通回复重复完整报告；最多用一句话提示用户通过底部验收条处理。用户会显式决定是否提交或放弃，模型不得自动提交或清理。',
     parameters: {
       summary: {
         type: 'string',

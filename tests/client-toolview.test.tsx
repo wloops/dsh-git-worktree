@@ -80,6 +80,61 @@ describe('Worktree ToolViews', () => {
     })
   })
 
+  test('Local Session target_unselected Ready errors render no Worktree card', () => {
+    const client = services()
+    const { container } = render(<WorktreeReviewRow
+      callId="call-local-ready"
+      toolName="worktree_ready_for_review"
+      block={{
+        callId: 'call-local-ready',
+        kind: 'result',
+        isError: true,
+        content: [{ type: 'text', text: 'Error: 会话尚未选择 Session Target' }],
+      }}
+      services={client}
+    />)
+
+    expect(container.childElementCount).toBe(0)
+    expect(screen.queryByText('Worktree 待验收')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  test('structured target_unselected Ready errors also render no Worktree card', () => {
+    const client = services()
+    const { container } = render(<WorktreeReviewRow
+      callId="call-local-ready-structured"
+      toolName="worktree_ready_for_review"
+      block={{
+        callId: 'call-local-ready-structured',
+        kind: 'result',
+        isError: true,
+        error: { name: 'SessionCheckoutError', code: 'target_unselected' },
+      }}
+      services={client}
+    />)
+
+    expect(container.childElementCount).toBe(0)
+  })
+
+  test('non-Local Ready errors remain visible for diagnosis', () => {
+    const client = services()
+    render(<WorktreeReviewRow
+      callId="call-review-error"
+      toolName="worktree_ready_for_review"
+      block={{
+        callId: 'call-review-error',
+        kind: 'result',
+        isError: true,
+        content: [{ type: 'text', text: 'Error: transport_unavailable: Host offline' }],
+      }}
+      services={client}
+    />)
+
+    expect(screen.getByText('Worktree 待验收')).toBeTruthy()
+    expect(screen.getByText('验收信息不可用')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('transport_unavailable')
+  })
+
   test('Review card replays logged evidence and disables mutation without the live Console adapter', () => {
     const client = services()
     const args = {

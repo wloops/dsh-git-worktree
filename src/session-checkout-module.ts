@@ -765,7 +765,11 @@ export function createSessionCheckoutModule(
           || record.phase === 'recovery_required')
         .sort((left, right) => managedUpdatedAt(right) - managedUpdatedAt(left))[0]
       if (!pending) {
-        return 'Session Target: Local Checkout. No isolated target is active for this Session.'
+        return [
+          'Session Target: Local Checkout. No isolated target is active for this Session.',
+          'Complete ordinary Local work in the current cwd and finish with an ordinary assistant reply.',
+          'Do not call Worktree-only tools such as worktree_ready_for_review, worktree_resume_revision, or worktree_begin_next_iteration unless this Session first selects an Isolated Checkout.',
+        ].join('\n')
       }
       if (pending.delivery.state === 'preview_active') {
         return [

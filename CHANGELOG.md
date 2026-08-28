@@ -12,6 +12,7 @@
 ### Fixed
 
 - pre-session handoff 成功后自动归档已清空的 Local source launcher，防止 Harness 的 New Session 复用该 reserved source 并错误阻塞下一项并发 Worktree 任务；owner Session 与项目级 Preview 串行约束保持不变。
+- 普通 Local Checkout 现在明确使用正常助手回复结束，不再被引导调用 Worktree-only Ready 工具；若模型仍误调用，Client 会隐藏预期的 `target_unselected` 结果，同时保留其他真实 Worktree 错误。
 
 ## [0.6.0] - 2026-08-25
 

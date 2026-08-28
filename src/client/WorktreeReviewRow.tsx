@@ -16,6 +16,12 @@ interface Props extends ToolCallViewPropsLike {
   adapter?: WorktreeConsoleAdapter
 }
 
+function isLocalTargetUnselected(error: string | null): boolean {
+  if (error === null) return false
+  return /(?:^|\b)target_unselected(?:\b|$)/iu.test(error)
+    || error.includes('会话尚未选择 Session Target')
+}
+
 export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props) {
   const model = parseReviewTool(block)
   const payload = model.payload
@@ -77,6 +83,8 @@ export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props
     })
     return () => { active = false }
   }, [adapter, payload?.reviewId, payload?.revision, refreshNonce, sessionId])
+
+  if (model.lifecycle === 'error' && isLocalTargetUnselected(model.error)) return null
 
   const identity: WorktreeReviewIdentity | undefined = payload
     && sessionId

@@ -453,6 +453,22 @@ describe('SessionCheckoutModule', () => {
     await expect(context.module.inspect('target-session-1')).rejects.toMatchObject({ code: 'project_mismatch' })
   })
 
+  test('Given a normal Local Session When runtime context is assembled Then ordinary Local work ends without Worktree-only tools', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+
+    const runtime = context.module.runtimeContext('session-1')
+
+    expect(runtime).toContain('Session Target: Local Checkout')
+    expect(runtime).toContain('current cwd')
+    expect(runtime).toContain('ordinary assistant reply')
+    expect(runtime).toContain('worktree_ready_for_review')
+    expect(runtime).toContain('worktree_resume_revision')
+    expect(runtime).toContain('worktree_begin_next_iteration')
+    expect(runtime).not.toContain('Session Target is unselected')
+    expect(runtime).not.toContain('Do not mutate project files')
+  })
+
   test('Given a target is reserved and later becomes ready When runtime context is assembled Then Local and Isolated instructions remain distinct', async () => {
     const context = createContext()
     const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
