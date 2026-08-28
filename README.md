@@ -24,8 +24,8 @@
 
 ## 核心能力
 
-- **真实隔离**：每个任务拥有独立 Git Worktree、Workspace 和 owner Session。
-- **项目聚合侧边栏**：Managed Worktree 的 owner Session 直接归入原 Local 项目，以任务行展示生命周期状态；普通 Workspace 保留官方行为。
+- **真实隔离**：每个任务拥有独立 Git Worktree、Workspace 和唯一 owner Session。
+- **项目聚合侧边栏**：Managed owner 以 Branch Icon 和状态 Badge 直接归入原 Local 项目；普通 Local Session 保持官方行为。
 - **人工验收**：Ready 后由用户选择“预览修改”“确认并保存”或其他操作。
 - **可撤回 Preview**：预览写入 Local 但不立即创建 Commit，可安全撤回。
 - **单任务保存**：最终只为本轮累计增量创建一个 Commit。
@@ -93,23 +93,15 @@ dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.0
 
 ## 界面预览
 
-### 创建 Worktree Session
+### 项目聚合与任务状态
 
-![确认创建并切换到 Worktree Session](docs/screenshots/01-create-worktree.png)
+![Managed Worktree 聚合到原 Local 项目](docs/screenshots/00-project-sidebar.png)
 
 ### 准备验收
 
-![Agent 完成任务并生成 Ready for Review](docs/screenshots/02-ready-for-review.png)
+![Agent 完成任务并准备预览修改](docs/screenshots/02-ready-for-review.png)
 
-### 预览修改
-
-![修改已写入 Local Preview，等待确认](docs/screenshots/03-local-preview.png)
-
-### 确认并保存
-
-![确认保存并选择环境保留策略](docs/screenshots/04-commit-confirmation.png)
-
-更多截图见[完整使用指南](docs/USAGE.md#完整交付示例)。
+完整操作步骤见[完整使用指南](docs/USAGE.md#完整交付示例)。
 
 ## 安全边界
 
@@ -122,7 +114,8 @@ dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.0
 
 ## 当前边界
 
-- Local 与 Worktree Session 在 Harness 中仍显示为独立 Workspace。
+- 正常 Managed owner 会聚合到原 Local 项目；owner 缺失、额外 Session 或归属冲突时保留原 Workspace，避免静默隐藏数据。
+- Managed owner 可以重命名和归档；Worktree-aware Fork 尚未实现，本版不显示普通 Fork 入口。
 - 子 Agent 继承父 Session cwd，插件不额外创建 per-child Worktree。
 - Checkpoint 不提供历史编辑、删除、重排或任意回退。
 - Domi 的全局 Manager、Local Maintenance、依赖快照和完整 collaborator 生命周期不在本插件范围内。

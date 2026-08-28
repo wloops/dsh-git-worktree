@@ -24,8 +24,8 @@ When an agent edits Local directly, task changes can mix with existing staged, u
 
 ## Highlights
 
-- **Project-grouped sidebar**: each managed Worktree owner Session appears as a task row under its original Local project with lifecycle status, while ordinary Workspaces retain the official behavior.
-- **Real isolation**: every task gets its own Git Worktree, Workspace, and owner Session.
+- **Project-grouped sidebar**: each Managed owner appears under its original Local project with a Branch Icon and status Badge; ordinary Local Sessions keep the official behavior.
+- **Real isolation**: every task gets its own Git Worktree, Workspace, and unique owner Session.
 - **Human acceptance**: Ready lets the user choose **Preview changes**, **Confirm and save**, or another explicit action.
 - **Reversible Preview**: changes reach Local without an immediate Commit and can be rolled back safely.
 - **Task-only save**: final delivery creates one Commit for the accumulated task delta.
@@ -93,23 +93,15 @@ If pnpm build approval blocks a Git-source install, or you need complete command
 
 ## Screenshots
 
-### Create a Worktree Session
+### Project grouping and task status
 
-![Confirm creation and switch to the Worktree Session](docs/screenshots/01-create-worktree.png)
+![Managed Worktrees grouped under the original Local project](docs/screenshots/00-project-sidebar.png)
 
 ### Prepare the review
 
-![Agent completes the task and produces Ready for Review](docs/screenshots/02-ready-for-review.png)
+![Agent completes the task and prepares Preview changes](docs/screenshots/02-ready-for-review.png)
 
-### Preview changes
-
-![Changes are in Local Preview and await confirmation](docs/screenshots/03-local-preview.png)
-
-### Confirm and save
-
-![Confirm save and choose environment retention](docs/screenshots/04-commit-confirmation.png)
-
-See the [full usage guide](docs/USAGE.en.md#complete-delivery-example) for the remaining screenshots.
+See the [full usage guide](docs/USAGE.en.md#complete-delivery-example) for the complete flow.
 
 ## Safety boundary
 
@@ -122,7 +114,8 @@ For the full state machine, CAS, and recovery invariants, see:
 
 ## Current boundaries
 
-- Harness still displays Local and Worktree Sessions as separate Workspaces.
+- A normal Managed owner is grouped under its original Local project. If the owner is missing, another Session exists, or membership conflicts, the original Workspace remains visible instead of hiding uncertain data.
+- Managed owners can be renamed and archived. Worktree-aware Fork is not implemented yet, so the ordinary Fork action is hidden in this release.
 - Child agents inherit the parent Session cwd; the plugin does not create per-child Worktrees.
 - Checkpoint does not support editing, deleting, reordering, or arbitrary rollback of history.
 - Domi's global Manager, Local Maintenance, dependency snapshots, and full collaborator lifecycle are outside this plugin's scope.

@@ -43,8 +43,9 @@ No Worktree is created before confirmation. The draft moves to a new isolated Se
 
 A Local project can still contain multiple ordinary Sessions. Each Managed Worktree has exactly one owner Session, so the sidebar shows that task Session and its delivery state directly instead of creating a UUID Workspace at the top level or an empty Worktree → Session nesting layer.
 
-- A Managed row opens its unique owner Session directly.
-- Ordinary rename, Fork, archive, drag, and New Session actions are blocked for Managed rows so they cannot create a second Session or bypass the Worktree lifecycle.
+- A Managed row opens its unique owner Session directly and keeps the official rename and archive actions. Archiving only changes sidebar visibility; it does not discard the task or change Worktree state.
+- Ordinary Fork is hidden in this release. A correct Worktree-aware Fork must create a new Managed Worktree and owner Session and is deferred to a later release.
+- Dragging Managed rows and creating a New Session inside a Managed Workspace remain blocked so they cannot create a second Session or break ownership.
 - A provably empty pre-session launcher is hidden from the sidebar projection; a real extra Session keeps the original Workspace visible for manual handling.
 - After cleanup, historical tasks remain under the original project as Completed or Discarded using the plugin Registry.
 - Unmanaged Workspaces and ordinary Sessions retain normal Workspace actions.
@@ -205,25 +206,19 @@ Read the Preflight message first. The cause may be a conflict, stale Review, bus
 
    ![Create Worktree Session](screenshots/01-create-worktree.png)
 
-2. The agent produces Ready for Review:
+2. The Managed owner is grouped under the original project and keeps its current task status visible:
+
+   ![Project-grouped sidebar](screenshots/00-project-sidebar.png)
+
+3. The agent produces Ready for Review with **Preview changes** as the primary action:
 
    ![Ready for Review](screenshots/02-ready-for-review.png)
 
-3. Preview changes:
+4. Inspect the result in Local Preview. Choose **Confirm and save**, or use the More menu to **Withdraw this preview**.
+5. On save, clean up immediately or retain the runtime environment when needed.
+6. After cleanup, choose **Start next iteration** in the same owner Session.
 
-   ![Local Preview](screenshots/03-local-preview.png)
-
-4. Confirm and save, choosing cleanup or retention:
-
-   ![Save confirmation](screenshots/04-commit-confirmation.png)
-
-5. Start the next iteration in the same Session:
-
-   ![Start next iteration](screenshots/05-next-iteration.png)
-
-6. Retain the runtime environment:
-
-   ![Retain environment](screenshots/06-retain-environment.png)
+> UI copy follows the installed version. This guide no longer embeds screenshots with the retired “Sync to Local review / Accept and commit” wording.
 
 ## Local development
 

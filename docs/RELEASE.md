@@ -7,6 +7,7 @@
 ```bash
 pnpm run typecheck
 pnpm test
+pnpm run check:sidebar-version
 pnpm run build
 pnpm run check:publish
 pnpm pack --dry-run
@@ -14,7 +15,8 @@ pnpm pack --dry-run
 
 当前 `check-publish` 断言：
 
-- `cordis.patch.yml` 存在、会进入 tarball，并插入本包 Host row；
+- `cordis.patch.yml` 存在、会进入 tarball，禁用原官方 `ui-workspace` row，并插入本包 Host row；
+- 锁定的官方 Workspace Client 版本与 SHA-256 未漂移，`NOTICE` 会进入 tarball；
 - `package.json.exports` 的每个 default/types/path target 都真实存在且受 `files` 覆盖；
 - Host `lib/index.js` 命名导出 `apply` 与 `inject`；
 - `dsh.client` 声明 Web 平台和 client injection；
@@ -87,7 +89,9 @@ dsh --profile <scratch>
 - profile bundle rows 含 `dsh-git-worktree`；
 - Host 启动无 missing inject/export 错误；
 - Web Client 加载 `./client`，Create/Review ToolView 不是 generic card；
-- 浏览器控制台无 `ModuleLoader`、React duplicate、slot duplicate 或 CSS teardown 错误；
+- 聚合侧边栏中正常 Managed UUID Workspace 消失，owner 行显示 Branch Icon 与状态 Badge，约 240px 窄侧栏仍可识别；
+- Managed owner 菜单保留重命名与归档、隐藏普通 Fork；Managed Workspace 不显示新建第二 Session 入口，普通 Local 菜单保持官方行为；
+- 浏览器控制台无 `ModuleLoader`、React duplicate、slot duplicate、`renderSlot` 或 CSS teardown 错误；
 - npm tarball 与 Git tag 安装都通过。
 
 全部通过后再升级正式 profile。

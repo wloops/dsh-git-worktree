@@ -43,8 +43,9 @@ stateDiagram-v2
 
 Local 项目仍可包含多个普通会话。每个 Managed Worktree 只对应一个 owner Session，因此侧边栏直接显示任务会话和状态，不再把 UUID Worktree 作为独立顶级项目，也不会增加“Worktree → Session”的空层级。
 
-- Managed 行可直接打开 owner Session；
-- Managed 行的普通重命名、Fork、归档、拖动和“新会话”会被阻止，避免产生第二个 Session 或绕过 Worktree 生命周期；
+- Managed 行可直接打开 owner Session，并保留官方重命名与归档；归档只影响侧边栏可见性，不会放弃任务或改变 Worktree 状态；
+- 普通 Fork 在本版隐藏；正确的 Worktree-aware Fork 需要创建新的 Managed Worktree 与 owner Session，将在后续版本提供；
+- Managed 行拖动和 Managed Workspace 的“新会话”入口会被阻止，避免产生第二个 Session 或破坏归属；
 - 可证明为空的预会话 launcher 会从侧边栏投影中隐藏，真实额外 Session 则保留原 Workspace 以便人工处理；
 - cleanup 后，历史任务仍按 Registry 归入原项目并显示“已完成”或“已放弃”；
 - 非托管 Workspace 和普通会话继续使用标准 Workspace 操作。
@@ -205,25 +206,19 @@ allowBuilds:
 
    ![创建 Worktree Session](screenshots/01-create-worktree.png)
 
-2. Agent 生成 Ready for Review：
+2. Managed owner 聚合到原项目，并持续显示当前任务状态：
+
+   ![项目聚合侧边栏](screenshots/00-project-sidebar.png)
+
+3. Agent 完成后生成 Ready for Review，主操作为“预览修改”：
 
    ![Ready for Review](screenshots/02-ready-for-review.png)
 
-3. 预览修改：
+4. Local Preview 中确认实际效果；可以“确认并保存”，也可以从更多菜单“撤回本次预览”。
+5. 保存时选择立即 cleanup，或按需保留运行环境。
+6. cleanup 完成后，可在同一 owner Session 中“开始下一轮修改”。
 
-   ![Local Preview](screenshots/03-local-preview.png)
-
-4. 确认并保存，选择 cleanup 或保留环境：
-
-   ![保存确认](screenshots/04-commit-confirmation.png)
-
-5. 在同一 Session 开始下一轮：
-
-   ![开始下一轮](screenshots/05-next-iteration.png)
-
-6. 保留运行环境：
-
-   ![保留环境](screenshots/06-retain-environment.png)
+> 界面文案以当前安装版本为准。本指南不再展示旧版“同步到 Local 验收 / 验收通过并提交”截图。
 
 ## 本地开发
 

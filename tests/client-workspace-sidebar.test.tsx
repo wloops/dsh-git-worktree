@@ -68,6 +68,8 @@ function browserProps(snapshot = state()): WorkspaceBrowserProps {
     useSessions: selector => selector(snapshot.sessions),
     useWorkspaces: selector => selector(snapshot.workspaces),
     startSession: vi.fn(),
+    open: vi.fn(),
+    renameSession: vi.fn(),
     forkSession: vi.fn(),
     archiveSession: vi.fn(),
     insertSessionBefore: vi.fn(),
@@ -79,6 +81,13 @@ function InspectBrowser(props: WorkspaceBrowserProps) {
   const sessions = props.useSessions(value => value.byId)
   return <div>
     <button onClick={() => { void props.startSession(managedWorkspace) }}>new managed</button>
+    <button onClick={() => { void props.renameSession(ownerSession, '新标题') }}>rename managed</button>
+    <button onClick={() => { void props.archiveSession(ownerSession) }}>archive managed</button>
+    <button onClick={() => { void props.forkSession(ownerSession) }}>fork managed</button>
+    <button onClick={() => { void props.insertSessionBefore(localWorkspace, ownerSession, localSession) }}>move managed</button>
+    <button onClick={() => { void props.renameSession(localSession, 'Local 新标题') }}>rename local</button>
+    <button onClick={() => { void props.archiveSession(localSession) }}>archive local</button>
+    <button onClick={() => { void props.forkSession(localSession) }}>fork local</button>
     {workspaces.map(workspace => <section key={workspace.workspaceId}>
       <h2>{workspace.title}</h2>
       {workspace.sessionIds.map(id => {
@@ -90,7 +99,7 @@ function InspectBrowser(props: WorkspaceBrowserProps) {
           data-worktree-kind={summary?.__dshGitWorktree?.kind}
           data-worktree-state={summary?.__dshGitWorktree?.state}
           data-worktree-label={summary?.__dshGitWorktree?.label}
-          onClick={() => { props.forkSession(id) }}
+          onClick={() => { props.open(id) }}
         >
           {summary?.displayTitle}
         </button>
@@ -136,7 +145,7 @@ describe('Managed Workspace sidebar', () => {
     expect(context.locale.register).toHaveBeenCalledWith('workspace', {})
   })
 
-  test('projects one owner Session directly into the Local project and blocks Managed Fork', async () => {
+  test('projects one owner Session, allows rename/archive, and silently blocks second-session operations', async () => {
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const props = browserProps()
     render(<ManagedOfficialWorkspaceBrowser
@@ -154,10 +163,25 @@ describe('Managed Workspace sidebar', () => {
     expect(screen.getByText('demo')).toBeTruthy()
     expect(screen.queryByText('demo--uuid--worktree')).toBeNull()
     fireEvent.click(owner)
+    fireEvent.click(screen.getByText('rename managed'))
+    fireEvent.click(screen.getByText('archive managed'))
+    fireEvent.click(screen.getByText('fork managed'))
+    fireEvent.click(screen.getByText('move managed'))
     fireEvent.click(screen.getByText('new managed'))
-    expect(props.forkSession).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText('rename local'))
+    fireEvent.click(screen.getByText('archive local'))
+    fireEvent.click(screen.getByText('fork local'))
+
+    expect(props.open).toHaveBeenCalledWith(ownerSession)
+    expect(props.renameSession).toHaveBeenCalledWith(ownerSession, '新标题')
+    expect(props.archiveSession).toHaveBeenCalledWith(ownerSession)
+    expect(props.renameSession).toHaveBeenCalledWith(localSession, 'Local 新标题')
+    expect(props.archiveSession).toHaveBeenCalledWith(localSession)
+    expect(props.forkSession).toHaveBeenCalledTimes(1)
+    expect(props.forkSession).toHaveBeenCalledWith(localSession)
+    expect(props.insertSessionBefore).not.toHaveBeenCalled()
     expect(props.startSession).not.toHaveBeenCalled()
-    expect(alert).toHaveBeenCalledTimes(2)
+    expect(alert).not.toHaveBeenCalled()
   })
 
   test('falls back to the untouched official projection when topology is unavailable', async () => {

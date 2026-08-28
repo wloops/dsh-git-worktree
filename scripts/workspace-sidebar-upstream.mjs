@@ -49,6 +49,10 @@ export function decorateOfficialWorkspaceClient(source) {
     `\t\tconst en = {\n\t\t\t"dshGitWorktree.managed": "Managed Worktree",\n\t\t\t"dshGitWorktree.state.working": "Working",\n\t\t\t"dshGitWorktree.state.ready_for_review": "Ready",\n\t\t\t"dshGitWorktree.state.preview_active": "Preview",\n\t\t\t"dshGitWorktree.state.preview_detached": "Resume preview",\n\t\t\t"dshGitWorktree.state.recovery_required": "Recovery required",\n\t\t\t"dshGitWorktree.state.finalized": "Done",\n\t\t\t"dshGitWorktree.state.discarded": "Discarded",`,
     'English Worktree locale')
   derived = replaceExactlyOnce(derived,
+    '\t\t\t\tgroups.push(buildGroup(workspace.workspaceId, workspace.workspaceId, workspace.path, Date.parse(workspace.createdAt), workspace.title, members, "account"));',
+    '\t\t\t\tconst group = buildGroup(workspace.workspaceId, workspace.workspaceId, workspace.path, Date.parse(workspace.createdAt), workspace.title, members, "account");\n\t\t\t\tif (workspace.__dshGitWorktreeProtected === true) group.__dshGitWorktreeProtected = true;\n\t\t\t\tgroups.push(group);',
+    'Managed workspace metadata')
+  derived = replaceExactlyOnce(derived,
     '\t\t\t\tupdatedAt: s.updatedAt,\n\t\t\t\t...s.pendingInteraction === void 0 ? {} : { pendingInteraction: s.pendingInteraction }',
     '\t\t\t\tupdatedAt: s.updatedAt,\n\t\t\t\t...s.__dshGitWorktree === void 0 ? {} : { __dshGitWorktree: s.__dshGitWorktree },\n\t\t\t\t...s.pendingInteraction === void 0 ? {} : { pendingInteraction: s.pendingInteraction }',
     'session node metadata')
@@ -56,6 +60,10 @@ export function decorateOfficialWorkspaceClient(source) {
     '\t\t\t\t\t\trunningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,\n\t\t\t\t\t\t...summary.pendingInteraction === void 0 ? {} : { pendingInteraction: summary.pendingInteraction },',
     '\t\t\t\t\t\trunningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,\n\t\t\t\t\t\t...summary.__dshGitWorktree === void 0 ? {} : { __dshGitWorktree: summary.__dshGitWorktree },\n\t\t\t\t\t\t...summary.pendingInteraction === void 0 ? {} : { pendingInteraction: summary.pendingInteraction },',
     'search result metadata')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t\t\tlabel: g.label,\n\t\t\t\t\tsessionCount: g.sessions.length,',
+    '\t\t\t\t\tlabel: g.label,\n\t\t\t\t\t...g.__dshGitWorktreeProtected === true ? { __dshGitWorktreeProtected: true } : {},\n\t\t\t\t\tsessionCount: g.sessions.length,',
+    'Managed workspace group metadata')
   derived = replaceExactlyOnce(derived,
     '\t\t/** Hover-card body: full title, relative time, and every relevant live status. */\n\t\tfunction SessionHoverContent',
     `\t\tfunction managedWorktreeDecoration(node, t) {\n\t\t\tconst value = node.__dshGitWorktree;\n\t\t\tif (value?.kind !== "managed-worktree" || typeof value.state !== "string") return void 0;\n\t\t\tconst label = t(\`dshGitWorktree.state.\${value.state}\`);\n\t\t\treturn {\n\t\t\t\tstate: value.state,\n\t\t\t\tlabel,\n\t\t\t\tariaLabel: \`\${t("dshGitWorktree.managed")}, \${label}, \${displayTitle(node, t)}\`\n\t\t\t};\n\t\t}\n\t\tfunction ManagedWorktreeIdentity({ decoration }) {\n\t\t\treturn (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\tclassName: "dsh-git-worktree-sidebar-icon",\n\t\t\t\t"data-worktree-state": decoration.state,\n\t\t\t\t"aria-hidden": "true",\n\t\t\t\tchildren: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, {})\n\t\t\t}), (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\tclassName: "dsh-git-worktree-sidebar-badge",\n\t\t\t\t"data-worktree-state": decoration.state,\n\t\t\t\t"aria-hidden": "true",\n\t\t\t\tchildren: decoration.label\n\t\t\t})] });\n\t\t}\n\t\t/** Hover-card body: full title, relative time, and every relevant live status. */\n\t\tfunction SessionHoverContent`,
@@ -77,17 +85,45 @@ export function decorateOfficialWorkspaceClient(source) {
     '\t\t\t\t\t\tchildren: (primaryStatus.state !== "done" || result.completed) && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t}), worktreeDecoration !== void 0 && (0, react_jsx_runtime.jsx)(ManagedWorktreeIdentity, { decoration: worktreeDecoration }), (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\tclassName: Rows_module_css_default.searchResultTitle,',
     'search Worktree decoration')
   derived = replaceExactlyOnce(derived,
+    '\t\t\tconst label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;\n\t\t\tconst active = group.expanded && group.containsCurrent;',
+    '\t\t\tconst label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;\n\t\t\tconst protectedManagedWorkspace = row.__dshGitWorktreeProtected === true;\n\t\t\tconst active = group.expanded && group.containsCurrent;',
+    'Managed workspace row metadata')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t\tclassName: clsx(Rows_module_css_default.projectRow, menuOpen && Rows_module_css_default.menuOpen),\n\t\t\t\trole: "treeitem",\n\t\t\t\t"aria-expanded": row.expanded,\n\t\t\t\tonClick: onToggle,\n\t\t\t\tdraggable: drag !== void 0,',
+    '\t\t\t\tclassName: clsx(Rows_module_css_default.projectRow, menuOpen && Rows_module_css_default.menuOpen),\n\t\t\t\trole: "treeitem",\n\t\t\t\t"aria-expanded": row.expanded,\n\t\t\t\tonClick: onToggle,\n\t\t\t\tdraggable: !protectedManagedWorkspace && drag !== void 0,',
+    'Managed workspace drag')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t\t\t\tchildren: [actions !== void 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {',
+    '\t\t\t\t\t\tchildren: [!protectedManagedWorkspace && actions !== void 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {',
+    'Managed workspace menu')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t\t\t\t}), (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\t\t\ttype: "button",\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t\t\t"aria-label": t("actions.newSession.aria", { name: label }),',
+    '\t\t\t\t\t\t}), !protectedManagedWorkspace && (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\t\t\ttype: "button",\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t\t\t"aria-label": t("actions.newSession.aria", { name: label }),',
+    'Managed workspace new Session')
+  derived = replaceExactlyOnce(derived,
     '\t\t\tconst showStatus = statuses[0].state !== "done" || row.completed;\n\t\t\tconst [menuOpen, setMenuOpen]',
     '\t\t\tconst showStatus = statuses[0].state !== "done" || row.completed;\n\t\t\tconst worktreeDecoration = managedWorktreeDecoration(row, t);\n\t\t\tconst [menuOpen, setMenuOpen]',
     'session Worktree metadata')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t];\n\t\t\treturn (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {',
+    '\t\t\t];\n\t\t\tconst visibleSessionMenuItems = worktreeDecoration === void 0 ? sessionMenuItems : sessionMenuItems.filter((item) => item.id !== "fork");\n\t\t\treturn (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {',
+    'Managed session menu')
   derived = replaceExactlyOnce(derived,
     '\t\t\t\t\tclassName: clsx(Rows_module_css_default.sessionRow, selected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),\n\t\t\t\t\trole: "treeitem",',
     '\t\t\t\t\tclassName: clsx(Rows_module_css_default.sessionRow, selected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),\n\t\t\t\t\trole: "treeitem",\n\t\t\t\t\t...worktreeDecoration === void 0 ? {} : { "aria-label": worktreeDecoration.ariaLabel, "data-managed-worktree": "true" },',
     'session Worktree aria')
   derived = replaceExactlyOnce(derived,
+    '\t\t\t\t\t"aria-selected": selected,\n\t\t\t\t\tonClick: () => {\n\t\t\t\t\t\tonOpen(node.id);\n\t\t\t\t\t},\n\t\t\t\t\tdraggable: drag !== void 0,',
+    '\t\t\t\t\t"aria-selected": selected,\n\t\t\t\t\tonClick: () => {\n\t\t\t\t\t\tonOpen(node.id);\n\t\t\t\t\t},\n\t\t\t\t\tdraggable: worktreeDecoration === void 0 && drag !== void 0,',
+    'Managed session drag')
+  derived = replaceExactlyOnce(derived,
     '\t\t\t\t\t\t(!flat || showStatus) && (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.slot,\n\t\t\t\t\t\t\tchildren: showStatus && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t\t}),\n\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("span", {',
     '\t\t\t\t\t\tworktreeDecoration === void 0 && (!flat || showStatus) && (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.slot,\n\t\t\t\t\t\t\tchildren: showStatus && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t\t}),\n\t\t\t\t\t\tworktreeDecoration !== void 0 && (0, react_jsx_runtime.jsx)(ManagedWorktreeIdentity, { decoration: worktreeDecoration }),\n\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("span", {',
     'session Worktree decoration')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t\t\t\t\t\titems: sessionMenuItems,',
+    '\t\t\t\t\t\t\t\titems: visibleSessionMenuItems,',
+    'Managed session visible menu')
   return derived
 }
 

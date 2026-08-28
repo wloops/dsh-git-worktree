@@ -65,8 +65,10 @@ export function ManagedOfficialWorkspaceBrowser({
 
   const projectedWorkspaceState = useMemo<WorkspaceListState>(() => ({
     ...workspaceState,
-    items: projection.workspaces as unknown as WorkspaceListState['items'],
-  }), [projection.workspaces, workspaceState])
+    items: projection.workspaces.map(workspace => projection.protectedWorkspaceIds.has(workspace.workspaceId)
+      ? { ...workspace, __dshGitWorktreeProtected: true }
+      : workspace) as unknown as WorkspaceListState['items'],
+  }), [projection.protectedWorkspaceIds, projection.workspaces, workspaceState])
   const projectedSessionState = useMemo<SessionListState>(() => {
     const byId = { ...sessionState.byId }
     for (const sessionId of projection.suppressedSessionIds) delete byId[sessionId as keyof typeof byId]
@@ -98,35 +100,25 @@ export function ManagedOfficialWorkspaceBrowser({
     selector(projectedSessionState)) as WorkspaceBrowserProps['useSessions']
   const protectedIds = projection.protectedSessionIds
   const protectedWorkspaceIds = projection.protectedWorkspaceIds
-  const managedActionBlocked = (): void => {
-    window.alert('Managed Worktree 与 owner Session 一对一；请通过 Worktree 验收流程继续、保存或放弃任务。')
-  }
 
   return <OfficialBrowser
     {...props}
     useWorkspaces={useProjectedWorkspaces}
     useSessions={useProjectedSessions}
     startSession={async (workspaceId: WorkspaceId) => {
-      if (protectedWorkspaceIds.has(workspaceId)) managedActionBlocked()
-      else await props.startSession(workspaceId)
-    }}
-    renameSession={async (sessionId: SessionId, title: string) => {
-      if (protectedIds.has(sessionId)) managedActionBlocked()
-      else await props.renameSession(sessionId, title)
+      if (protectedWorkspaceIds.has(workspaceId)) return
+      await props.startSession(workspaceId)
     }}
     forkSession={(sessionId: SessionId) => {
-      if (protectedIds.has(sessionId)) managedActionBlocked()
-      else props.forkSession(sessionId)
-    }}
-    archiveSession={async (sessionId: SessionId) => {
-      if (protectedIds.has(sessionId)) managedActionBlocked()
-      else await props.archiveSession(sessionId)
+      if (protectedIds.has(sessionId)) return
+      props.forkSession(sessionId)
     }}
     insertSessionBefore={async (workspaceId: WorkspaceId, sessionId: SessionId, beforeSessionId?: SessionId) => {
-      if (protectedIds.has(sessionId) || (beforeSessionId !== undefined && protectedIds.has(beforeSessionId))) {
-        managedActionBlocked()
-        return
-      }
+      if (
+        protectedWorkspaceIds.has(workspaceId)
+        || protectedIds.has(sessionId)
+        || (beforeSessionId !== undefined && protectedIds.has(beforeSessionId))
+      ) return
       await props.insertSessionBefore(workspaceId, sessionId, beforeSessionId)
     }}
   />
