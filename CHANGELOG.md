@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-28
+
+`0.6.1` 统一 Preview 与最终保存的用户文案，修复 pre-session source launcher 对并发 Worktree 创建的阻塞，并让普通 Local Checkout 正确使用正常助手回复结束任务；同时将项目首页和完整使用指南重新分层。
+
 ### Changed
 
 - Review 主操作改为更直接的任务文案：Ready 使用“预览修改”，Preview 使用“确认并保存”，Direct Finish 使用“跳过预览并保存”；同步更新恢复、Checkpoint 与确认弹窗文案，不改变 Host 交付语义。
@@ -204,6 +208,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.6.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.3.2...v0.4.0

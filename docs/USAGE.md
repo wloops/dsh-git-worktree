@@ -159,7 +159,7 @@ dsh plugin --profile web add dsh-git-worktree
 ### Git tag 安装
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.1
 ```
 
 pnpm 10+ 如果阻止 Git dependency 执行 `prepare`，在 profile 的 `pnpm-workspace.yaml` 中加入：

@@ -159,7 +159,7 @@ dsh plugin --profile web add dsh-git-worktree
 ### Git tag install
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.1
 ```
 
 If pnpm 10+ blocks `prepare` for a Git dependency, add this to the profile's `pnpm-workspace.yaml`:
