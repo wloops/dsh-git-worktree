@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-28
+
+`0.7.0` 新增项目聚合侧边栏，将 Managed Worktree 的唯一 owner Session 直接显示为原 Local 项目下的任务行，同时以 fail-open 拓扑、生命周期操作限制和上游版本门禁保持官方 Workspace 行为兼容。
+
 ### Added
 
 - 新增项目聚合侧边栏：Local Workspace 继续承载普通多会话，每个 Managed Worktree 则直接显示为唯一 owner Session 任务行，并展示进行中、待验收、预览、恢复、已完成或已放弃状态。
@@ -220,6 +224,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.7.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.4.0...v0.5.0

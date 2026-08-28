@@ -24,6 +24,7 @@ When an agent edits Local directly, task changes can mix with existing staged, u
 
 ## Highlights
 
+- **Project-grouped sidebar**: each managed Worktree owner Session appears as a task row under its original Local project with lifecycle status, while ordinary Workspaces retain the official behavior.
 - **Real isolation**: every task gets its own Git Worktree, Workspace, and owner Session.
 - **Human acceptance**: Ready lets the user choose **Preview changes**, **Confirm and save**, or another explicit action.
 - **Reversible Preview**: changes reach Local without an immediate Commit and can be rolled back safely.
@@ -81,7 +82,7 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific version:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.1
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.0
 ```
 
 Open a Git Workspace and enable **Worktree** when creating a Session. An existing Local Session can also let the model call `worktree_create`.

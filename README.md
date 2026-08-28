@@ -25,6 +25,7 @@
 ## 核心能力
 
 - **真实隔离**：每个任务拥有独立 Git Worktree、Workspace 和 owner Session。
+- **项目聚合侧边栏**：Managed Worktree 的 owner Session 直接归入原 Local 项目，以任务行展示生命周期状态；普通 Workspace 保留官方行为。
 - **人工验收**：Ready 后由用户选择“预览修改”“确认并保存”或其他操作。
 - **可撤回 Preview**：预览写入 Local 但不立即创建 Commit，可安全撤回。
 - **单任务保存**：最终只为本轮累计增量创建一个 Commit。
@@ -81,7 +82,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定版本：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.6.1
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.0
 ```
 
 安装后打开 Git Workspace，在新建 Session 时启用 **Worktree**；已有 Local Session 也可以让模型调用 `worktree_create` 创建隔离 Session。
