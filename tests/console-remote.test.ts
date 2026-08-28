@@ -34,6 +34,7 @@ async function loadRemoteClientModule(): Promise<{ apply: (ctx: Context) => void
 }
 
 const METHODS = [
+  'sidebarTopology',
   'current',
   'list',
   'create',
@@ -66,14 +67,41 @@ describe('manual strict Worktree Console Remote contribution', () => {
       expect(descriptor.namespace).toBe('gitWorktree')
       expect(descriptor.service).toBe('gitWorktree')
       expect(descriptor.result.mode).toBe('strict')
-      expect(descriptor.parameters[0]).toMatchObject({
-        name: 'agent',
-        wire: 'agentId',
-        source: 'lookup',
-        lookup: 'agent',
-      })
+      if (descriptor.method === 'sidebarTopology') {
+        expect(descriptor.parameters).toEqual([])
+      } else {
+        expect(descriptor.parameters[0]).toMatchObject({
+          name: 'agent',
+          wire: 'agentId',
+          source: 'lookup',
+          lookup: 'agent',
+        })
+      }
       expect(descriptor.parameters.every((parameter) => parameter.codec.mode === 'strict')).toBe(true)
     }
+  })
+
+  it('keeps Sidebar topology path-free and callable without a current Agent Session', async () => {
+    const descriptor = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'sidebarTopology')!
+    expect(descriptor.parameters).toEqual([])
+    const payload = {
+      ok: true as const,
+      value: {
+        projects: [{
+          project: { id: 'project-1', name: 'Project' },
+          tasks: [{
+            checkoutId: 'checkout-1', ownerSessionId: 'owner', sourceSessionId: 'source',
+            iteration: 1, revision: 2, phase: 'ready' as const, state: 'working' as const,
+          }],
+        }],
+      },
+    }
+    expect(descriptor.result.mode).toBe('strict')
+    expect(descriptor.result.schema.parse(payload)).toEqual(payload)
+    expect(() => descriptor.result.mode === 'strict' && descriptor.result.schema.parse({
+      ...payload,
+      value: { projects: [{ ...payload.value.projects[0], localRoot: 'D:/secret' }] },
+    })).toThrow()
   })
 
   it('fails malformed wire input and business output closed at the shared Zod boundary', () => {
@@ -245,6 +273,20 @@ describe('manual strict Worktree Console Remote contribution', () => {
     expect(ctx.typert.local.list().map(descriptor => descriptor.method)).toEqual(METHODS)
     await loader.dispose()
     expect(ctx.typert.local.list()).toEqual([])
+  })
+
+  it('dispatches Sidebar topology without Agent lookup and keeps mutating faces identity-bound', async () => {
+    const ctx = new Context()
+    await ctx.plugin(TypertRegistry)
+    const topology = { ok: true as const, value: { projects: [] } }
+    const control = { sidebarTopology: vi.fn(async () => topology) } as unknown as WorktreeConsoleControlPlane
+    new WorktreeConsoleService(ctx, control)
+    new TypertGatewayService(ctx)
+    ctx.typert.register(TYPERT)
+
+    await expect(ctx.typertGateway.invoke({ namespace: 'gitWorktree', method: 'sidebarTopology', args: {} }))
+      .resolves.toEqual(topology)
+    expect(control.sidebarTopology).toHaveBeenCalledTimes(1)
   })
 
   it('registers the Host manifest and resolves the official agent lookup before dispatch', async () => {

@@ -12,6 +12,7 @@ import {
   type WorktreeConsolePreflightResponse,
   type WorktreeConsolePreviewRecoveryPreflightResponse,
   type WorktreeConsoleReviewDiffResponse,
+  type WorktreeSidebarTopologyResponse,
 } from '../console-contract.js'
 
 const strict = <T extends z.core.$ZodLooseShape>(shape: T) => z.object(shape).strict()
@@ -210,6 +211,20 @@ export const createResponseSchema: z.ZodType<WorktreeConsoleCreateResponse> = st
 })
 export const inspectResponseSchema: z.ZodType<WorktreeConsoleInspectResponse> = strict({ target: targetDetailsSchema })
 export const listResponseSchema: z.ZodType<WorktreeConsoleListResponse> = strict({ project: projectSchema, worktrees: z.array(targetSummarySchema) })
+export const sidebarTopologyResponseSchema: z.ZodType<WorktreeSidebarTopologyResponse> = strict({
+  projects: z.array(strict({
+    project: projectSchema,
+    tasks: z.array(strict({
+      checkoutId: checkoutIdSchema,
+      ownerSessionId: sessionIdSchema,
+      sourceSessionId: sessionIdSchema,
+      iteration: z.number().int().positive(),
+      revision: revisionSchema,
+      phase: z.enum(['preparing', 'ready', 'applying', 'mutating', 'finalized', 'retained', 'discarded', 'recovery_required']),
+      state: z.enum(['working', 'ready_for_review', 'preview_active', 'preview_detached', 'recovery_required', 'finalized', 'discarded']),
+    })),
+  })),
+})
 export const mutationResponseSchema: z.ZodType<WorktreeConsoleMutationResponse> = strict({
   target: targetSummarySchema,
   changedFiles: z.array(z.string()).optional(),

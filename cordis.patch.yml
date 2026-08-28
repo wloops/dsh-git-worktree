@@ -1,6 +1,10 @@
-# dsh-git-worktree bundle patch: one insert over the profile root, adding the
-# plugin row. Later profile layers and the user's own cordis.patch.yml address
-# this row by id; the last write wins per row.
+# Replace the official ui-workspace loader row while this plugin is enabled.
+# The Client bundle derives that exact version's official Browser, Picker,
+# locale, stores, and directory-flow declarations, wrapping only the Browser.
+
+- id: ui-workspace
+  name: '@deepseek-ai/dsh-client-ui-workspace'
+  disabled: true
 
 - insert:
     - id: dsh-git-worktree

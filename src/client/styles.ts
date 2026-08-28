@@ -1,6 +1,67 @@
 import { REVIEW_CONSOLE_STYLES } from './review-console/review-console.styles.js'
 
 export const WORKTREE_STYLES = String.raw`
+/* Managed owner decoration inside the version/hash-gated official Workspace row. */
+.dsh-git-worktree-sidebar-icon,
+.dsh-git-worktree-sidebar-badge {
+  flex: 0 0 auto;
+}
+.dsh-git-worktree-sidebar-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-state-business-primary);
+}
+.dsh-git-worktree-sidebar-badge {
+  box-sizing: border-box;
+  max-width: 76px;
+  min-height: 20px;
+  padding: 1px 6px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--dsh-wt-sidebar-accent) 24%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsh-wt-sidebar-accent) 10%, transparent);
+  color: var(--dsh-wt-sidebar-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dsh-git-worktree-sidebar-icon,
+.dsh-git-worktree-sidebar-badge[data-worktree-state="working"] {
+  --dsh-wt-sidebar-accent: var(--dsw-alias-state-business-primary);
+}
+.dsh-git-worktree-sidebar-icon[data-worktree-state="ready_for_review"],
+.dsh-git-worktree-sidebar-badge[data-worktree-state="ready_for_review"] {
+  --dsh-wt-sidebar-accent: var(--dsw-alias-state-warn-label);
+  color: var(--dsw-alias-state-warn-label);
+}
+.dsh-git-worktree-sidebar-icon[data-worktree-state="preview_active"],
+.dsh-git-worktree-sidebar-badge[data-worktree-state="preview_active"] {
+  --dsh-wt-sidebar-accent: color-mix(in srgb, var(--dsw-alias-state-business-primary) 68%, var(--dsw-alias-state-error-primary));
+  color: var(--dsh-wt-sidebar-accent);
+}
+.dsh-git-worktree-sidebar-icon[data-worktree-state="preview_detached"],
+.dsh-git-worktree-sidebar-badge[data-worktree-state="preview_detached"],
+.dsh-git-worktree-sidebar-icon[data-worktree-state="recovery_required"],
+.dsh-git-worktree-sidebar-badge[data-worktree-state="recovery_required"] {
+  --dsh-wt-sidebar-accent: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+.dsh-git-worktree-sidebar-icon[data-worktree-state="finalized"],
+.dsh-git-worktree-sidebar-badge[data-worktree-state="finalized"] {
+  --dsh-wt-sidebar-accent: var(--dsw-alias-state-success-primary);
+  color: var(--dsw-alias-state-success-primary);
+}
+.dsh-git-worktree-sidebar-icon[data-worktree-state="discarded"],
+.dsh-git-worktree-sidebar-badge[data-worktree-state="discarded"] {
+  --dsh-wt-sidebar-accent: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .dsh-wt-card {
   --wt-ink: color-mix(in srgb, currentColor 92%, transparent);
   --wt-muted: color-mix(in srgb, currentColor 58%, transparent);

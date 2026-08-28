@@ -1,4 +1,9 @@
 import { defineConfig } from 'tsdown'
+import {
+  materializeOfficialWorkspaceClientModule,
+  OFFICIAL_WORKSPACE_VIRTUAL_ID,
+  RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID,
+} from './scripts/workspace-sidebar-upstream.mjs'
 
 const CLIENT_PLUGIN_ID = 'dsh-git-worktree'
 
@@ -13,10 +18,26 @@ export default defineConfig({
   sourcemap: false,
   dts: false,
   outExtensions: () => ({ js: '.js' }),
-  external: ['react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives'],
-  // Strict Remote schemas execute in the browser bundle; zod is not a Harness
-  // ModuleLoader platform entry and therefore must never survive as require('zod').
+  external: [
+    'react',
+    'react/jsx-runtime',
+    '@deepseek-ai/dsh-client-runtime/client',
+    '@deepseek-ai/dsh-client-ui-primitives',
+  ],
   noExternal: ['zod'],
+  plugins: [{
+    name: 'official-workspace-client-source',
+    resolveId(id) {
+      return id === OFFICIAL_WORKSPACE_VIRTUAL_ID
+        ? RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID
+        : null
+    },
+    load(id) {
+      return id === RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID
+        ? materializeOfficialWorkspaceClientModule()
+        : null
+    },
+  }],
   outputOptions: {
     banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(CLIENT_PLUGIN_ID)}, factory: (require) => {`,
     intro: 'var module = { exports: {} }; var exports = module.exports;',

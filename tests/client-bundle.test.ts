@@ -15,6 +15,11 @@ interface ClientHandoff {
 
 function platformRequire(nodeRequire: NodeRequire, specifier: string): unknown {
   if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null }
+  if (specifier === '@deepseek-ai/dsh-client-runtime/client') return {
+    defineStore: (spec: unknown) => ({ spec, create: () => ({ actions: {} }) }),
+    indexSubagentDescendants: () => new Map(),
+    abbreviateHomePath: (path: string) => path,
+  }
   return nodeRequire(specifier)
 }
 
@@ -33,11 +38,12 @@ function executeBundle(code: string): ClientHandoff {
 describe('built Client ModuleLoader artifact', () => {
   test('inlines strict Remote codecs instead of requiring packages absent from the browser module table', () => {
     const source = readFileSync(resolve('lib/client.js'), 'utf8')
-    const required = [...source.matchAll(/require\(["']([^"']+)["']\)/gu)].map(match => match[1])
+    const required = [...new Set([...source.matchAll(/require\(["']([^"']+)["']\)/gu)].map(match => match[1]))]
     expect(required).toEqual([
       'react',
       'react/jsx-runtime',
       '@deepseek-ai/dsh-client-ui-primitives',
+      '@deepseek-ai/dsh-client-runtime/client',
     ])
   })
 
@@ -47,7 +53,7 @@ describe('built Client ModuleLoader artifact', () => {
     const nodeRequire = createRequire(import.meta.url)
     const clientExports = handoff.factory(specifier => platformRequire(nodeRequire, specifier))
     expect(clientExports.apply).toBeTypeOf('function')
-    expect(clientExports.inject).toEqual(['slots', 'workspaces', 'sessions', 'conversation', 'remote'])
+    expect(clientExports.inject).toEqual(['slots', 'workspaces', 'sessions', 'conversation', 'connection', 'locale', 'remote'])
   })
 
   test('mounts the strict contribution in a real Harness Client Remote service and withdraws it with the fiber', async () => {
@@ -72,10 +78,11 @@ describe('built Client ModuleLoader artifact', () => {
     const register = vi.fn()
     ctx.provide('slots', {
       inject(_name: string, callback: () => unknown) { callback() },
-      register,
+      register: vi.fn((...args: unknown[]) => { register(...args); return () => {} }),
     } as never)
     ctx.provide('workspaces', {} as never)
     ctx.provide('sessions', {} as never)
+    ctx.provide('locale', { register: vi.fn() } as never)
     ctx.provide('conversation', {
       blocks: { set() {}, storeFor: () => ({ getSnapshot: () => undefined }) },
       input: { for: () => ({ setDraft() {}, addImages: () => true, removeImage() {} }) },

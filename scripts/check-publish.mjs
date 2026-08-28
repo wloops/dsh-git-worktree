@@ -47,7 +47,16 @@ const patch = readFileSync(patchPath, 'utf8')
 if (!patch.includes('- insert:') || !patch.includes(`name: ${manifest.name}`)) {
   fail(`${patchRel} must insert one plugin row named ${manifest.name}`)
 }
-ok(`Host mount patch ${patchRel}`)
+if (!/- id: ui-workspace\s+name: ['"]?@deepseek-ai\/dsh-client-ui-workspace['"]?\s+disabled: true/u.test(patch)) {
+  fail(`${patchRel} must disable the original ui-workspace row while the gated derivative owns its Slot tree`)
+}
+if (manifest.dsh?.client?.inject?.includes('@deepseek-ai/dsh-client-ui-workspace')) {
+  fail('dsh.client.inject must not request the disabled official ui-workspace Client module')
+}
+if (!manifest.files?.includes('NOTICE') || !existsSync(resolve(root, 'NOTICE'))) {
+  fail('the official Workspace Client derivative requires a published NOTICE')
+}
+ok(`Host mount patch ${patchRel} replaces official ui-workspace with one gated derivative`)
 
 // 2. Every package export must exist and be included in the tarball.
 const exportsMap = manifest.exports
@@ -94,7 +103,7 @@ try {
 if (hostContribution?.package !== manifest.name || hostContribution.face !== 'host') fail('./typert has invalid package/face identity')
 if (remoteContribution?.package !== manifest.name) fail('./remote has invalid package identity')
 if (hostContribution.invocations !== remoteContribution.descriptors) fail('./typert and ./remote must share one descriptor array instance')
-const expectedRemoteMethods = ['current', 'list', 'create', 'inspect', 'reviewDiff', 'preflight', 'previewRecoveryPreflight', 'preparePreviewRecoveryAnalysis', 'createPreviewRecoveryHandoff', 'preview', 'checkpoint', 'resumeRevision', 'prepareReviewRegeneration', 'rollbackPreview', 'discard', 'finalize', 'finalizePreview', 'setRetention', 'retryCleanup', 'beginNextIteration']
+const expectedRemoteMethods = ['sidebarTopology', 'current', 'list', 'create', 'inspect', 'reviewDiff', 'preflight', 'previewRecoveryPreflight', 'preparePreviewRecoveryAnalysis', 'createPreviewRecoveryHandoff', 'preview', 'checkpoint', 'resumeRevision', 'prepareReviewRegeneration', 'rollbackPreview', 'discard', 'finalize', 'finalizePreview', 'setRetention', 'retryCleanup', 'beginNextIteration']
 if (JSON.stringify(hostContribution.invocations.map(value => value.method)) !== JSON.stringify(expectedRemoteMethods)) {
   fail(`manual Remote methods differ from the required surface: ${hostContribution.invocations.map(value => value.method).join(', ')}`)
 }
@@ -137,6 +146,7 @@ const allowedBrowserRequires = new Set([
   'react',
   'react/jsx-runtime',
   '@deepseek-ai/dsh-client-ui-primitives',
+  '@deepseek-ai/dsh-client-runtime/client',
 ])
 const unsupportedBrowserRequires = browserRequires.filter(specifier => !allowedBrowserRequires.has(specifier))
 if (unsupportedBrowserRequires.length > 0) {
@@ -162,6 +172,11 @@ if (!handoff || handoff.id !== manifest.name || typeof handoff.factory !== 'func
 }
 const browserRequire = (specifier) => {
   if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null }
+  if (specifier === '@deepseek-ai/dsh-client-runtime/client') return {
+    defineStore: spec => ({ spec, create: () => ({ actions: {} }) }),
+    indexSubagentDescendants: () => new Map(),
+    abbreviateHomePath: path => path,
+  }
   return require(specifier)
 }
 let clientExports

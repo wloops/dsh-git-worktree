@@ -11,6 +11,7 @@ import type {
   WorktreeConsolePreviewRecoveryPreflightResponse,
   WorktreeConsoleReviewDiffResponse,
   WorktreeApplyConflictContinuation,
+  WorktreeSidebarTopologyResponse,
 } from '../console-contract.js'
 import type { WorktreePreviewRecoveryProof, WorktreeRetentionMode } from '../types.js'
 import { WORKTREE_CONSOLE_REMOTE } from './descriptors.js'
@@ -22,6 +23,7 @@ export { WORKTREE_CONSOLE_DESCRIPTORS, WORKTREE_CONSOLE_REMOTE } from './descrip
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteMap {
+    'gitWorktree/sidebarTopology': () => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>>
     'gitWorktree/current': (agentId: string) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>>
     'gitWorktree/list': (agentId: string, needsAttention?: boolean, includeDelivered?: boolean) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>>
     'gitWorktree/create': (agentId: string) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>>

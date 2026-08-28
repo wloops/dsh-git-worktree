@@ -179,6 +179,61 @@ describe('Worktree Console Host control plane', () => {
     expect(module.inspect).not.toHaveBeenCalledWith('host-target')
   })
 
+  it('projects path-free Sidebar tasks and keeps only the latest iteration for one owner Session', async () => {
+    const previous = readyRecord()
+    previous.checkoutId = 'checkout-previous'
+    previous.phase = 'discarded'
+    previous.delivery = { state: 'delivered', iteration: 1, commitOid: A, deliveredAt: 10 }
+    previous.revision = 9
+    const current = readyRecord()
+    current.checkoutId = 'checkout-current'
+    if (current.delivery.state !== 'ready_for_review') throw new Error('fixture must be ready')
+    current.delivery.review.iteration = 2
+    current.revision = 3
+    const other = readyRecord()
+    other.checkoutId = 'checkout-discarded'
+    other.ownerSessionId = 'discarded-owner'
+    other.sourceSessionId = 'discarded-source'
+    other.phase = 'discarded'
+    other.delivery = { state: 'delivered', iteration: 1, commitOid: null, deliveredAt: 12 }
+
+    const sidebarRegistry: ManagedCheckoutsRegistry = {
+      version: 2,
+      revision: 3,
+      sessionBindings: {},
+      managedCheckouts: {
+        [previous.checkoutId]: previous,
+        [current.checkoutId]: current,
+        [other.checkoutId]: other,
+      },
+    }
+    const { control } = plane(current, {
+      registry: { read: () => structuredClone(sidebarRegistry), write: vi.fn() },
+    })
+
+    await expect(control.sidebarTopology()).resolves.toEqual({
+      ok: true,
+      value: {
+        projects: [{
+          project: { id: 'project-1', name: 'Project' },
+          tasks: [
+            expect.objectContaining({
+              checkoutId: 'checkout-current',
+              ownerSessionId: 'target-session',
+              iteration: 2,
+              state: 'ready_for_review',
+            }),
+            expect.objectContaining({
+              checkoutId: 'checkout-discarded',
+              ownerSessionId: 'discarded-owner',
+              state: 'discarded',
+            }),
+          ],
+        }],
+      },
+    })
+  })
+
   it('projects a cleaned delivered owner even though its immutable Workspace path is temporarily absent', async () => {
     const delivered = readyRecord()
     delivered.phase = 'discarded'

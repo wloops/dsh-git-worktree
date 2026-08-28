@@ -33,6 +33,7 @@
     "lib",
     "scripts",
     "CHANGELOG.md",
+    "NOTICE",
     "cordis.patch.yml"
   ],
   "license": "MIT",
@@ -43,6 +44,8 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-tool",
         "@deepseek-ai/dsh-api-gateway"
@@ -66,13 +69,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepare": "pnpm run build",
+    "check:sidebar-version": "node scripts/check-workspace-sidebar-version.mjs",
     "check:publish": "node scripts/check-publish.mjs",
     "check:publish:release": "node scripts/check-publish.mjs --require-clean",
     "dev:dsh": "node scripts/dev-dsh.mjs run",
     "dev:dsh:install": "node scripts/dev-dsh.mjs install",
     "dev:dsh:smoke": "node scripts/dev-dsh.mjs smoke",
     "dev:dsh:remove": "node scripts/dev-dsh.mjs remove",
-    "prepublishOnly": "pnpm run build && pnpm run check:publish:release && pnpm run test"
+    "prepublishOnly": "pnpm run check:sidebar-version && pnpm run build && pnpm run check:publish:release && pnpm run test"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",
@@ -88,11 +92,15 @@
     "zod": "4.4.3"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-client-locale": "0.1.1-rc.2",
     "react": "^18.2.0"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-api-gateway": "0.1.1-rc.2",
     "@deepseek-ai/dsh-client-connection": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.1.1-rc.2",
     "@deepseek-ai/dsh-typert-loader": "0.1.1-rc.2",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.0.0",

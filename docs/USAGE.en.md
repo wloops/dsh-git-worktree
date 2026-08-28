@@ -37,7 +37,17 @@ stateDiagram-v2
 3. Enable **Worktree**.
 4. Enter the task and confirm.
 
-No Worktree is created before confirmation. The draft moves to a new isolated Session, and the Local Session is never silently switched to another cwd. After a successful handoff, the empty source launcher is archived so New Session cannot reuse it and block another concurrent task; the owner Worktree Session remains available in its Workspace.
+No Worktree is created before confirmation. The draft moves to a new isolated Session, and the Local Session is never silently switched to another cwd. After a successful handoff, the empty source launcher is archived so New Session cannot reuse it and block another concurrent task; the owner Worktree Session appears directly under the original Local project.
+
+### Sidebar ownership
+
+A Local project can still contain multiple ordinary Sessions. Each Managed Worktree has exactly one owner Session, so the sidebar shows that task Session and its delivery state directly instead of creating a UUID Workspace at the top level or an empty Worktree → Session nesting layer.
+
+- A Managed row opens its unique owner Session directly.
+- Ordinary rename, Fork, archive, drag, and New Session actions are blocked for Managed rows so they cannot create a second Session or bypass the Worktree lifecycle.
+- A provably empty pre-session launcher is hidden from the sidebar projection; a real extra Session keeps the original Workspace visible for manual handling.
+- After cleanup, historical tasks remain under the original project as Completed or Discarded using the plugin Registry.
+- Unmanaged Workspaces and ordinary Sessions retain normal Workspace actions.
 
 ### Existing Local Session
 

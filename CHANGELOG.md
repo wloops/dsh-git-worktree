@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增项目聚合侧边栏：Local Workspace 继续承载普通多会话，每个 Managed Worktree 则直接显示为唯一 owner Session 任务行，并展示进行中、待验收、预览、恢复、已完成或已放弃状态。
+
+### Changed
+
+- Managed Workspace 不再以 UUID 长路径重复占用顶级项目；cleanup 后的历史 owner Session 继续依据插件 Registry 归入原 Local 项目。
+- Managed 任务行仅用于打开 owner Session，普通重命名、Fork、归档和拖动会被阻止，避免产生第二个会话或绕过 Worktree 生命周期；非托管 Workspace 保留官方操作，拓扑不可用时完整回退到原 Workspace 列表。
+- 修复项目聚合 Browser 的两阶段真实启动回归：先消除重复 `sidebar.workspaces.directoryFlow` 声明，再改为版本与 SHA-256 门禁的官方 Workspace Client 单次衍生加载，保留 `renderSlot`/目录选择授权，避免 shadow 崩溃后静默回退官方侧栏。
+- Managed Workspace 中可证明为空的预会话 launcher 不再阻止聚合；真实第二个 Session 仍 fail-open，物理 Workspace 未归并时也会禁止通过官方“新会话”入口创建第二个 Session。
+- Managed owner 行改用官方 Branch Icon 与独立状态 Badge，任务标题保持原文；窄侧栏会优先保留 Worktree 身份和交付状态，而不是把状态截断在标题末尾。
+
 ## [0.6.1] - 2026-08-28
 
 `0.6.1` 统一 Preview 与最终保存的用户文案，修复 pre-session source launcher 对并发 Worktree 创建的阻塞，并让普通 Local Checkout 正确使用正常助手回复结束任务；同时将项目首页和完整使用指南重新分层。

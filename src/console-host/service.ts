@@ -13,6 +13,7 @@ import type {
   WorktreeConsolePreviewRecoveryPreflightResponse,
   WorktreeConsoleReviewDiffResponse,
   WorktreeApplyConflictContinuation,
+  WorktreeSidebarTopologyResponse,
 } from '../console-contract.js'
 import type { WorktreePreviewRecoveryProof, WorktreeRetentionMode } from '../types.js'
 import type { WorktreeConsoleControlPlane } from './control-plane.js'
@@ -21,6 +22,11 @@ import type { WorktreeConsoleControlPlane } from './control-plane.js'
 export class WorktreeConsoleService extends TypertRemoteService {
   constructor(ctx: Context, private readonly controlPlane: WorktreeConsoleControlPlane) {
     super(ctx, 'gitWorktree')
+  }
+
+  @Remote
+  sidebarTopology(): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>> {
+    return this.controlPlane.sidebarTopology()
   }
 
   @Remote

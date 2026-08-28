@@ -7,6 +7,9 @@ export default defineConfig({
       '@deepseek-ai/dsh-client-ui-primitives': fileURLToPath(
         new URL('./tests/support/ui-primitives.tsx', import.meta.url),
       ),
+      'virtual:dsh-official-workspace-client': fileURLToPath(
+        new URL('./tests/official-workspace-client.mock.ts', import.meta.url),
+      ),
     },
   },
   test: {

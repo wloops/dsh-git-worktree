@@ -175,6 +175,35 @@ export interface WorktreeConsoleListResponse {
   worktrees: WorktreeConsoleTargetSummary[]
 }
 
+export type WorktreeSidebarTaskState =
+  | 'working'
+  | 'ready_for_review'
+  | 'preview_active'
+  | 'preview_detached'
+  | 'recovery_required'
+  | 'finalized'
+  | 'discarded'
+
+/** Path-free, read-only task identity used only to aggregate the Workspace sidebar. */
+export interface WorktreeSidebarTask {
+  checkoutId: string
+  ownerSessionId: string
+  sourceSessionId: string
+  iteration: number
+  revision: number
+  phase: SessionCheckoutPhase
+  state: WorktreeSidebarTaskState
+}
+
+export interface WorktreeSidebarProject {
+  project: WorktreeConsoleProject
+  tasks: WorktreeSidebarTask[]
+}
+
+export interface WorktreeSidebarTopologyResponse {
+  projects: WorktreeSidebarProject[]
+}
+
 /** targetSessionId is allocated on the Host; the browser never chooses ownership identity. */
 export interface WorktreeConsoleCreateRequest {
   sourceSessionId: string
@@ -486,6 +515,7 @@ export function worktreeConsoleErrorMeta(code: WorktreeConsoleErrorCode): Worktr
 
 /** Normalized Client seam; Remote transport details stay behind one adapter. */
 export interface WorktreeConsoleAdapter {
+  sidebarTopology(): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>
   current(request: WorktreeConsoleCurrentRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>
   list(request: WorktreeConsoleListRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>
   create(request: WorktreeConsoleCreateRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>

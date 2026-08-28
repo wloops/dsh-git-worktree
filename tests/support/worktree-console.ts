@@ -148,6 +148,10 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
   }
 
   const adapter: WorktreeConsoleAdapter = {
+    async sidebarTopology() {
+      record('sidebarTopology', {})
+      return outcome({ projects: [] })
+    },
     async current(request: WorktreeConsoleCurrentRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>> {
       record('current', request)
       return outcome({ target })

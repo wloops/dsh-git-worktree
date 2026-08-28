@@ -11,6 +11,7 @@ import type {
   WorktreeConsolePreflightResponse,
   WorktreeConsolePreviewRecoveryPreflightResponse,
   WorktreeConsoleReviewDiffResponse,
+  WorktreeSidebarTopologyResponse,
 } from '../../console-contract.js'
 import type { GitWorktreeRemote } from '../../console-remote/remote.js'
 import { WORKTREE_CONSOLE_DESCRIPTORS } from '../../console-remote/descriptors.js'
@@ -56,6 +57,7 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): W
   }
 
   return {
+    sidebarTopology: () => invoke<WorktreeSidebarTopologyResponse>('sidebarTopology', () => remote.sidebarTopology()),
     current: request => invoke<WorktreeConsoleCurrentResponse>('current', () => remote.current(request.sessionId)),
     list: request => invoke<WorktreeConsoleListResponse>('list', () => remote.list(request.sessionId, request.needsAttention, request.includeDelivered)),
     create: request => invoke<WorktreeConsoleCreateResponse>('create', () => remote.create(request.sourceSessionId)),

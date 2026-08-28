@@ -30,6 +30,8 @@ import type {
   WorktreeConsoleSetRetentionRequest,
   WorktreeConsoleTargetSummary,
   WorktreeConsoleDeliveryProof,
+  WorktreeSidebarTaskState,
+  WorktreeSidebarTopologyResponse,
 } from '../console-contract.js'
 import type {
   GitCheckoutSnapshot,
@@ -56,6 +58,7 @@ export interface WorktreeConsoleControlPlaneOptions {
 }
 
 export interface WorktreeConsoleControlPlane {
+  sidebarTopology(): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>
   current(sessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>
   list(request: WorktreeConsoleListRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>
   create(sourceSessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
@@ -82,6 +85,20 @@ function recordOf(registry: SessionCheckoutRegistryPort, checkoutId: string): Ma
   const record = registry.read().managedCheckouts[checkoutId]
   if (record === undefined) throw domainError('checkout_missing', 'Worktree 记录不存在')
   return record
+}
+
+function sidebarTaskState(record: ManagedCheckoutRecord): WorktreeSidebarTaskState {
+  if (record.phase === 'discarded') return 'discarded'
+  if (record.phase === 'finalized'
+    || record.phase === 'retained'
+    || record.delivery.state === 'finalized'
+    || record.delivery.state === 'retained'
+    || record.delivery.state === 'delivered') return 'finalized'
+  if (record.phase === 'recovery_required') return 'recovery_required'
+  if (record.delivery.state === 'preview_detached') return 'preview_detached'
+  if (record.delivery.state === 'preview_active') return 'preview_active'
+  if (record.delivery.state === 'ready_for_review') return 'ready_for_review'
+  return 'working'
 }
 
 function readyReview(record: ManagedCheckoutRecord) {
@@ -415,6 +432,43 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
   }
 
   return {
+    sidebarTopology: () => outcome(async () => {
+      const projects = new Map<string, {
+        project: { id: string; name: string }
+        tasksByOwner: Map<string, WorktreeSidebarTopologyResponse['projects'][number]['tasks'][number]>
+      }>()
+      for (const record of Object.values(options.registry.read().managedCheckouts)) {
+        const project = projects.get(record.projectId) ?? {
+          project: { id: record.projectId, name: record.projectName },
+          tasksByOwner: new Map(),
+        }
+        const task = {
+          checkoutId: record.checkoutId,
+          ownerSessionId: record.ownerSessionId,
+          sourceSessionId: record.sourceSessionId ?? record.ownerSessionId,
+          iteration: record.delivery.state === 'working' || record.delivery.state === 'delivered'
+            ? record.delivery.iteration
+            : record.delivery.review.iteration,
+          revision: record.revision,
+          phase: record.phase,
+          state: sidebarTaskState(record),
+        }
+        const previous = project.tasksByOwner.get(record.ownerSessionId)
+        if (!previous
+          || task.iteration > previous.iteration
+          || (task.iteration === previous.iteration && task.revision > previous.revision)) {
+          project.tasksByOwner.set(record.ownerSessionId, task)
+        }
+        projects.set(record.projectId, project)
+      }
+      return {
+        projects: [...projects.values()].map(project => ({
+          project: project.project,
+          tasks: [...project.tasksByOwner.values()],
+        })),
+      }
+    }),
+
     current: sessionId => outcome(async () => {
       const target = await callerTarget(sessionId)
       if (target.checkout.kind === 'local') return { target: projectLocal(target, sessionId) }

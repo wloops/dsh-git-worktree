@@ -1,3 +1,10 @@
+declare module 'virtual:dsh-official-workspace-client' {
+  import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+
+  export const inject: string[]
+  export function apply(ctx: ClientContext): void
+}
+
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
   import type { ComponentType, ReactNode } from 'react'
 

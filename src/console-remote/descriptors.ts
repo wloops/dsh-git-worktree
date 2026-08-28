@@ -24,6 +24,7 @@ import {
   reviewIdSchema,
   revisionSchema,
   sessionIdSchema,
+  sidebarTopologyResponseSchema,
 } from './schemas.js'
 
 const PACKAGE = 'dsh-git-worktree'
@@ -53,6 +54,7 @@ function descriptor(
   parameters: readonly InvocationParameterDescriptor[],
   resultSchema: { parse(value: unknown): unknown },
   resultType: string,
+  withAgent = true,
 ): InvocationDescriptor {
   return {
     id: `${PACKAGE}#${SERVICE}/${method}`,
@@ -60,12 +62,13 @@ function descriptor(
     namespace: SERVICE,
     method,
     invocation: { kind: 'direct' },
-    parameters: [agentParameter, ...parameters],
+    parameters: withAgent ? [agentParameter, ...parameters] : parameters,
     result: { mode: 'strict', typeSymbol: `${PACKAGE}/console-contract#${resultType}`, schema: resultSchema },
   }
 }
 
 export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Object.freeze([
+  descriptor('sidebarTopology', [], outcomeSchema(sidebarTopologyResponseSchema), 'WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>', false),
   descriptor('current', [], outcomeSchema(currentResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>'),
   descriptor('list', [
     json('needsAttention', optionalBooleanSchema, 'boolean | undefined', true),
