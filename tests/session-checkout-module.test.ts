@@ -8,6 +8,7 @@ import type { SessionCheckoutModule } from '../src/index.js'
 import { createSessionCheckoutApplyEngine, type SessionCheckoutApplyEngine } from '../src/session-checkout-apply.ts'
 
 import { createSessionCheckoutModule } from '../src/session-checkout-module.ts'
+import { AtomicJsonCheckoutRegistry } from '../src/adapters/registry.ts'
 import { createNodeSessionCheckoutDependencies } from './support/production-adapters.ts'
 
 interface TestSession {
@@ -521,6 +522,32 @@ describe('SessionCheckoutModule', () => {
     expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe(localBytes)
     expect(readFileSync(join(managedRoot, 'tracked.txt'), 'utf8')).toBe('reviewed draft\n')
     expect(context.module.runtimeContext('session-1')).toContain('worktree_ready_for_review')
+  })
+
+  test('Given a legacy oversized suggested commit message When a review becomes previous Then persistence stays valid and existing affected registries self-repair', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'oversized review\n')
+    const oversizedMessage = `${'x'.repeat(499)}😀${'y'.repeat(438)}`
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'oversized commit message', validationStatus: 'passed', tests: [], suggestedCommitMessage: oversizedMessage,
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+
+    await context.module.resumeRevision('session-1', ready.revision, ready.delivery.review.reviewId)
+
+    const registryPath = join(context.configDir, 'managed-checkouts.json')
+    const persisted = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(persisted.managedCheckouts[target.checkout.id].previousReview.suggestedCommitMessage).toHaveLength(499)
+    expect(() => context.restart()).not.toThrow()
+
+    persisted.managedCheckouts[target.checkout.id].previousReview.suggestedCommitMessage = oversizedMessage
+    writeFileSync(registryPath, JSON.stringify(persisted, null, 2))
+    const repaired = new AtomicJsonCheckoutRegistry(registryPath).read()
+    expect(repaired.managedCheckouts[target.checkout.id].previousReview?.suggestedCommitMessage).toHaveLength(499)
+    const repairedOnDisk = JSON.parse(readFileSync(registryPath, 'utf8')) as any
+    expect(repairedOnDisk.managedCheckouts[target.checkout.id].previousReview.suggestedCommitMessage).toHaveLength(499)
   })
 
   test('Given an exact Ready review When checkpoint is confirmed Then it saves one Worktree-only stage, replays the same request idempotently, and final delivery remains one cumulative Local commit', async () => {

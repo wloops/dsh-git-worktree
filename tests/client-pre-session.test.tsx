@@ -402,6 +402,51 @@ describe('Pre-session Worktree switch', () => {
     expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
   })
 
+  test('waits for repository detection before showing the Worktree switch', async () => {
+    const fixture = successFixture()
+    let resolveCurrent!: (outcome: Awaited<ReturnType<WorktreeConsoleAdapter['current']>>) => void
+    fixture.adapter.current = vi.fn(async () => new Promise(done => { resolveCurrent = done }))
+    render(<PreSessionWorktreeToggle
+      sessionId="source-session"
+      session={{ composerPhase: 'blank' }}
+      input={{ draft: '', imageIds: [], occurrences: [], phase: 'plain' }}
+      inputActions={inputActions}
+      adapter={fixture.adapter}
+      controller={{ prepare: vi.fn() }}
+    />)
+
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
+    resolveCurrent({
+      ok: true,
+      value: { target: { ...fixture.target, checkoutId: null, targetSessionId: null, ownerSessionId: 'source-session', state: 'local', phase: 'local', managedRoot: null, capabilities: { ...fixture.target.capabilities, create: true } } },
+    })
+    expect(await screen.findByRole('switch', { name: 'Worktree' })).toBeTruthy()
+  })
+
+  test('hides the Worktree switch when the Session workspace is not a Git repository', async () => {
+    const fixture = successFixture()
+    fixture.adapter.current = vi.fn(async () => ({
+      ok: false,
+      error: { code: 'not_git_repository' as const, message: '当前 Session 项目不是可用的 Git Worktree' },
+    }))
+    const prepare = vi.fn()
+    render(<PreSessionWorktreeToggle
+      sessionId="source-session"
+      session={{ composerPhase: 'blank' }}
+      input={{ draft: '', imageIds: [], occurrences: [], phase: 'plain' }}
+      inputActions={inputActions}
+      adapter={fixture.adapter}
+      controller={{ prepare }}
+    />)
+
+    await waitFor(() => {
+      expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'source-session' })
+      expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+    expect(prepare).not.toHaveBeenCalled()
+  })
+
   test('opens one confirmation dialog from the existing switch and creates only after confirmation', async () => {
     const fixture = successFixture()
     fixture.adapter.current = vi.fn(async () => ({

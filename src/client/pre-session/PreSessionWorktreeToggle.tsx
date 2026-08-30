@@ -19,7 +19,7 @@ export interface PreSessionWorktreeToggleProps {
   controller: { prepare(request: PreparePreSessionWorktreeRequest): Promise<WorktreeConsoleTargetDetails> }
 }
 
-type LoadState = 'loading' | 'idle' | 'preparing' | 'error'
+type LoadState = 'loading' | 'idle' | 'preparing' | 'error' | 'unsupported'
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
@@ -68,8 +68,13 @@ export function PreSessionWorktreeToggle({
     const outcome = await adapter.current({ sessionId })
     if (!outcome.ok) {
       setTarget(null)
-      setState('error')
-      setError(`${outcome.error.code}: ${outcome.error.message}`)
+      if (outcome.error.code === 'not_git_repository') {
+        setState('unsupported')
+        setError(null)
+      } else {
+        setState('error')
+        setError(`${outcome.error.code}: ${outcome.error.message}`)
+      }
       return
     }
     setTarget(outcome.value.target)
@@ -79,12 +84,21 @@ export function PreSessionWorktreeToggle({
   useEffect(() => {
     if (!blank) return
     let active = true
+    setTarget(null)
+    setPendingInput(null)
+    setState('loading')
+    setError(null)
     void adapter.current({ sessionId }).then((outcome) => {
       if (!active) return
       if (!outcome.ok) {
         setTarget(null)
-        setState('error')
-        setError(`${outcome.error.code}: ${outcome.error.message}`)
+        if (outcome.error.code === 'not_git_repository') {
+          setState('unsupported')
+          setError(null)
+        } else {
+          setState('error')
+          setError(`${outcome.error.code}: ${outcome.error.message}`)
+        }
         return
       }
       setTarget(outcome.value.target)
@@ -94,11 +108,12 @@ export function PreSessionWorktreeToggle({
     return () => { active = false }
   }, [adapter, blank, sessionId])
 
-  if (!blank) return null
+  if (!blank || state === 'loading' || state === 'unsupported') return null
+  if (target?.state === 'local' && !target.capabilities.create) return null
 
   const selected = target?.state !== undefined && target.state !== 'local'
   const canCreate = target?.state === 'local' && target.capabilities.create
-  const busy = state === 'loading' || state === 'preparing'
+  const busy = state === 'preparing'
   const retryingLookup = state === 'error' && target === null
   const disabled = busy || selected || (!canCreate && !retryingLookup) || input.phase !== 'plain'
   const checked = selected || pendingInput !== null || state === 'preparing'
@@ -108,11 +123,9 @@ export function PreSessionWorktreeToggle({
       ? '已创建'
       : pendingInput !== null
         ? '待确认'
-        : state === 'loading'
-          ? '检查中…'
-          : state === 'error'
-            ? '重试'
-            : 'Local'
+        : state === 'error'
+          ? '重试'
+          : 'Local'
 
   const beginConfirmation = async (): Promise<void> => {
     if (disabled) return

@@ -35,7 +35,32 @@ function includedByFiles(target) {
   })
 }
 
-// 1. Host bundle declaration and patch.
+// 1. Host singleton packages must resolve from DSH instead of a plugin-private dependency tree.
+const hostSingletonPackages = [
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-agent',
+  '@deepseek-ai/dsh-commands',
+  '@deepseek-ai/dsh-session',
+  '@deepseek-ai/dsh-subprocess',
+  '@deepseek-ai/dsh-system-prompt',
+  '@deepseek-ai/dsh-tools',
+  '@deepseek-ai/dsh-typert-protocol',
+  '@deepseek-ai/dsh-typert-registry',
+]
+for (const packageName of hostSingletonPackages) {
+  if (manifest.dependencies?.[packageName] !== undefined) {
+    fail(`${packageName} must be a peerDependency; a private copy breaks Host service identity`)
+  }
+  if (typeof manifest.peerDependencies?.[packageName] !== 'string') {
+    fail(`${packageName} is missing from peerDependencies`)
+  }
+  if (typeof manifest.devDependencies?.[packageName] !== 'string') {
+    fail(`${packageName} is missing from devDependencies`)
+  }
+}
+ok(`${hostSingletonPackages.length} Host singleton packages are peer-provided and locally testable`)
+
+// 2. Host bundle declaration and patch.
 const patchRel = manifest.dsh?.bundle?.patch
 if (typeof patchRel !== 'string' || patchRel.length === 0) {
   fail('package.json lacks "dsh".bundle.patch — dsh plugin add would install a plain dependency without mounting it')
@@ -58,7 +83,7 @@ if (!manifest.files?.includes('NOTICE') || !existsSync(resolve(root, 'NOTICE')))
 }
 ok(`Host mount patch ${patchRel} replaces official ui-workspace with one gated derivative`)
 
-// 2. Every package export must exist and be included in the tarball.
+// 3. Every package export must exist and be included in the tarball.
 const exportsMap = manifest.exports
 if (!exportsMap || typeof exportsMap !== 'object' || Array.isArray(exportsMap)) fail('package.json lacks an exports map')
 let exportCount = 0
@@ -83,7 +108,7 @@ for (const stale of [
 }
 ok('removed Diff UI has no stale publish artifact')
 
-// 3. Manual strict Typert artifacts: one descriptor identity feeds Host Loader and Client mount.
+// 4. Manual strict Typert artifacts: one descriptor identity feeds Host Loader and Client mount.
 if (manifest.dependencies?.['@deepseek-ai/dsh-typert-generator'] || manifest.devDependencies?.['@deepseek-ai/dsh-typert-generator']) {
   fail('manual contribution package must not depend on @deepseek-ai/dsh-typert-generator')
 }
@@ -116,7 +141,7 @@ for (const descriptor of hostContribution.invocations) {
 }
 ok(`manual strict ./typert + ./remote contribution (${expectedRemoteMethods.length} methods)`)
 
-// 4. Host entry metadata required by the Cordis loader.
+// 5. Host entry metadata required by the Cordis loader.
 const entryRel = exportsMap['.']?.default ?? manifest.main
 if (typeof entryRel !== 'string') fail('exports["."].default is not a path')
 const entry = readFileSync(resolve(root, entryRel), 'utf8')
@@ -124,7 +149,7 @@ if (!/export\s+function\s+apply\b/.test(entry)) fail(`${entryRel} does not expor
 if (!/export\s+const\s+inject\b/.test(entry)) fail(`${entryRel} does not export const inject`)
 ok(`${entryRel} exports Host apply + inject`)
 
-// 5. Browser ToolView declaration and executable ModuleLoader closure.
+// 6. Browser ToolView declaration and executable ModuleLoader closure.
 const client = manifest.dsh?.client
 if (!client || client.platform !== 'web' || !Array.isArray(client.inject) || client.inject.length === 0) {
   fail('package.json must declare dsh.client { platform: "web", inject: [...] }')
@@ -192,7 +217,7 @@ if (!clientExports.inject.includes('remote')) fail('client bundle must inject th
 if (!clientExports.inject.includes('conversation')) fail('client bundle must inject the public conversation service for pre-session draft transfer')
 ok(`${clientRel} registers ${manifest.name} through the browser ModuleLoader contract`)
 
-// 6. Release CI and npm's prepublish lifecycle require committed source identity;
+// 7. Release CI and npm's prepublish lifecycle require committed source identity;
 // local review builds intentionally run against a dirty managed Worktree.
 const requireClean = process.env.CHECK_PUBLISH_REQUIRE_CLEAN === '1'
   || process.argv.includes('--require-clean')

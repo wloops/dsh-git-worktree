@@ -130,6 +130,7 @@ function plane(record = readyRecord(), overrides: {
   lookup?: SessionCheckoutLookupPort
   files?: SessionCheckoutFilesPort
   registry?: SessionCheckoutRegistryPort
+  git?: SessionCheckoutGitPort
 } = {}) {
   const module = moduleDouble(record)
   return {
@@ -138,7 +139,7 @@ function plane(record = readyRecord(), overrides: {
       module,
       lookup: overrides.lookup ?? lookupDouble(),
       files: overrides.files ?? filesDouble(),
-      registry: overrides.registry ?? registry(record), git: gitDouble(), createTargetSessionId: () => 'host-target',
+      registry: overrides.registry ?? registry(record), git: overrides.git ?? gitDouble(), createTargetSessionId: () => 'host-target',
       reviewDiff: { read: vi.fn(async input => ({ reviewId: input.reviewId, revision: input.revision, files: [], truncated: false })) },
     }),
   }
@@ -167,6 +168,36 @@ describe('Worktree Console Host control plane', () => {
       },
     })
     expect(module.bind).not.toHaveBeenCalled()
+  })
+
+  it('does not advertise Worktree creation for a bound Local Session outside a Git repository', async () => {
+    const { module, control } = plane()
+    vi.mocked(module.inspect).mockResolvedValueOnce({
+      ...local('source-session'),
+      source: { ref: 'WORKING_TREE', oid: 'unversioned' },
+      current: { branch: null, oid: 'unversioned' },
+    })
+
+    await expect(control.current('source-session')).resolves.toMatchObject({
+      ok: true,
+      value: { target: { state: 'local', currentOid: 'unversioned', capabilities: { create: false } } },
+    })
+  })
+
+  it('reports an unbound non-Git Session as unsupported without reading Git status', async () => {
+    const gitPort = gitDouble()
+    vi.mocked(gitPort.inspect).mockResolvedValueOnce(null)
+    const { module, control } = plane(readyRecord(), { git: gitPort })
+    vi.mocked(module.inspect).mockRejectedValueOnce(Object.assign(
+      new Error('会话尚未选择 Session Target'),
+      { code: 'target_unselected' },
+    ))
+
+    await expect(control.current('source-session')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'not_git_repository' },
+    })
+    expect(gitPort.status).not.toHaveBeenCalled()
   })
 
   it('allocates target identity on Host and never changes the source Session target', async () => {

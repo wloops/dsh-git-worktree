@@ -251,7 +251,7 @@ export function projectLocal(target: SessionTargetView, sessionId: string): Work
     currentOid: target.current.oid,
     commitOid: null,
     capabilities: {
-      create: true,
+      create: target.current.oid !== 'unversioned',
       open: true,
       inspect: true,
       discard: false,

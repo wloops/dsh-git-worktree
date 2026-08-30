@@ -322,6 +322,27 @@ function isRegistry(value: unknown): value is ManagedCheckoutsRegistry {
     && Object.values(value.managedCheckouts).every(isManagedCheckout)
 }
 
+function repairOversizedPreviousReviewCommitMessage(value: unknown): ManagedCheckoutsRegistry | null {
+  if (!isRecord(value) || value.version !== 2 || !isRecord(value.managedCheckouts)) return null
+  let repaired = false
+  const managedCheckouts = Object.fromEntries(Object.entries(value.managedCheckouts).map(([checkoutId, checkout]) => {
+    if (!isRecord(checkout) || !isRecord(checkout.previousReview)) return [checkoutId, checkout]
+    const message = checkout.previousReview.suggestedCommitMessage
+    if (typeof message !== 'string' || message.length <= 500) return [checkoutId, checkout]
+    repaired = true
+    return [checkoutId, {
+      ...checkout,
+      previousReview: {
+        ...checkout.previousReview,
+        suggestedCommitMessage: message.slice(0, 500).replace(/[\uD800-\uDBFF]$/u, ''),
+      },
+    }]
+  }))
+  if (!repaired) return null
+  const candidate = { ...value, managedCheckouts }
+  return isRegistry(candidate) ? candidate : null
+}
+
 function migrateLegacyRegistry(value: unknown): ManagedCheckoutsRegistry | null {
   if (
     !isRecord(value)
@@ -386,6 +407,11 @@ export class AtomicJsonCheckoutRegistry implements SessionCheckoutRegistryPort {
   read(): ManagedCheckoutsRegistry {
     const value = readJsonFileSafe<unknown>(this.path)
     if (value && isRegistry(value)) return value
+    const repaired = repairOversizedPreviousReviewCommitMessage(value)
+    if (repaired) {
+      this.write(repaired)
+      return repaired
+    }
     const migrated = migrateLegacyRegistry(value)
     if (migrated) {
       this.write(migrated)

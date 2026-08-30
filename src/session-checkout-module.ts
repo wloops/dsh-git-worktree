@@ -211,11 +211,14 @@ export function createSessionCheckoutModule(
   }
 
   function projectPreviousReview(review: ManagedWorktreeReviewRecord): ManagedWorktreePreviousReviewRecord {
+    const suggestedCommitMessage = review.suggestedCommitMessage.length <= 500
+      ? review.suggestedCommitMessage
+      : review.suggestedCommitMessage.slice(0, 500).replace(/[\uD800-\uDBFF]$/u, '')
     return {
       reviewId: review.reviewId,
       iteration: review.iteration,
       summary: review.summary,
-      suggestedCommitMessage: review.suggestedCommitMessage,
+      suggestedCommitMessage,
       changedFiles: review.changedFiles.slice(0, 50),
     }
   }
