@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-08-30
+
+`0.7.2` 修复 Review 历史提交信息的持久化上限、DSH Host singleton 包的依赖边界，以及非 Git Workspace 的 Worktree 入口显示，避免 registry 写入失败、重复 Host 实例和无效创建入口。
+
+### Fixed
+
+- `previousReview.suggestedCommitMessage` 在投影和 registry 加载修复阶段限制为 500 字符，并安全处理 UTF-16 高代理项，避免超长建议提交信息使后续状态无法持久化；已有受影响记录会在读取时自动收敛。
+- 将 Cordis、Session、Agent、Commands、Subprocess、Tools、Typert 等 DSH Host singleton 包从运行时 dependencies 移至 peerDependencies，并以精确 devDependencies 保持构建测试可复现；发布门禁会拒绝 singleton 回流 dependencies、缺少 peer 或测试版本漂移。
+- pre-session 在仓库检测完成前不再显示 Worktree 开关，非 Git Workspace 检测完成后保持隐藏；Host 对 `unversioned` 目标同步关闭 create capability，避免渲染竞态或绕过 Client 入口。
+
 ## [0.7.1] - 2026-08-28
 
 `0.7.1` 修正项目聚合侧边栏的 Managed owner 菜单边界：恢复安全的会话整理操作，隐藏尚不具备 Worktree 生命周期语义的普通 Fork，并继续阻止会破坏唯一 owner 不变量的入口。
@@ -234,6 +244,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.7.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.0...v0.6.1

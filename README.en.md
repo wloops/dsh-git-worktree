@@ -82,7 +82,7 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific version:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.1
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.2
 ```
 
 Open a Git Workspace and enable **Worktree** when creating a Session. An existing Local Session can also let the model call `worktree_create`.
