@@ -15,11 +15,6 @@ interface ClientHandoff {
 
 function platformRequire(nodeRequire: NodeRequire, specifier: string): unknown {
   if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null }
-  if (specifier === '@deepseek-ai/dsh-client-runtime/client') return {
-    defineStore: (spec: unknown) => ({ spec, create: () => ({ actions: {} }) }),
-    indexSubagentDescendants: () => new Map(),
-    abbreviateHomePath: (path: string) => path,
-  }
   return nodeRequire(specifier)
 }
 
@@ -43,7 +38,8 @@ describe('built Client ModuleLoader artifact', () => {
       'react',
       'react/jsx-runtime',
       '@deepseek-ai/dsh-client-ui-primitives',
-      '@deepseek-ai/dsh-client-runtime/client',
+      '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-client-store',
     ])
   })
 
@@ -73,15 +69,32 @@ describe('built Client ModuleLoader artifact', () => {
     const call = vi.fn(async () => ({ ok: true as const, value: expected }))
     const ctx = new Context()
     await ctx.plugin(TypertRegistry)
-    ctx.provide('connection', { rpc: { call } } as never)
+    ctx.provide('connection', {
+      rpc: { call },
+      registerGenerationSource: () => () => {},
+      start: () => ({ stop() {} }),
+    } as never)
     await ctx.plugin({ inject: gateway.inject, apply: gateway.apply })
     const register = vi.fn()
     ctx.provide('slots', {
       inject(_name: string, callback: () => unknown) { callback() },
       register: vi.fn((...args: unknown[]) => { register(...args); return () => {} }),
+      provideRoot() {},
+      entries: () => [],
+      subscribe: () => () => {},
     } as never)
-    ctx.provide('workspaces', {} as never)
-    ctx.provide('sessions', {} as never)
+    const source = <T,>(snapshot: T) => ({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+    })
+    ctx.provide('workspaces', {
+      list: source({ items: [], archivedSessionIds: [], phase: 'ready' }),
+    } as never)
+    ctx.provide('sessions', {
+      list: source({ ids: [], byId: {}, current: undefined, phase: 'ready' }),
+      clear() {},
+      searchResultLimit: 100,
+    } as never)
     ctx.provide('locale', { register: vi.fn() } as never)
     ctx.provide('conversation', {
       blocks: { set() {}, storeFor: () => ({ getSnapshot: () => undefined }) },

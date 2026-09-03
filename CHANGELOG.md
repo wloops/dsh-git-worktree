@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Compatibility
+
+- 将 DeepSeek Harness Host singleton、Client 模块与完整锁图统一升级到 `0.1.2-rc.1`，同时对齐 Cordis `4.0.2` 和 Schemastery `3.18.2`，避免 rc.2/rc.1 混合运行时。
+- 适配 rc.1 的 Client 拆分：移除已停止发布的 `dsh-client-runtime`，改用 Session/Workspace API Controller、`dsh-client-store` 与 Cordis Context 的公开类型和模块边界。
+- 重新固定官方 Workspace Client `0.1.2-rc.1` 的 bundle SHA-256，并更新 Managed owner Browser 派生 seam；官方 Picker、locale、store、目录选择授权和 Slot declaration tree 保持不变。
+- 适配统一 Remote Gateway：Client Remote 现在包含 generation stream 与 Host facts，测试载体实现新的 Connection lifecycle，卸载后错误码按官方命名空间收敛为 `gateway/internal`。
+- 已复核 Session 按需事件 API（`seq`、`eventAt()`、`snapshotEvents()`）和 `SessionSeq` / `SessionLogOffset` 强类型；插件不直接读取已移除的 `Session.events`，现有 Session Target、fork/resume、Recovery 与 Local fail-closed seam 保持不变。
+- 补充 rc.1 Host 升级说明：Code Mode 更名为 PTC mode 且旧会话仍可读取；可选 SQLite Session 后端已移除，存量数据需使用旧版 Harness 导出；应用与插件安装统一通过 `dsh` Profile。
+
+### Security
+
+- 双语 README 跟随上游安全声明，明确 Harness 与本插件均未经独立安全审计，Worktree、审批和权限检查不构成绝对沙箱保证。
+
 ## [0.7.2] - 2026-08-30
 
 `0.7.2` 修复 Review 历史提交信息的持久化上限、DSH Host singleton 包的依赖边界，以及非 Git Workspace 的 Worktree 入口显示，避免 registry 写入失败、重复 Host 实例和无效创建入口。

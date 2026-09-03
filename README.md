@@ -69,9 +69,11 @@ flowchart LR
 ### 环境要求
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.1.1-rc.2` 包线
+- DeepSeek Harness `0.1.2-rc.1` 包线
 - Harness Web Client
 - Git Workspace
+
+从旧 Harness 升级时请先处理 Host 数据迁移：`0.1.2-rc.1` 已移除可选 SQLite Session 后端，旧数据需使用旧版 Harness 导出；Code Mode 已更名为 PTC mode，但现有会话记录仍可读取。应用和本插件统一通过 `dsh` Profile 启动与安装。
 
 ### 安装
 
@@ -106,6 +108,8 @@ dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.2
 ## 安全边界
 
 所有 Local 写入都由 Host 在执行前重新检查，浏览器缓存和模型输出不构成写入授权。插件会验证 Session、checkout、revision、Git 身份、Preview receipt 和 Local 状态；遇到分支切换、重叠冲突、未知残余或恢复证据不足时会 fail closed。
+
+DeepSeek Harness 与本插件均尚未接受独立安全审计。Worktree 隔离、审批和权限检查用于降低误写风险，但不构成对恶意代码或宿主级访问的绝对沙箱保证。
 
 完整状态机、CAS 和恢复不变量见：
 

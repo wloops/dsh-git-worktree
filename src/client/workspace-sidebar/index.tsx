@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, type ComponentType } from 'react'
-import type { ClientContext, SessionId, SessionListState, WorkspaceId, WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { WorkspaceId, WorkspaceSnapshot as WorkspaceListState } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { apply as applyOfficialWorkspace } from 'virtual:dsh-official-workspace-client'
 import type { WorkspaceBrowserProps } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorktreeConsoleAdapter, WorktreeSidebarTopologyResponse } from '../../console-contract.js'
@@ -171,5 +174,5 @@ export function registerManagedWorkspaceSidebar(
   ctx: SidebarRegistrationContext,
   adapter: WorktreeConsoleAdapter,
 ): void {
-  applyOfficialWorkspace(officialContextProxy(ctx, adapter) as unknown as ClientContext)
+  applyOfficialWorkspace(officialContextProxy(ctx, adapter) as unknown as Context)
 }

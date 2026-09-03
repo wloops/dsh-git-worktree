@@ -69,9 +69,11 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 ### Requirements
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.1.1-rc.2` package line
+- DeepSeek Harness `0.1.2-rc.1` package line
 - Harness Web Client
 - A Git Workspace
+
+Before upgrading an existing Harness installation, handle Host data migration: `0.1.2-rc.1` removes the optional SQLite Session backend, so use an older Harness version to export that data first. Code Mode is now named PTC mode, while existing conversation records remain readable. Launch applications and install this plugin through a `dsh` Profile.
 
 ### Install
 
@@ -106,6 +108,8 @@ See the [full usage guide](docs/USAGE.en.md#complete-delivery-example) for the c
 ## Safety boundary
 
 The Host rechecks every Local write at execution time. Browser caches and model output are never write authority. The plugin validates Session, checkout, revision, Git identity, Preview receipt, and Local state; branch switches, overlapping conflicts, unknown residue, or insufficient recovery evidence fail closed.
+
+Neither DeepSeek Harness nor this plugin has undergone an independent security audit. Worktree separation, approvals, and permission checks reduce accidental-write risk, but they are not an absolute sandbox guarantee against malicious code or host-level access.
 
 For the full state machine, CAS, and recovery invariants, see:
 

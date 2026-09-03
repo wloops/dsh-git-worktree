@@ -155,7 +155,8 @@ if (!client || client.platform !== 'web' || !Array.isArray(client.inject) || cli
   fail('package.json must declare dsh.client { platform: "web", inject: [...] }')
 }
 const requiredClientPackages = [
-  '@deepseek-ai/dsh-client-runtime',
+  '@deepseek-ai/dsh-api-session-controller',
+  '@deepseek-ai/dsh-api-workspace-controller',
   '@deepseek-ai/dsh-client-ui-conversation',
   '@deepseek-ai/dsh-api-gateway',
 ]
@@ -171,7 +172,8 @@ const allowedBrowserRequires = new Set([
   'react',
   'react/jsx-runtime',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
 ])
 const unsupportedBrowserRequires = browserRequires.filter(specifier => !allowedBrowserRequires.has(specifier))
 if (unsupportedBrowserRequires.length > 0) {
@@ -197,11 +199,6 @@ if (!handoff || handoff.id !== manifest.name || typeof handoff.factory !== 'func
 }
 const browserRequire = (specifier) => {
   if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null }
-  if (specifier === '@deepseek-ai/dsh-client-runtime/client') return {
-    defineStore: spec => ({ spec, create: () => ({ actions: {} }) }),
-    indexSubagentDescendants: () => new Map(),
-    abbreviateHomePath: path => path,
-  }
   return require(specifier)
 }
 let clientExports

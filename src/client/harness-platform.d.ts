@@ -1,8 +1,8 @@
 declare module 'virtual:dsh-official-workspace-client' {
-  import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+  import type { Context } from '@deepseek-ai/cordis'
 
   export const inject: string[]
-  export function apply(ctx: ClientContext): void
+  export function apply(ctx: Context): void
 }
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {

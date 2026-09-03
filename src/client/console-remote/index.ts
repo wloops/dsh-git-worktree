@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
+import type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
 import type { WorktreeConsoleAdapter } from '../../console-contract.js'
 import contribution, { type GitWorktreeRemote } from '../../console-remote/remote.js'
 import { apply as applyToolViews, inject as toolViewInject } from '../index.js'
@@ -10,7 +10,7 @@ export { createWorktreeConsoleRemoteAdapter } from './adapter.js'
 export const inject = [...toolViewInject, 'remote']
 
 interface ConsoleClientContext extends Context {
-  remote: TypertClientRemote & { gitWorktree: GitWorktreeRemote }
+  remote: ClientRemote & { gitWorktree: GitWorktreeRemote }
 }
 
 declare module '@deepseek-ai/cordis' {

@@ -129,17 +129,20 @@ tsdown.config.ts        # client bundle 配置（新增）
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },        // 已有
     "client": {                                          // 新增
-      "inject": ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-conversation"],
+      "inject": ["@deepseek-ai/dsh-api-session-controller", "@deepseek-ai/dsh-api-workspace-controller", "@deepseek-ai/dsh-client-ui-conversation"],
       "platform": "web"
     }
   },
   "peerDependencies": {
     "react": "^18.2.0",
-    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6"     // 类型 + 运行时模块表条目
+    "@deepseek-ai/cordis": "^4.0.2"
   },
   "devDependencies": {
     "tsdown": "^0.x", "lightningcss": "^1.x", "react": "^18.2.0",
-    "@types/react": "~18.3.1"
+    "@types/react": "~18.3.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-store": "0.1.2-rc.1"
   },
   "scripts": {
     "bundle:client": "tsdown --config tsdown.config.ts",
@@ -174,7 +177,7 @@ export default defineConfig({
   external: [
     'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
     '@deepseek-ai/cordis',
-    '@deepseek-ai/dsh-client-runtime/client', // 模块表里的运行时
+    '@deepseek-ai/dsh-client-store',          // 浏览器本地 store engine
   ],
   // 其余依赖（组件库、工具）全部内联；不要 import 其他 @deepseek-ai 包的“值”
   noExternal: (id) => (external.includes(id) ? undefined : true),
@@ -196,8 +199,8 @@ export default defineConfig({
 
 **组件导入纪律（避免纯度门禁问题）**：
 - `react`：external，安全
-- `@deepseek-ai/dsh-client-runtime/client` 等：**只用 `import type`**（类型擦除后不进 bundle）
-- 其他 `@deepseek-ai/*` 值导入一律避免——数据走 slot props / host.call，跨插件协作走 cordis 服务
+- Session / Workspace 类型分别从 `@deepseek-ai/dsh-api-session-controller/client`、`@deepseek-ai/dsh-api-workspace-controller/client` **只用 `import type`**（类型擦除后不进 bundle）
+- `@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-store` 等平台值必须 external，并由 ModuleLoader 提供；其他 `@deepseek-ai/*` 值导入一律避免——数据走 slot props / Remote，跨插件协作走 Cordis 服务
 - 简单样式直接 `styles.insert(css)`（Client Builtin），省掉 CSS Modules 插件
 
 ### 3.4 Host 半：暴露 UI 数据方法
@@ -220,7 +223,7 @@ harness.handle('worktree/discard', async (args: { checkoutId: string; confirmDir
 
 ### 3.5 类型引用
 
-Client 组件的 props 类型：`ConvViewProps` 来自 `@deepseek-ai/dsh-client-ui-conversation/client`（仅类型导入）；标准 hooks 类型来自 `@deepseek-ai/dsh-client-runtime/client`。新 harness 里先用 `cordis_inspect_query` 确认这些类型包/服务的当前路径（版本线不同可能改名）。
+Client 组件的 props 类型应从拥有对应 surface 的拆分包导入：Conversation 组件来自 `@deepseek-ai/dsh-client-ui-conversation/client`，Session/Workspace snapshot 与动作类型来自对应 API Controller 的 `./client` export（均仅类型导入）。新 Harness 里先确认这些类型包/服务的当前路径，版本线不同可能继续拆分。
 
 ## 4. 发布与门禁
 

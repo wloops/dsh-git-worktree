@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
-export const WORKSPACE_UI_VERSION = '0.1.1-rc.2'
-export const WORKSPACE_LOCALE_VERSION = '0.1.1-rc.2'
-export const WORKSPACE_CLIENT_SHA256 = '75d8a09a43a820e0ff8470e7b9c87b6dced523764ee650a8382317f6ef7a314b'
+export const WORKSPACE_UI_VERSION = '0.1.2-rc.1'
+export const WORKSPACE_LOCALE_VERSION = '0.1.2-rc.1'
+export const WORKSPACE_CLIENT_SHA256 = '53c40660195c42cde709b802e239f473dd721f45bc329684af31c01fdb73282a'
 export const OFFICIAL_WORKSPACE_VIRTUAL_ID = 'virtual:dsh-official-workspace-client'
 export const RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID = `\0${OFFICIAL_WORKSPACE_VIRTUAL_ID}`
 
@@ -53,12 +53,12 @@ export function decorateOfficialWorkspaceClient(source) {
     '\t\t\t\tconst group = buildGroup(workspace.workspaceId, workspace.workspaceId, workspace.path, Date.parse(workspace.createdAt), workspace.title, members, "account");\n\t\t\t\tif (workspace.__dshGitWorktreeProtected === true) group.__dshGitWorktreeProtected = true;\n\t\t\t\tgroups.push(group);',
     'Managed workspace metadata')
   derived = replaceExactlyOnce(derived,
-    '\t\t\t\tupdatedAt: s.updatedAt,\n\t\t\t\t...s.pendingInteraction === void 0 ? {} : { pendingInteraction: s.pendingInteraction }',
-    '\t\t\t\tupdatedAt: s.updatedAt,\n\t\t\t\t...s.__dshGitWorktree === void 0 ? {} : { __dshGitWorktree: s.__dshGitWorktree },\n\t\t\t\t...s.pendingInteraction === void 0 ? {} : { pendingInteraction: s.pendingInteraction }',
+    '\t\t\t\tupdatedAt: s.updatedAt,\n\t\t\t\t...pendingInteraction === void 0 ? {} : { pendingInteraction }',
+    '\t\t\t\tupdatedAt: s.updatedAt,\n\t\t\t\t...s.__dshGitWorktree === void 0 ? {} : { __dshGitWorktree: s.__dshGitWorktree },\n\t\t\t\t...pendingInteraction === void 0 ? {} : { pendingInteraction }',
     'session node metadata')
   derived = replaceExactlyOnce(derived,
-    '\t\t\t\t\t\trunningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,\n\t\t\t\t\t\t...summary.pendingInteraction === void 0 ? {} : { pendingInteraction: summary.pendingInteraction },',
-    '\t\t\t\t\t\trunningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,\n\t\t\t\t\t\t...summary.__dshGitWorktree === void 0 ? {} : { __dshGitWorktree: summary.__dshGitWorktree },\n\t\t\t\t\t\t...summary.pendingInteraction === void 0 ? {} : { pendingInteraction: summary.pendingInteraction },',
+    '\t\t\t\t\t\trunningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,\n\t\t\t\t\t\t...pendingInteraction === void 0 ? {} : { pendingInteraction },',
+    '\t\t\t\t\t\trunningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,\n\t\t\t\t\t\t...summary.__dshGitWorktree === void 0 ? {} : { __dshGitWorktree: summary.__dshGitWorktree },\n\t\t\t\t\t\t...pendingInteraction === void 0 ? {} : { pendingInteraction },',
     'search result metadata')
   derived = replaceExactlyOnce(derived,
     '\t\t\t\t\tlabel: g.label,\n\t\t\t\t\tsessionCount: g.sessions.length,',
@@ -81,8 +81,8 @@ export function decorateOfficialWorkspaceClient(source) {
     '\t\t\tconst primaryStatus = statuses[0];\n\t\t\tconst worktreeDecoration = managedWorktreeDecoration(result, t);\n\t\t\treturn (0, react_jsx_runtime.jsxs)("button", {\n\t\t\t\ttype: "button",\n\t\t\t\tclassName: clsx(Rows_module_css_default.searchResultRow, selected && Rows_module_css_default.selected),\n\t\t\t\t...worktreeDecoration === void 0 ? {} : { "aria-label": worktreeDecoration.ariaLabel, "data-managed-worktree": "true" },',
     'search Worktree identity')
   derived = replaceExactlyOnce(derived,
-    '\t\t\t\t\t\tchildren: (primaryStatus.state !== "done" || result.completed) && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t}), (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\tclassName: Rows_module_css_default.searchResultTitle,',
-    '\t\t\t\t\t\tchildren: (primaryStatus.state !== "done" || result.completed) && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t}), worktreeDecoration !== void 0 && (0, react_jsx_runtime.jsx)(ManagedWorktreeIdentity, { decoration: worktreeDecoration }), (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\tclassName: Rows_module_css_default.searchResultTitle,',
+    '\t\t\t\t\t\t\tchildren: (primaryStatus.state !== "done" || result.completed) && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t\t}),\n\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.searchResultTitle,',
+    '\t\t\t\t\t\t\tchildren: (primaryStatus.state !== "done" || result.completed) && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t\t}),\n\t\t\t\t\t\tworktreeDecoration !== void 0 && (0, react_jsx_runtime.jsx)(ManagedWorktreeIdentity, { decoration: worktreeDecoration }),\n\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.searchResultTitle,',
     'search Worktree decoration')
   derived = replaceExactlyOnce(derived,
     '\t\t\tconst label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;\n\t\t\tconst active = group.expanded && group.containsCurrent;',
@@ -138,12 +138,14 @@ export function materializeOfficialWorkspaceClientModule() {
   }
   const body = source.slice(start + factoryToken.length, end)
   return `
-import * as runtime from '@deepseek-ai/dsh-client-runtime/client'
+import * as cordis from '@deepseek-ai/cordis'
+import * as store from '@deepseek-ai/dsh-client-store'
 import * as jsxRuntime from 'react/jsx-runtime'
 import * as react from 'react'
 import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 const modules = {
-  '@deepseek-ai/dsh-client-runtime/client': runtime,
+  '@deepseek-ai/cordis': cordis,
+  '@deepseek-ai/dsh-client-store': store,
   'react/jsx-runtime': jsxRuntime,
   'react': react,
   '@deepseek-ai/dsh-client-ui-primitives': primitives,

@@ -81,7 +81,7 @@ return {
 - Host 半 `apply` 里追加 `harness.handle('worktree/list'|'worktree/discard'|...)`，复用现有 module
 - tsdown 配置要点：
   - `format: 'cjs'`、`platform: 'browser'`、`entryFileNames: 'client.js'`
-  - `external`: 平台模块（`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-runtime/client`）——**不能打进 bundle**，否则双实例 React
+  - `external`: 平台模块（`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-store`）——**不能打进 bundle**，否则会产生双实例 React/Cordis/store engine
   - banner/footer：`window.__ModuleLoader__.load({ id: "dsh-git-worktree", factory: (require) => { ... return module.exports; } });`
   - `define` 三个 NODE_ENV 键（zustand 等探 process.env/import.meta.env）
   - 其他 `@deepseek-ai/*` 一律**只 `import type`**（擦除），值导入会被纯度门禁拒

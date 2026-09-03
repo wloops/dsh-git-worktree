@@ -349,7 +349,11 @@ describe('manual strict Worktree Console Remote contribution', () => {
     })
     const client = new Context()
     await client.plugin(TypertRegistry)
-    client.provide('connection', { rpc: { call } } as never)
+    client.provide('connection', {
+      rpc: { call },
+      registerGenerationSource: () => () => {},
+      start: () => ({ stop() {} }),
+    } as never)
     const remoteClient = await loadRemoteClientModule()
     await client.plugin({ inject: remoteClient.inject, apply: remoteClient.apply })
 
@@ -364,7 +368,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
 
     await dispose()
     expect((client.remote as unknown as Record<string, unknown>).gitWorktree).toBeUndefined()
-    await expect(retained('agent-1')).resolves.toMatchObject({ ok: false, error: { code: 'internal' } })
+    await expect(retained('agent-1')).resolves.toMatchObject({ ok: false, error: { code: 'gateway/internal' } })
   })
 
   it('keeps business errors distinct from carrier and malformed response failures', async () => {
