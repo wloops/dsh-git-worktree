@@ -5,62 +5,62 @@
 [![CI](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml/badge.svg)](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Let agents work in real Git worktrees, preview changes in Local, and save only after explicit human confirmation.**
+**Let agents complete tasks in independent Git Worktrees, then review the changes before deciding whether to save them.**
 
-`dsh-git-worktree` is an experimental Session Target plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness). Each coding task receives an independent checkout, Workspace, and Session so agent construction state does not leak into the user-controlled Local checkout.
+`dsh-git-worktree` is a Git Worktree plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness). It creates a separate Worktree (working directory) for every coding task, so the agent does not directly edit the project you are using. When the task is complete, you can preview the result and then save it, send it back for changes, or discard it.
 
-This is an independently maintained community plugin. It is not an official DeepSeek project and does not imply endorsement, partnership, or authorization.
+This Git Worktree workflow originated in [Domi](https://github.com/restflux/domi), an open-source desktop coding workbench powered by the Pi Agent Runtime. This plugin is independently adapted for DeepSeek Harness and can be installed and used on its own.
 
 [中文](README.md) · [Full usage guide](docs/USAGE.en.md) · [Architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)
 
 ## Why use it?
 
-When an agent edits Local directly, task changes can mix with existing staged, unstaged, and untracked work. Multiple tasks may also compete for the same checkout. This plugin separates construction from delivery:
+When an agent edits the current project directly, its changes can mix with your unfinished work. Running multiple tasks at once can also make them interfere with one another. With this plugin:
 
-- the agent edits and tests only inside an isolated Worktree;
-- the user first inspects a reversible Local Preview;
-- the Host saves only the current task delta, excluding unrelated Local work;
-- if safety cannot be proven, writes stop and recovery evidence is preserved.
+- every task is edited and tested in its own Git Worktree (an independent working directory);
+- multiple tasks can run at the same time without sharing one working directory;
+- when the agent finishes, you can temporarily show the changes in the current project and inspect them;
+- changes are saved only after confirmation, and conflicts never overwrite your work automatically.
 
 ## Highlights
 
-- **Project-grouped sidebar**: each Managed owner appears under its original Local project with a Branch Icon and status Badge; ordinary Local Sessions keep the official behavior.
-- **Real isolation**: every task gets its own Git Worktree, Workspace, and unique owner Session.
-- **Human acceptance**: Ready lets the user choose **Preview changes**, **Confirm and save**, or another explicit action.
-- **Reversible Preview**: changes reach Local without an immediate Commit and can be rolled back safely.
-- **Task-only save**: final delivery creates one Commit for the accumulated task delta.
-- **Save checkpoint and continue**: checkpoints remain inside the managed Worktree and still collapse into one final delivery.
-- **Safe recovery**: handles Local drift, conflicts, `preview_detached`, restarts, and interrupted cleanup.
-- **Parallel construction, serialized acceptance**: many Worktrees can run concurrently while each Local project accepts one Preview at a time.
-- **Continuous iterations**: after delivery and cleanup, the same Session and conversation can begin another round.
+- **Git Worktree isolation**: every task gets its own working directory and its own agent conversation.
+- **Run multiple Worktrees**: develop several tasks in parallel; to avoid mixing changes, review one task at a time per project.
+- **Preview before committing**: inspect the real result in the current project without immediately creating a Git commit.
+- **Send it back safely**: undo the current preview and ask the agent for more changes without disturbing unrelated local work.
+- **Save only this task**: confirmation commits only the current task instead of pulling unrelated changes into it.
+- **Preserve progress on long tasks**: save the current stage and keep developing; the stages still become one final delivery.
+- **Protect the working state**: branch changes, conflicts, and interrupted operations stop safely and leave the state available for recovery.
+- **See related tasks together**: tasks from the same project are grouped in the sidebar for status checks and navigation.
+- **Continue in the same conversation**: after delivery, begin another task without opening a new conversation.
 
-> The scope is a **project-scoped Worktree Session delivery plugin**, not a cross-project global Worktree Manager.
+> The current version manages Git Worktrees within one project. It does not yet provide a global cross-project manager.
 
 ## Workflow
 
 ```mermaid
 flowchart LR
-    A[Local Session] -->|Create Worktree| B[Worktree Session]
-    B --> C[Agent edits and validates]
-    C --> D[Ready for Review]
-    D -->|Preview changes| E[Local Preview]
-    E -->|Confirm and save| F[Iteration delivered]
-    F -->|cleanup| G[Start next iteration]
+    A[Current project] -->|Create isolated task| B[Independent Git Worktree]
+    B --> C[Agent edits and tests]
+    C --> D[Review the result]
+    D -->|Preview changes| E[Inspect them in the current project]
+    E -->|Confirm and save| F[Create the task commit]
+    F --> G[Continue in the same conversation]
 
-    D -.->|Save checkpoint and continue| H[Save checkpoint<br/>Return to editing]
-    E -.->|Undo this preview| I[Return to editing]
-    D -.->|Skip preview and save| F
+    D -.->|Save current progress| H[Keep developing]
+    E -.->|Undo this preview| I[Return for changes]
+    D -.->|Skip preview| F
 ```
 
 ### Which action should I choose?
 
 | Goal | Action |
 | --- | --- |
-| Inspect the result in Local first | **Preview changes** |
-| The Preview looks correct | **Confirm and save** |
+| Inspect the result in the current project | **Preview changes** |
+| The preview looks correct | **Confirm and save** |
 | Preserve progress during a long task | **Save checkpoint and continue** |
 | Ask the agent for more edits | **Continue editing** or **Undo this preview** |
-| Deliver without a Preview | **Skip preview and save** |
+| Save without inspecting it first | **Skip preview and save** |
 
 See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scenarios, and commands.
 
@@ -107,22 +107,22 @@ See the [full usage guide](docs/USAGE.en.md#complete-delivery-example) for the c
 
 ## Safety boundary
 
-The Host rechecks every Local write at execution time. Browser caches and model output are never write authority. The plugin validates Session, checkout, revision, Git identity, Preview receipt, and Local state; branch switches, overlapping conflicts, unknown residue, or insufficient recovery evidence fail closed.
+Before writing task changes back to the current project, the plugin checks again that the task version, project location, and file state still match the review. If you switched branches, changes conflict, or a previous operation was interrupted, it stops and preserves the working state instead of guessing and overwriting files.
 
-Neither DeepSeek Harness nor this plugin has undergone an independent security audit. Worktree separation, approvals, and permission checks reduce accidental-write risk, but they are not an absolute sandbox guarantee against malicious code or host-level access.
+Worktree separation is designed to prevent tasks from accidentally changing one another's files. It is not a system sandbox for running untrusted code.
 
-For the full state machine, CAS, and recovery invariants, see:
+For the detailed state checks and recovery rules, see:
 
 - [Worktree Console architecture](docs/WORKTREE-CONSOLE-ARCHITECTURE.md)
 - [Session Target porting notes](docs/PORTING.md)
 
-## Current boundaries
+## Current limitations
 
-- A normal Managed owner is grouped under its original Local project. If the owner is missing, another Session exists, or membership conflicts, the original Workspace remains visible instead of hiding uncertain data.
-- Managed owners can be renamed and archived. Worktree-aware Fork is not implemented yet, so the ordinary Fork action is hidden in this release.
-- Child agents inherit the parent Session cwd; the plugin does not create per-child Worktrees.
-- Checkpoint does not support editing, deleting, reordering, or arbitrary rollback of history.
-- Domi's global Manager, Local Maintenance, dependency snapshots, and full collaborator lifecycle are outside this plugin's scope.
+- A task is grouped under its original project only when that relationship is clear. Uncertain tasks remain in their original location so they are never hidden.
+- Isolated tasks can be renamed and archived, but a new task cannot yet be forked directly from the task conversation.
+- Child agents share the parent task's working directory; a separate Worktree is not created for every child agent.
+- Saved stage records cannot yet be edited, deleted, reordered, or rolled back to an arbitrary stage.
+- The broader cross-project management, direct repair of the current project, dependency reuse, and collaboration handoff features in [Domi](https://github.com/restflux/domi) are outside this plugin's current scope.
 
 ## Local development
 
