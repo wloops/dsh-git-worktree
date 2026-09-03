@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-03
+
+`0.7.3` 将插件完整适配到 DeepSeek Harness `0.1.2-rc.1` 的 Host、Client、Remote Gateway 与 Workspace 模块边界，并重写中英文项目首页，让安装要求、Worktree 工作方式与安全限制更容易理解。
+
+### Changed
+
+- 用面向普通用户的语言重写中英文 README，保留 Git Worktree 隔离、多任务并行、人工验收与恢复能力说明，并明确该工作方式与 Domi/Pi Agent Runtime 开源实现的来源关系。
+
 ### Compatibility
 
 - 将 DeepSeek Harness Host singleton、Client 模块与完整锁图统一升级到 `0.1.2-rc.1`，同时对齐 Cordis `4.0.2` 和 Schemastery `3.18.2`，避免 rc.2/rc.1 混合运行时。
@@ -257,6 +265,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.7.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.6.1...v0.7.0
