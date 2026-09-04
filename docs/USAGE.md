@@ -170,7 +170,7 @@ dsh plugin --profile web add dsh-git-worktree
 ### Git tag 安装
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.3
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.4
 ```
 
 pnpm 10+ 如果阻止 Git dependency 执行 `prepare`，在 profile 的 `pnpm-workspace.yaml` 中加入：
@@ -184,13 +184,18 @@ allowBuilds:
 
 ### 升级 Harness 后插件加载失败
 
-Web 界面显示 **Failed to load plugins**，报错包含 `require("@deepseek-ai/dsh-client-runtime/client") missed the module table`，说明已安装的插件是 `0.7.2` 或更早的构建，而当前 Harness（`0.1.2-rc.1` 起）已移除 `dsh-client-runtime`。重新安装 `0.7.3` 或更高版本并重启 Harness：
+Web 界面显示 **Failed to load plugins** 时，先检查错误详情和已安装版本：
+
+- 报错包含 `require("@deepseek-ai/dsh-client-runtime/client") missed the module table`：当前仍是 `0.7.2` 或更早版本，而 Harness `0.1.2-rc.1` 起已移除 `dsh-client-runtime`。
+- 报错显示 `dsh-git-worktree` 等待 `conversation`，同时官方 Conversation/Sidebar 等待 `uiWorkspace`：当前是 `0.7.3` 的 Client 启动循环依赖。
+
+两种情况都应安装 `0.7.4` 或更高版本并重启 Harness：
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.7.3
+dsh plugin --profile web add dsh-git-worktree@0.7.4
 ```
 
-重装后先 `dsh plugin --profile web list` 确认版本，再重启 Harness。注意 pnpm 的供应链策略会推迟安装刚发布的版本：新版本发布后几天内，不带版本号的 `add` 可能仍解析到旧版。需要立即安装时，把精确版本加入 profile `pnpm-workspace.yaml` 已有的 `minimumReleaseAgeExclude` 列表（如 `- dsh-git-worktree@0.7.3`）后重新安装。
+重装后先 `dsh plugin --profile web list` 确认版本，再重启 Harness。注意 pnpm 的供应链策略会推迟安装刚发布的版本：新版本发布后几天内，不带版本号的 `add` 可能仍解析到旧版。需要立即安装时，把精确版本加入 profile `pnpm-workspace.yaml` 已有的 `minimumReleaseAgeExclude` 列表（如 `- dsh-git-worktree@0.7.4`）后重新安装。
 
 从 Git tag 安装的用户改用上方 Git tag 命令安装最新 tag 即可。如果版本确认无误仍报同样错误，说明上次安装时 `prepare` 构建被 pnpm 拦截，按上文加入 `allowBuilds` 后重新安装。
 

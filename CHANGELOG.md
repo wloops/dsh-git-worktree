@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-09-04
+
+`0.7.4` 修复 `0.7.3` 在 DeepSeek Harness `0.1.2-rc.1` Web Client 中的启动循环依赖。插件现在先恢复被受控派生替换的官方 `uiWorkspace` 服务，再延迟加载依赖 Conversation 的 Worktree 界面。
+
+### Fixed
+
+- 将官方 Workspace Client 与 Worktree ToolView/Pre-session/Target/Review UI 拆分为两个 Cordis 激活阶段，消除 `dsh-git-worktree → conversation → uiWorkspace → dsh-git-worktree` 循环等待。
+- 顶层 Client fiber 只等待官方 Workspace 的公开 prerequisites；`conversation` 与 `connection` 留在子 fiber，服务后续出现时再注册其余 Worktree UI。
+- 增加无 Conversation 启动图回归和发布门禁，确保插件先提供 `uiWorkspace`，且官方 Workspace Slot declaration tree 仍只注册一次。
+
 ## [0.7.3] - 2026-09-03
 
 `0.7.3` 将插件完整适配到 DeepSeek Harness `0.1.2-rc.1` 的 Host、Client、Remote Gateway 与 Workspace 模块边界，并重写中英文项目首页，让安装要求、Worktree 工作方式与安全限制更容易理解。
@@ -265,6 +275,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.7.4]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.0...v0.7.1

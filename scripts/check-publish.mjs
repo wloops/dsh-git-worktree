@@ -211,8 +211,10 @@ if (!clientExports || typeof clientExports.apply !== 'function' || !Array.isArra
   fail('client bundle factory did not return apply + inject')
 }
 if (!clientExports.inject.includes('remote')) fail('client bundle must inject the official Remote service before $mount')
-if (!clientExports.inject.includes('conversation')) fail('client bundle must inject the public conversation service for pre-session draft transfer')
-ok(`${clientRel} registers ${manifest.name} through the browser ModuleLoader contract`)
+if (!clientExports.inject.includes('remote.directoryPicker')) fail('client bundle must wait for the official directory-picker Remote before restoring uiWorkspace')
+if (clientExports.inject.includes('conversation')) fail('client bundle root must not wait for conversation: uiConversation depends on the uiWorkspace restored by this plugin')
+if (clientExports.inject.includes('connection')) fail('client bundle root must keep connection-dependent Worktree views in the deferred child fiber')
+ok(`${clientRel} registers ${manifest.name} through the browser ModuleLoader contract without a uiWorkspace/uiConversation boot cycle`)
 
 // 7. Release CI and npm's prepublish lifecycle require committed source identity;
 // local review builds intentionally run against a dirty managed Worktree.

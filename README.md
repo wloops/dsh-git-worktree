@@ -75,10 +75,10 @@ flowchart LR
 
 从旧 Harness 升级时请先处理 Host 数据迁移：`0.1.2-rc.1` 已移除可选 SQLite Session 后端，旧数据需使用旧版 Harness 导出；Code Mode 已更名为 PTC mode，但现有会话记录仍可读取。应用和本插件统一通过 `dsh` Profile 启动与安装。
 
-从旧版 Harness 升级后，如果 Web 界面提示 **Failed to load plugins**，且报错包含 `@deepseek-ai/dsh-client-runtime/client` missed the module table，说明已安装的插件仍是 `0.7.2` 或更早的构建（旧版依赖已停止发布的 `dsh-client-runtime`）。重新安装 `0.7.3` 或更高版本的插件并重启 Harness 即可恢复：
+从旧版 Harness 升级后，如果 Web 界面提示 **Failed to load plugins**，请安装 `0.7.4` 或更高版本并重启 Harness。`0.7.2` 及更早版本依赖已停止发布的 `dsh-client-runtime`；`0.7.3` 在 rc.1 Web Client 中还可能形成 `conversation` / `uiWorkspace` 循环等待。
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.7.3
+dsh plugin --profile web add dsh-git-worktree@0.7.4
 ```
 
 ### 安装
@@ -90,7 +90,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定版本：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.3
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.7.4
 ```
 
 安装后打开 Git Workspace，在新建 Session 时启用 **Worktree**；已有 Local Session 也可以让模型调用 `worktree_create` 创建隔离 Session。

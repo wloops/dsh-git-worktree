@@ -867,6 +867,9 @@ describe('Client entry integration', () => {
         const dispose = setup()
         if (typeof dispose === 'function') disposers.push(dispose)
       },
+      inject: (_deps: string[], callback: (ctx: unknown) => void) => {
+        callback(context)
+      },
     }
 
     await applyRemoteClient(context as never)

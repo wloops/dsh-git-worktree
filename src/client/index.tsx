@@ -10,7 +10,6 @@ import { WORKTREE_STYLES } from './styles.js'
 import { registerPreSessionWorktree, type PreSessionSlotContextLike } from './pre-session/index.js'
 import { registerTargetConsole, type TargetConsoleContextLike } from './target-console/index.js'
 import { TARGET_CONSOLE_STYLES } from './target-console/target-console.styles.js'
-import { registerManagedWorkspaceSidebar } from './workspace-sidebar/index.js'
 
 export { registerTargetConsole } from './target-console/index.js'
 
@@ -21,7 +20,7 @@ interface ClientContextLike {
   effect(setup: () => void | (() => void), label?: string): void
   slots: {
     inject(
-      name: 'tool.call.toolview' | 'conversation.session.header.actions' | 'conversation.input.dock' | 'conversation.input.left' | 'sidebar.workspaces',
+      name: 'tool.call.toolview' | 'conversation.session.header.actions' | 'conversation.input.dock' | 'conversation.input.left',
       callback: () => unknown,
     ): void
     register(
@@ -81,6 +80,5 @@ export function apply(ctx: ClientContextLike, adapterOverride?: WorktreeConsoleA
       adapter,
       services,
     )
-    registerManagedWorkspaceSidebar(ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0], adapter)
   }
 }

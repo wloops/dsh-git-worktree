@@ -49,10 +49,19 @@ describe('built Client ModuleLoader artifact', () => {
     const nodeRequire = createRequire(import.meta.url)
     const clientExports = handoff.factory(specifier => platformRequire(nodeRequire, specifier))
     expect(clientExports.apply).toBeTypeOf('function')
-    expect(clientExports.inject).toEqual(['slots', 'workspaces', 'sessions', 'conversation', 'connection', 'locale', 'remote'])
+    expect(clientExports.inject).toEqual([
+      'slots',
+      'sessions',
+      'workspaces',
+      'locale',
+      'remote',
+      'remote.directoryPicker',
+    ])
+    expect(clientExports.inject).not.toContain('conversation')
+    expect(clientExports.inject).not.toContain('connection')
   })
 
-  test('mounts the strict contribution in a real Harness Client Remote service and withdraws it with the fiber', async () => {
+  test('restores uiWorkspace before conversation, then mounts Worktree surfaces and withdraws them with the fiber', async () => {
     const nodeRequire = createRequire(import.meta.url)
     const gatewayPath = nodeRequire.resolve('@deepseek-ai/dsh-api-gateway/client')
     const gateway = executeBundle(readFileSync(gatewayPath, 'utf8')).factory(nodeRequire) as {
@@ -96,14 +105,29 @@ describe('built Client ModuleLoader artifact', () => {
       searchResultLimit: 100,
     } as never)
     ctx.provide('locale', { register: vi.fn() } as never)
-    ctx.provide('conversation', {
-      blocks: { set() {}, storeFor: () => ({ getSnapshot: () => undefined }) },
-      input: { for: () => ({ setDraft() {}, addImages: () => true, removeImage() {} }) },
-    } as never)
+    ctx.provide('remote.directoryPicker', {} as never)
 
     const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
     await fiber
     expect(ctx.worktreeConsole).toBeDefined()
+    expect(ctx.uiWorkspace).toBeDefined()
+
+    // uiConversation cannot activate before uiWorkspace exists. The package
+    // root must therefore settle without the conversation service, while the
+    // conversation-dependent Worktree surfaces remain in their child fiber.
+    expect(register.mock.calls.map(call => call[0])).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_create' }),
+    ]))
+
+    ctx.provide('conversation', {
+      blocks: { set() {}, storeFor: () => ({ getSnapshot: () => undefined }) },
+      input: { for: () => ({ setDraft() {}, addImages: () => true, removeImage() {} }) },
+    } as never)
+    await vi.waitFor(() => expect(register).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_create' }),
+      expect.any(Function),
+    ))
+
     const descriptors = register.mock.calls.map(call => call[0])
     expect(descriptors).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'tool.call.toolview', key: 'worktree_create' }),
@@ -115,6 +139,8 @@ describe('built Client ModuleLoader artifact', () => {
     expect(descriptors).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'conversation.view', id: 'worktree' }),
     ]))
+    expect(descriptors.filter(descriptor => descriptor.name === 'sidebar.workspaces')).toHaveLength(1)
+    expect(descriptors.filter(descriptor => descriptor.name === 'conversation.hero.workspace')).toHaveLength(1)
     await expect(ctx.worktreeConsole.current({ sessionId: 'agent-1' })).resolves.toEqual(expected)
     expect(call).toHaveBeenCalledWith('/api', 'gitWorktree/current', { args: { agentId: 'agent-1' } }, expect.any(AbortSignal))
     expect((ctx.remote as unknown as Record<string, unknown>).gitWorktree).toBeDefined()
