@@ -182,6 +182,18 @@ allowBuilds:
 
 Then reinstall the plugin.
 
+### Plugin fails to load after a Harness upgrade
+
+When the web UI shows **Failed to load plugins** with an error containing `require("@deepseek-ai/dsh-client-runtime/client") missed the module table`, the installed plugin is a `0.7.2`-or-older build, while Harness `0.1.2-rc.1` and later removed `dsh-client-runtime`. Reinstall version `0.7.3` or later and restart Harness:
+
+```bash
+dsh plugin --profile web add dsh-git-worktree@0.7.3
+```
+
+Confirm the installed version with `dsh plugin --profile web list` before restarting Harness. Note that pnpm's supply-chain policy delays freshly published releases: for a few days after publishing, `add` without a version may still resolve to an older build. To install immediately, add the exact version (for example `- dsh-git-worktree@0.7.3`) to the existing `minimumReleaseAgeExclude` list in the profile's `pnpm-workspace.yaml` and reinstall.
+
+If you installed from a Git tag, install the latest tag with the Git tag command above instead. If the version is confirmed correct but the error persists, pnpm blocked the `prepare` build during the previous install. Add `allowBuilds` as shown above and reinstall.
+
 ### UI does not appear
 
 Check:

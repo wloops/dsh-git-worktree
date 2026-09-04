@@ -75,6 +75,12 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 
 Before upgrading an existing Harness installation, handle Host data migration: `0.1.2-rc.1` removes the optional SQLite Session backend, so use an older Harness version to export that data first. Code Mode is now named PTC mode, while existing conversation records remain readable. Launch applications and install this plugin through a `dsh` Profile.
 
+After upgrading Harness from an earlier release, the web UI may show **Failed to load plugins** with an error mentioning `@deepseek-ai/dsh-client-runtime/client` missed the module table. This means the installed plugin is still a `0.7.2`-or-older build; older releases depend on the discontinued `dsh-client-runtime`. Reinstall version `0.7.3` or later and restart Harness:
+
+```bash
+dsh plugin --profile web add dsh-git-worktree@0.7.3
+```
+
 ### Install
 
 ```bash
