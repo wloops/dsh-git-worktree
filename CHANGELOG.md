@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-09-06
+
+`0.7.5` 修复插件启停时官方 Workspace provider 与 Managed 聚合 provider 的生命周期协调：禁用插件后可靠恢复官方 `uiWorkspace`，启用时继续保留 Managed 会话聚合，不再因静态 bundle patch 残留导致 Web 会话阻塞。
+
 ### Fixed
 
 - 修复 #4：插件条目禁用但 bundle patch 仍保留时，恢复官方 `uiWorkspace`，不再因双方均停用阻塞 Web 会话；启用时继续保留 Managed 会话聚合和侧边栏标记。
@@ -281,6 +285,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.7.5]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.1...v0.7.2
