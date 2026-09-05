@@ -34,7 +34,8 @@ describe('Managed Workspace profile ownership', () => {
       dsh: { client: { inject: string[] } }
       files: string[]
     }
-    expect(patch).toMatch(/- id: ui-workspace\s+name: ['"]?@deepseek-ai\/dsh-client-ui-workspace['"]?\s+disabled: true/u)
+    expect(patch).toMatch(/- id: ui-workspace\s+name: ['"]?@deepseek-ai\/dsh-client-ui-workspace['"]?\s+disabled: !!js /u)
+    expect(patch).not.toMatch(/disabled: true/u)
     expect(patch).toMatch(/- insert:\s+- id: dsh-git-worktree\s+name: dsh-git-worktree/u)
     expect(manifest.dsh.client.inject).not.toContain('@deepseek-ai/dsh-client-ui-workspace')
     expect(manifest.files).toContain('NOTICE')

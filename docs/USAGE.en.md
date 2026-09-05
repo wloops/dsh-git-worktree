@@ -209,6 +209,18 @@ Check:
 4. Harness was restarted after installation;
 5. the browser bundle loaded the current plugin version.
 
+### Workspace or sessions fail to open after disabling the plugin
+
+While enabled, the plugin provides the Workspace sidebar with Managed session grouping. Disabling it restores the official Workspace. After changing the enabled state, fully restart `dsh web` and reload the page; do not rely solely on hot-swapping modules already loaded in the browser.
+
+If an older plugin version leaves the page waiting for `uiWorkspace`, uninstall it and restart DSH to recover the interface:
+
+```bash
+dsh plugin --profile web remove dsh-git-worktree
+```
+
+To keep using the plugin, install a version containing this fix. Recovery does not require deleting session history or manually clearing the Worktree registry.
+
 ### Worktree creation fails
 
 Common causes include an inaccessible project root, Git failure, unknown content in the target directory, or Session/Workspace identity mismatch. The plugin never deletes a directory whose ownership it cannot prove.

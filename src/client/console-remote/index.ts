@@ -35,8 +35,8 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
   const adapter = createWorktreeConsoleRemoteAdapter(remote)
   ctx.provide('worktreeConsole', adapter)
 
-  // The official ui-workspace row is disabled by cordis.patch.yml. Restore its
-  // service and Slot declarations before uiConversation becomes available.
+  // Host lifecycle selects this replacement only while the plugin is active.
+  // Provide Workspace before uiConversation to avoid a Client boot cycle.
   registerManagedWorkspaceSidebar(
     ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0],
     adapter,

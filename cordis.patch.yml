@@ -1,10 +1,10 @@
-# Replace the official ui-workspace loader row while this plugin is enabled.
-# The Client bundle derives that exact version's official Browser, Picker,
-# locale, stores, and directory-flow declarations, wrapping only the Browser.
+# Keep the official Workspace available when this bundle remains installed but
+# its replacement entry (or an owning group) is disabled. Provider selection is
+# evaluated by the Loader; restart DSH after changing the plugin's enabled state.
 
 - id: ui-workspace
   name: '@deepseek-ai/dsh-client-ui-workspace'
-  disabled: true
+  disabled: !!js "!!get('worktreeWorkspaceProvider') && [...loader.entries()].some(entry => entry.options?.name === 'dsh-git-worktree' && !entry.disabled)"
 
 - insert:
     - id: dsh-git-worktree

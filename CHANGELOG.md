@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复 #4：插件条目禁用但 bundle patch 仍保留时，恢复官方 `uiWorkspace`，不再因双方均停用阻塞 Web 会话；启用时继续保留 Managed 会话聚合和侧边栏标记。
+- Workspace 替换改为 Host 生命周期控制的条件选择；同步 Loader 与 Web 模块清单，覆盖延迟 Include、市场禁用状态回放和初始化失败恢复，不持久化官方禁用标志。
+- 新增锁定 DSH `0.1.2-rc.1` 的真实 Loader / Include / ClientModuleRegistry 回归；切换后仍应完整重启 DSH 并重新加载页面。
+
 ## [0.7.4] - 2026-09-04
 
 `0.7.4` 修复 `0.7.3` 在 DeepSeek Harness `0.1.2-rc.1` Web Client 中的启动循环依赖。插件现在先恢复被受控派生替换的官方 `uiWorkspace` 服务，再延迟加载依赖 Conversation 的 Worktree 界面。

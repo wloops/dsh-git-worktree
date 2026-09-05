@@ -38,6 +38,7 @@ function includedByFiles(target) {
 // 1. Host singleton packages must resolve from DSH instead of a plugin-private dependency tree.
 const hostSingletonPackages = [
   '@deepseek-ai/cordis',
+  '@deepseek-ai/cordis-plugin-loader',
   '@deepseek-ai/dsh-agent',
   '@deepseek-ai/dsh-commands',
   '@deepseek-ai/dsh-session',
@@ -72,8 +73,10 @@ const patch = readFileSync(patchPath, 'utf8')
 if (!patch.includes('- insert:') || !patch.includes(`name: ${manifest.name}`)) {
   fail(`${patchRel} must insert one plugin row named ${manifest.name}`)
 }
-if (!/- id: ui-workspace\s+name: ['"]?@deepseek-ai\/dsh-client-ui-workspace['"]?\s+disabled: true/u.test(patch)) {
-  fail(`${patchRel} must disable the original ui-workspace row while the gated derivative owns its Slot tree`)
+const { WORKSPACE_PROVIDER_CONDITION } = await import(pathToFileURL(resolve(root, 'lib/workspace-provider-lifecycle.js')).href)
+if (!/- id: ui-workspace\s+name: ['"]?@deepseek-ai\/dsh-client-ui-workspace['"]?\s+disabled: !!js /u.test(patch)
+  || !patch.includes(`disabled: !!js ${JSON.stringify(WORKSPACE_PROVIDER_CONDITION)}`)) {
+  fail(`${patchRel} must share the conditional Workspace selection used by the Host lifecycle`)
 }
 if (manifest.dsh?.client?.inject?.includes('@deepseek-ai/dsh-client-ui-workspace')) {
   fail('dsh.client.inject must not request the disabled official ui-workspace Client module')
@@ -145,7 +148,7 @@ ok(`manual strict ./typert + ./remote contribution (${expectedRemoteMethods.leng
 const entryRel = exportsMap['.']?.default ?? manifest.main
 if (typeof entryRel !== 'string') fail('exports["."].default is not a path')
 const entry = readFileSync(resolve(root, entryRel), 'utf8')
-if (!/export\s+function\s+apply\b/.test(entry)) fail(`${entryRel} does not export function apply`)
+if (!/export\s+(?:async\s+)?function\s+apply\b/.test(entry)) fail(`${entryRel} does not export function apply`)
 if (!/export\s+const\s+inject\b/.test(entry)) fail(`${entryRel} does not export const inject`)
 ok(`${entryRel} exports Host apply + inject`)
 

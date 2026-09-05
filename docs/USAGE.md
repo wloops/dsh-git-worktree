@@ -209,6 +209,18 @@ dsh plugin --profile web add dsh-git-worktree@0.7.4
 4. 安装后是否重启 Harness；
 5. 浏览器 bundle 是否加载当前插件版本。
 
+### 禁用插件后 Workspace 或会话打不开
+
+启用插件时，侧边栏使用带 Managed 会话聚合的 Workspace 实现；禁用插件时恢复官方 Workspace。修改启用状态后，请完整重启 `dsh web` 并重新加载页面，不要仅依赖浏览器内已有模块的热切换。
+
+如果旧版插件禁用后出现 `waiting for service: uiWorkspace`，可先卸载插件并重启以恢复界面：
+
+```bash
+dsh plugin --profile web remove dsh-git-worktree
+```
+
+如需继续使用，请安装包含此修复的版本。无需为了恢复界面删除会话历史或手工清空 Worktree registry。
+
 ### Worktree 无法创建
 
 常见原因包括项目根不可访问、Git 命令失败、目标目录存在未知内容，或 Session/Workspace 身份不匹配。插件不会自动删除无法确认归属的目录。

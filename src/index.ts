@@ -161,6 +161,7 @@ import z from '@deepseek-ai/schemastery'
 import { createDshGitPort } from './adapters/git.js'
 import { createNodeFilesPort } from './adapters/files.js'
 import { AtomicJsonCheckoutRegistry } from './adapters/registry.js'
+import { mountWorkspaceProviderLifecycle } from './workspace-provider-lifecycle.js'
 import { createDshLookupPort } from './adapters/lookup.js'
 import { createSessionCheckoutApplyEngine } from './session-checkout-apply.js'
 import { createSessionCheckoutModule } from './session-checkout-module.js'
@@ -177,7 +178,7 @@ const name = 'git-worktree'
 // Named export: the loader reads inject/apply named exports as plugin
 // metadata. A bare function export mounts with no injection list, and the
 // first ctx.tools access then fails with "cannot get property without inject".
-export const inject = ['tools', 'commands', 'subprocess']
+export const inject = { tools: {}, commands: {}, subprocess: {}, loader: { await: false } }
 
 const Config = z.object({
   /**
@@ -202,7 +203,8 @@ const RETENTION_MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000
  * tools, human acceptance command, dynamic target context, startup recovery,
  * and the retention-expiry timer.
  */
-export function apply(ctx: Context, config: { stateDir?: string } = {}): void {
+export async function apply(ctx: Context, config: { stateDir?: string } = {}): Promise<void> {
+  await mountWorkspaceProviderLifecycle(ctx)
   const stateDir = resolveStateDir(config)
   mkdirSync(stateDir, { recursive: true })
   const hooksPath = join(stateDir, 'disabled-git-hooks')
