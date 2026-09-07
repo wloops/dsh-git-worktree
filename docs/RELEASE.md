@@ -63,11 +63,14 @@ pnpm run check:publish:release
 pnpm run check:publish:release
 git push origin <release-branch>
 # 等待该精确 release commit 的 GitHub Actions 成功
-git tag -a v<版本> -m "v<版本>"
+git tag -a v<版本> -F <release-notes.md>
 git push origin v<版本>
+gh release create v<版本> --title "v<版本>" --notes-file <release-notes.md>
 ```
 
-当前 release branch 是 `master`，CI 同时监听 `master` 与 `main`。不要在脏工作区创建 release tag；不要依赖未提交的 `prepare` 修复；branch CI 未通过时不得 tag 或 publish。
+每个新 Tag 必须附带可读的多行版本说明，不能只写 `v<版本>` 或 `dsh-git-worktree v<版本>`。说明从对应 Changelog 条目提炼，至少包含：版本目的或根因、主要更新、兼容/迁移注意事项、验证摘要和 npm 发布状态。由于 GitHub Tags 列表不会清楚展示 annotated tag message，还必须为新 Tag 创建 GitHub Release，使说明在仓库 Releases 页面可见。
+
+当前 release branch 是 `master`，CI 同时监听 `master` 与 `main`。不要在脏工作区创建 release tag；不要依赖未提交的 `prepare` 修复；branch CI 未通过时不得 tag 或 publish。已存在的 Tag 不为补说明而强制移动或覆盖；本规则从后续新 Tag 开始执行。
 
 ## 4. 发布
 
