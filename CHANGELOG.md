@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-09
+
+`0.8.0` 为插件增加 Client 与 Host 全链路中英文支持：界面、工具、命令和 Host 用户消息跟随 DSH 语言选择，并通过显式 Console 语言传递与异步上下文隔离保持并发会话正确；同时修复新建 Session 时 Worktree 入口因使用过期状态 seam 而崩溃的问题。
+
+### Added
+
+- 接入 DSH locale 与类型安全的中英文文案表，覆盖 Pre-session、Target/Review Console、ToolView、Workspace Sidebar、工具结果、命令回复和 Host 生命周期消息；插件不增加独立语言开关。
+- Console contract 显式传递调用语言；Host 使用异步语言上下文隔离并发工具和命令，错误码、持久化判定及恢复协议继续保持语言无关。
+- 新增语言标准化、中文回退、插值、运行时切换、并发隔离和 strict transport 回归，并将语言传递与翻译贡献规则收录到发布包的 `docs/i18n.md`。
+
+### Fixed
+
+- 新会话 Worktree 入口改用 DSH `0.1.2-rc.1` 标准 Session 与输入状态 hook，避免渲染期读取旧 store seam 导致崩溃；中英文环境下均覆盖确认、取消和会话状态变化。
+
 ## [0.7.5] - 2026-09-06
 
 `0.7.5` 修复插件启停时官方 Workspace provider 与 Managed 聚合 provider 的生命周期协调：禁用插件后可靠恢复官方 `uiWorkspace`，启用时继续保留 Managed 会话聚合，不再因静态 bundle patch 残留导致 Web 会话阻塞。
@@ -285,6 +299,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.8.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.5...v0.8.0
 [0.7.5]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.2...v0.7.3
