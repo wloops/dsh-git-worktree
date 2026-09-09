@@ -2,6 +2,7 @@
 
 import { ClientI18nProvider } from '../src/client/i18n.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { createElement } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails } from '../src/console-contract.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
@@ -370,6 +371,55 @@ describe('Pre-session Worktree switch', () => {
       id: 'worktree-pre-session',
       order: 40,
     })
+  })
+
+  test.each(['zh', 'en'] as const)('renders the registered entry from rc.1 standard hooks without legacy snapshot props (%s)', async (language) => {
+    const fixture = successFixture()
+    fixture.adapter.current = vi.fn(async () => ({
+      ok: true,
+      value: { target: { ...fixture.target, state: 'local', capabilities: { ...fixture.target.capabilities, create: true } } },
+    }))
+    let Entry: any
+    registerPreSessionWorktree({ slots: {
+      inject: (_name, callback) => { callback() },
+      register: (_descriptor, component) => { Entry = component },
+    } }, fixture.adapter, fixture.services)
+    const session = { blank: true, running: false, awaitingFirstTurn: false, promptAttempted: false }
+    const conversation = { activeTargets: new Set<string>() }
+    const input = { draft: 'keep draft', phase: 'plain', imageIds: [], occurrences: [], draftRev: 1 }
+    const props = {
+      sessionId: 'source-session', inputActions,
+      useSession: (select: any) => select(session),
+      useConversation: (select: any) => select(conversation),
+      useInput: (select: any) => select(input),
+    }
+    const renderEntry = () => <ClientI18nProvider language={language}>{createElement(Entry, props)}</ClientI18nProvider>
+    const view = render(renderEntry())
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
+    expect(toggle).toBeTruthy()
+    fireEvent.click(toggle)
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: language === 'en' ? 'Cancel' : '取消' }))
+    expect(inputActions.setDraft).not.toHaveBeenCalled()
+    input.phase = 'submitting'
+    view.rerender(renderEntry())
+    expect(screen.getByRole('switch', { name: 'Worktree' }).getAttribute('disabled')).not.toBeNull()
+    input.phase = 'plain'
+    conversation.activeTargets.add('chat')
+    view.rerender(renderEntry())
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
+    conversation.activeTargets.clear()
+    session.promptAttempted = true
+    view.rerender(renderEntry())
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
+    session.promptAttempted = false
+    session.blank = false
+    view.rerender(renderEntry())
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
+    session.blank = true
+    session.running = true
+    view.rerender(renderEntry())
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
   })
 
   test('shows an accessible unchecked switch only for a blank Local Session', async () => {
