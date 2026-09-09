@@ -1,244 +1,96 @@
-# dsh-git-worktree 可视化 UI 开发指导
+# Worktree UI 开发说明
 
-> [!WARNING]
-> 本文的 `harness.handle()/host.call()` 通信示例属于早期动态插件原型记录，**不是当前 Worktree Console 的实施契约**。当前 Harness 的正式跨端缝是 Typert Remote：Host `TypertRemoteService + @Remote`、构建生成 `./remote` contribution、Client `ctx.remote.$mount()`。新的状态、DTO、安全边界、Slot 选择与并行文件所有权以 [`WORKTREE-CONSOLE-ARCHITECTURE.md`](./WORKTREE-CONSOLE-ARCHITECTURE.md) 为准。本文仅保留历史调研和 Client bundle/Slot 调试参考。
->
-> 当前 blank/new Session 的 Worktree 入口使用 Harness 公开 `conversation.input.left` Slot。用户点击开关后先打开受控确认弹窗；取消不创建资源，确认后 Client 才通过 `ctx.conversation.blocks` 暂停 source composer，经 strict Typert 创建 Host-owned target，再使用公开 `ctx.workspaces`、`ctx.sessions` 与 `ctx.conversation.input` 把草稿迁移到 target；没有复制 InputBar，也没有拦截私有 submit sink。
+本文提供当前 UI 的源码入口、集成约束和验证方式。状态模型、权限边界与恢复语义见 [Worktree Console 架构](WORKTREE-CONSOLE-ARCHITECTURE.md)，产品操作见 [使用指南](USAGE.md)，发布流程见 [RELEASE.md](RELEASE.md)。
 
-给 dsh-git-worktree 加可视化 worktree 管理面板（列表 + 操作按钮）的历史路线：先在运行的 harness 里用动态插件快速迭代 UI，验证通过后再把 Client 代码并入 npm 包发布。本文原始 Slot/服务/机制记录来自 DSH `0.1.0-rc.5` 线；使用前必须按当前 Harness 源码复核。
+## 1. 入口与模块
 
-## 0. 架构总览
+| 入口 | 职责 |
+| --- | --- |
+| `src/client/console-remote/index.ts` | 实际 Client bundle 入口：mount 包内 Remote contribution、提供 adapter、注册 Workspace Sidebar 和会话 UI |
+| `src/client/console-remote/adapter.ts` | 将 Gateway transport 结果与业务结果归一化为 `WorktreeConsoleOutcome<T>` |
+| `src/client/index.tsx` | 注册 ToolView、Header、composer dock 和 pre-session UI，管理插件样式与本地化包装 |
+| `src/client/pre-session/` | 新会话 Worktree 确认、创建和草稿交接 |
+| `src/client/target-console/` | Session Target 状态、关联 Worktree Manager 与 Review dock |
+| `src/client/review-console/` | 验收详情、Preflight、Delivery Proof 与恢复操作 |
+| `src/client/workspace-sidebar/` | 官方 Workspace Browser 的 Managed Worktree 展示集成 |
+| `src/console-contract.ts` | Host/Client 共享 DTO 与 adapter 契约 |
+| `src/console-host/`、`src/console-remote/` | Host control plane、strict Remote descriptors、schemas 与 contributions |
 
-DSH 的插件 UI 是**同一个 npm 包里的 Client 半**（浏览器代码），与现有 Host 半（tools/commands/module）通过 Package-private JSON RPC 通信：
+## 2. Client 与 Host 通信
 
-```
-┌─ npm 包 dsh-git-worktree ─────────────────────────────┐
-│ Host 半（Node，已有）          Client 半（浏览器，新增）  │
-│ · apply(): 注册工具/命令        · apply(): 注册 Slot UI   │
-│ · harness.handle('wt/list',    · host.call('wt/list')    │
-│     fn)  ←JSON RPC── 仅 JSON──  ← 取数据                  │
-└───────────────────────────────────────────────────────┘
-```
+当前实现使用 Harness Typert Remote，不使用早期动态原型的 `harness.handle()/host.call()`：
 
-挂载链路（已实测确认）：
-1. 包的 `dsh.bundle.patch`（已有）→ 插件行进组合树，Host 半挂载
-2. 包的 `dsh.client` 字段 → `dsh-client-modules`（node 半）扫描 Loader 条目时发现它，读 `exports["./client"]` 拿到浏览器 bundle，serve 为 `/plugins/<id>/client.js`
-3. 浏览器端 `__ModuleLoader__` 加载该 bundle，Client 半注册进 Slot
-
-参考实现（照抄它的结构）：`@deepseek-ai/dsh-client-ui-trajectory`（注册 `conversation.view` 视图 tab）——harness 仓库 `packages/client/ui-trajectory/`。
-
-## 1. 方案选型：UI 放哪
-
-开发前用 `cordis_inspect_query(client, Slots, listSubTree)` 查当前 Slot 树，以下是实测结果：
-
-| 位置 | Slot | kind | 风险 | 适用 |
-| --- | --- | --- | --- | --- |
-| **会话视图 tab** | `conversation.view` | list | none | seam 已验证；当前产品暂不注册 Worktree tab，先聚焦 pre-session 与验收主流程 |
-| 新会话 composer 工具栏 | `conversation.input.left` | list | low | blank Local Session 的 Worktree switch；创建期间必须 block source composer |
-| 会话头按钮 | `conversation.session.header.actions` | list | none | 打开面板的快捷入口 |
-| 全局浮层 | `shell.overlay` | list | none | 弹窗/抽屉 |
-| 设置页 | `settings.section` | list | none | 全局配置（如默认保留期） |
-
-`conversation.view` 注册协议（实测）：`{ id: 唯一字符串, order: number, label: string|()=>string }`，现有 occupants：`chat`(0)、`trajectory`(10)。组件 props = standardProps + ownerProps + 你 `inject()` 返回的字段：
-
-- standardProps：`sessionId`、`useSession`（ConversationSnapshot）、`useSessions`、`useWorkspaces`、`useProjection`、`useInput`、`inputActions`
-- ownerProps：`inspect` / `onInspectDone`
-
-**当前产品决策**：`WorktreeConsoleView` 与 Host 管理能力继续保留，但暂不注册 `conversation.view` 的 `worktree` tab。恢复该入口时，数据仍必须全部走 Host Remote，不依赖会话快照。
-
-## 2. 开发期：动态插件快速迭代（换 harness 后第一步）
-
-在新 harness 里用 cordis 会话（`cordis` preset）开发，不要直接改包——动态插件无需打包/发布，改完即生效：
-
-1. 每个会话先 `cordis_inspect_list` 确认 Provider；写代码前对目标 Slot 用 `cordis_inspect_query(client, Slots, listSubTree, {root})` 查**完整契约**（registration/standardProps/ownerProps/occupants）
-2. `cordis_define` 定义 Package（host + client 两个半），`cordis_run` 运行
-3. Client 代码是**纯 JS**，无 JSX/TS/import：用 `React.createElement`、`styles.insert(css)`、`host.call(method, args)`（Builtin 只有：ctx/React/host/styles/console）
-4. Host 半用 `harness.handle('方法名', async (args) => json)` 暴露数据；返回值必须可 JSON 序列化，不要传 live 对象
-
-Client 半骨架（conversation.view tab）：
-
-```js
-return {
-  apply(ctx) {
-    const slots = ctx.get('slots')
-    if (slots === undefined) return
-    slots.inject('conversation.view', () => slots.register(
-      { name: 'conversation.view', id: 'worktree', order: 20, label: () => 'Worktree' },
-      (props) => {
-        const [rows, setRows] = React.useState(null)
-        React.useEffect(() => {
-          host.call('wt/list', { sessionId: props.sessionId }).then(setRows)
-        }, [props.sessionId])
-        if (rows === null) return React.createElement('div', null, 'loading…')
-        return React.createElement('ul', null,
-          rows.map((r) => React.createElement('li', { key: r.checkoutId },
-            `${r.name} — ${r.status}`)))
-      },
-    ))
-  },
-}
+```text
+Client entry
+→ ctx.remote.$mount(package-owned contribution)
+→ remote.gitWorktree
+→ createWorktreeConsoleRemoteAdapter(remote)
+→ WorktreeConsoleAdapter
+→ UI
 ```
 
-Host 半骨架：
+Host contribution 位于 `src/console-remote/typert.ts`，Client contribution 位于 `src/console-remote/remote.ts`；两者使用包内 descriptors 和 strict schemas。当前 Host contribution 是手工声明，不应假设构建会自动生成新的 Remote 方法。
 
-```js
-return {
-  apply(ctx) {
-    // 这里调用现有的 worktree module（listManagedWorktrees 等）
-    harness.handle('wt/list', async (args) => {
-      return { items: await module.listManagedWorktrees() }  // 只返回纯 JSON
-    })
-  },
-}
+新增或调整 API 时，同步维护共享契约、Host control plane、Remote descriptors/schemas、Client adapter 与相关测试。预期业务失败返回 `WorktreeConsoleOutcome<T>`；transport failure 由 adapter 归一化。UI 不根据错误文案推断权限或恢复能力，也不通过传入路径或 owner ID 获得授权。
+
+Remote mount 的 disposer 由 Client effect 管理。Workspace Sidebar 先注册，会话相关 UI 在具备 `toolViewInject` 服务的 child fiber 中注册；不要把会话依赖提升到顶层，造成 Workspace 与 Conversation 的启动循环。
+
+## 3. UI 挂载与呈现
+
+现有会话 UI 由公共 Slots 注册：
+
+| Slot | 用途 |
+| --- | --- |
+| `tool.call.toolview` | `worktree_create` 与 `worktree_ready_for_review` 的调用卡片 |
+| `conversation.input.left` | blank Local Session 的 Worktree 开关与确认流程 |
+| `conversation.session.header.actions` | Target 状态与关联 Manager 入口 |
+| `conversation.input.dock` | 当前 Worktree 的验收入口与操作 |
+
+当前不注册 `conversation.view` Worktree 页签。Manager 通过 Header 打开，不另建重复的常驻工作台。
+
+- UI 使用 Host facts 与 capability，不维护第二套持久生命周期。
+- 新会话创建与草稿交接复用 `pre-session` controller 和标准 composer，不拦截私有 submit sink。
+- 文案沿用 `src/client/i18n.tsx` 与 `src/i18n/` 的中英文目录，规则见 [i18n.md](i18n.md)。
+- 样式沿用现有组件样式模块；`src/client/index.tsx` 通过 effect 插入带插件标识的 style，并在卸载时移除。
+- Workspace Sidebar 是带版本及 SHA-256 门禁的官方组件派生集成。修改前阅读 [UPSTREAM.md](../src/client/workspace-sidebar/UPSTREAM.md)，保留上游结构、授权边界与许可证说明。
+
+## 4. 构建与包配置
+
+`package.json` 的 `dsh.client` 声明 Client 注入依赖，`exports["./client"]` 指向 `lib/client.js`。Host 和 Client 由同一个 npm 包发布，Host 挂载配置见 `cordis.patch.yml`。
+
+`tsdown.config.ts` 从 `src/client/console-remote/index.ts` 构建 Client：
+
+- CJS 格式，`platform: 'neutral'`，目标为 ES2022；
+- 输出包装为 `window.__ModuleLoader__.load({ id, factory })`；
+- React、Cordis、Client Store 与 UI Primitives 等平台模块保持 external，避免双实例；
+- 通过 virtual module 在构建期嵌入受版本和哈希校验的官方 Workspace Client；
+- TypeScript 编译与 Client bundling 由 `pnpm run build` 串联。
+
+不要照搬旧原型的 bundle 配置或凭猜测增减平台依赖；以当前配置、上游契约和 `scripts/check-publish.mjs` 门禁为准。
+
+## 5. 聚焦验证
+
+根据改动选择对应测试，不要求每次执行所有命令。以下命令在已安装项目依赖后运行：
+
+```bash
+# Remote/契约变更
+pnpm exec vitest run tests/console-contract.test.ts tests/console-host.test.ts tests/console-remote.test.ts
+
+# 创建、Target 与 Review UI
+pnpm exec vitest run tests/client-pre-session.test.tsx tests/client-target-console.test.tsx tests/client-review-console.test.tsx tests/client-toolview.test.tsx
+
+# 本地化变更
+pnpm exec vitest run tests/client-i18n.test.tsx tests/i18n-catalogs.test.ts
+
+# 类型边界变更
+pnpm run typecheck
+
+# bundle、exports 或注入依赖变更
+pnpm run build
+pnpm run check:publish
+pnpm exec vitest run tests/client-bundle.test.ts
 ```
 
-**调试手段**：Run card 状态；`cordis_inspect_self` 读失败诊断（`client-render` 栈）；浏览器 console（包级 console.log）；Client 插件热更新依赖 `pnpm run dev:web` 在重建 client bundle。
+Preflight、恢复和 Sidebar 另有对应的 `tests/client-*.test.*`，涉及这些行为时补充相关测试。Sidebar 上游升级还必须遵循 `UPSTREAM.md` 的兼容性验证要求。
 
-**常见失败**（技能速查）：
-- `cannot get property "x" without inject` → 用了 `ctx.x` 但没声明 `inject`，或没走 `ctx.get`
-- 页面报错 → 查该 Run 的 `client-render` 诊断；修复后 `cordis_define` 追加新 Package 并 `cordis_run update`
-- `host.call` 失败 → 方法名、参数 JSON、Host 半 handler 是否注册
-- Slot 注册失败 → 先查目标 Slot 的契约再注册
-
-## 3. 落地期：并入 npm 包
-
-UI 交互稳定后，把 Client 代码搬进 `dsh-git-worktree` 包（改造当前 tsc 构建为 tsc + tsdown client bundle）。
-
-### 3.1 文件结构
-
-```
-src/
-  index.ts              # 现有 Host 插件入口（不动）
-  client/
-    index.ts            # Client 插件：注册 slot
-    WorktreePanel.tsx   # 组件（TSX 允许——这是包内源码，非动态代码）
-    views.module.css    # 可选：CSS Modules
-tsdown.config.ts        # client bundle 配置（新增）
-```
-
-### 3.2 package.json 改动
-
-```jsonc
-{
-  "exports": {
-    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
-    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
-    "./package.json": "./package.json"
-  },
-  "files": ["lib", "cordis.patch.yml"],
-  "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },        // 已有
-    "client": {                                          // 新增
-      "inject": ["@deepseek-ai/dsh-api-session-controller", "@deepseek-ai/dsh-api-workspace-controller", "@deepseek-ai/dsh-client-ui-conversation"],
-      "platform": "web"
-    }
-  },
-  "peerDependencies": {
-    "react": "^18.2.0",
-    "@deepseek-ai/cordis": "^4.0.2"
-  },
-  "devDependencies": {
-    "tsdown": "^0.x", "lightningcss": "^1.x", "react": "^18.2.0",
-    "@types/react": "~18.3.1",
-    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-store": "0.1.2-rc.1"
-  },
-  "scripts": {
-    "bundle:client": "tsdown --config tsdown.config.ts",
-    "build": "tsc && pnpm run bundle:client",
-    "prepare": "pnpm run build"
-  }
-}
-```
-
-要点：
-- `dsh.client.inject` 是 **Client 依赖包列表**（模块表边的来源），`platform` 必须是 `"web"`
-- `exports["./client"]` 的 default 指向 `lib/client.js`——`dsh-client-modules` 从这里解析 bundle
-- `cordis.patch.yml` **不用改**：同一行 `name: dsh-git-worktree` 同时挂 Host 半与 Client 半
-
-### 3.3 Client bundle 构建（tsdown.config.ts）
-
-Client bundle 必须是**闭包工厂格式**（浏览器 `__ModuleLoader__` 协议），参考 harness 的 `packages/client/tsdown.client.ts`。独立包（不在 harness monorepo）的最小配置：
-
-```ts
-import { defineConfig } from 'tsdown'
-
-export default defineConfig({
-  name: 'dsh-git-worktree/client',
-  entry: { client: 'src/client/index.ts' },
-  outDir: 'lib',
-  format: 'cjs',
-  platform: 'browser',
-  dts: false,
-  clean: false,
-  sourcemap: true,
-  // 平台模块表条目：浏览器模块表已提供，不能打进 bundle
-  external: [
-    'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
-    '@deepseek-ai/cordis',
-    '@deepseek-ai/dsh-client-store',          // 浏览器本地 store engine
-  ],
-  // 其余依赖（组件库、工具）全部内联；不要 import 其他 @deepseek-ai 包的“值”
-  noExternal: (id) => (external.includes(id) ? undefined : true),
-  define: {
-    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
-    'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
-    'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
-  },
-  outputOptions: {
-    entryFileNames: 'client.js',
-    banner: 'window.__ModuleLoader__.load({ id: "dsh-git-worktree", factory: (require) => {',
-    footer: 'return module.exports; } });',
-    intro: 'var module = { exports: {} }; var exports = module.exports;',
-  },
-  // CSS Modules：用 harness 的 dsh-css-modules-inline 插件思路
-  // （lightningcss transform → <style data-plugin> 注入），或组件里改用 styles.insert
-})
-```
-
-**组件导入纪律（避免纯度门禁问题）**：
-- `react`：external，安全
-- Session / Workspace 类型分别从 `@deepseek-ai/dsh-api-session-controller/client`、`@deepseek-ai/dsh-api-workspace-controller/client` **只用 `import type`**（类型擦除后不进 bundle）
-- `@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-store` 等平台值必须 external，并由 ModuleLoader 提供；其他 `@deepseek-ai/*` 值导入一律避免——数据走 slot props / Remote，跨插件协作走 Cordis 服务
-- 简单样式直接 `styles.insert(css)`（Client Builtin），省掉 CSS Modules 插件
-
-### 3.4 Host 半：暴露 UI 数据方法
-
-在 `src/index.ts` 的 `apply` 里追加：
-
-```ts
-// Client 半通过 host.call('worktree/list') 等取数；只返回纯 JSON 叶子字段
-harness.handle('worktree/list', async () => {
-  const rows = await module.listManagedWorktrees()
-  return { items: rows.map((r) => ({ checkoutId: r.checkoutId, name: r.name, status: r.status })) }
-})
-harness.handle('worktree/discard', async (args: { checkoutId: string; confirmDirty?: boolean }) => {
-  // 复用现有 module 的 manage/discard 路径
-  return { ok: true }
-})
-```
-
-（动态原型期用 `harness.handle` 的写法与此相同，落地期只是挪进包内并复用真实 module。）
-
-### 3.5 类型引用
-
-Client 组件的 props 类型应从拥有对应 surface 的拆分包导入：Conversation 组件来自 `@deepseek-ai/dsh-client-ui-conversation/client`，Session/Workspace snapshot 与动作类型来自对应 API Controller 的 `./client` export（均仅类型导入）。新 Harness 里先确认这些类型包/服务的当前路径，版本线不同可能继续拆分。
-
-## 4. 发布与门禁
-
-1. 扩展 `scripts/check-publish.mjs`，新增断言：
-   - `dsh.client` 存在且 `platform === 'web'`、`inject` 是字符串数组
-   - `exports["./client"]` 存在且 default 路径存在
-   - `files` 含 `lib/client.js`
-2. 按 `docs/RELEASE.md` 全流程：build（现在含 client bundle）→ check:publish → test → bump → tag → publish
-3. **发布后实测**：scratch profile 安装 → boot → 浏览器开 GUI 确认 Worktree tab 不出现，同时 pre-session 开关、Header 状态胶囊与验收 dock 正常
-
-## 5. 已知坑清单
-
-- client bundle 格式必须匹配 `window.__ModuleLoader__.load({ id, factory })`——格式错则浏览器静默无 UI
-- `dsh.client.inject` 声明的依赖包必须真在 profile 里（它们是模块表条目来源）
-- Host/Client 之间只传 JSON：函数、live 对象、React 元素过不了 `host.call`
-- 动态 Client 插件与打包 Client 插件的代码约束不同：动态代码是纯 JS（无 JSX），包内源码可以 TSX
-- `react` 等平台模块不要打进 bundle（external），否则双实例 React 导致 hooks 报错
-- CSS 注入用插件自带机制或 `styles.insert`，不要直接操作 `document`
+实际 Harness 中检查：新会话开关与确认、Header/Manager、Review 卡与 dock、Workspace Sidebar、语言切换，以及插件启停后的清理。自动化测试不等同于真实浏览器验证；交付时应区分已执行与未执行的检查。完整发布门禁以 [RELEASE.md](RELEASE.md) 为准。

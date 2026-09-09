@@ -1,10 +1,10 @@
-# Harness-native Worktree Console：并行开发共享架构
+# Harness-native Worktree Console 架构
 
-## 1. 本轮边界
+## 1. 架构边界
 
-本文是 Backend Control Plane、Session Target UI、Review UI 三条并行 Worktree 的共同基线。共享 JSON 契约位于 [`src/console-contract.ts`](../src/console-contract.ts)，测试 fixture 位于 [`tests/support/worktree-console.ts`](../tests/support/worktree-console.ts)。
+本文说明 Backend Control Plane、Session Target UI、Review UI 的职责与共享契约。共享 JSON 契约位于 [`src/console-contract.ts`](../src/console-contract.ts)，测试 fixture 位于 [`tests/support/worktree-console.ts`](../tests/support/worktree-console.ts)。
 
-本文现已升级为 Worktree Console 与两阶段验收生命周期的共同基线。它不实现跨项目全局 Manager，也不恢复旧 `worktree_apply`；Local Preview/Rollback/Finalize 只通过 Host 权威状态机和 strict Typert Remote 暴露给用户操作。
+本文覆盖 Worktree Console 与两阶段验收生命周期。它不实现跨项目全局 Manager，也不恢复旧 `worktree_apply`；Local Preview/Rollback/Finalize 只通过 Host 权威状态机和 strict Typert Remote 暴露给用户操作。
 
 ## 2. 已核验的 Harness 扩展缝
 
@@ -13,7 +13,7 @@
 当前 Harness 的正式链路不是早期动态原型中的 `harness.handle()/host.call()`，而是：
 
 1. Host 服务继承 `TypertRemoteService`，使用 `@Remote` 或 `@RemoteScope` 标记公开方法；
-2. Typert build 生成 package-private `./remote` contribution；
+2. 本插件通过包内 descriptors 和 strict schemas 手工声明 `./typert` Host contribution 与 `./remote` Client contribution；
 3. Client 通过已安装的 `remote` Service 执行 `ctx.remote.$mount(contribution)`；
 4. 调用结果先经过 Gateway 的 transport `RemoteResult`，再由插件 Client adapter 归一化为 `WorktreeConsoleOutcome<T>`；
 5. Remote 参数和返回值必须由 strict codec 覆盖且可 JSON 序列化。
@@ -28,7 +28,7 @@
 - `packages/host/plugin-inventory/src/index.ts`
 - `packages/typert/generator/README.md`
 
-`@deepseek-ai/dsh-api-remotes/client` 的贡献集合是构建时显式选择的，不会自动发现第三方插件。Backend Track 必须验证独立 npm 包的 package-mode Typert 生成，发布自己的 `./remote` contribution，并由本插件 Client 半显式 mount；不得假设把 Host Service 装进 profile 后 Client namespace 会自动出现。
+Harness 的内置 Remote contribution 集合不会自动发现第三方插件。本插件发布自己的 `./typert` 与 `./remote` contribution，并由 Client 半显式 mount；不得假设把 Host Service 装进 profile 后 Client namespace 会自动出现。当前实现入口为 `src/console-remote/typert.ts`、`src/console-remote/remote.ts` 和 `src/client/console-remote/index.ts`，不依赖构建时自动生成新方法。
 
 ### 2.2 UI Slot
 
@@ -163,7 +163,7 @@ Host 业务方法应把预期失败转为 `WorktreeConsoleOutcome<T>`；Gateway 
 
 ## 7. Diff 安全与预算
 
-Review Track 只能显示与当前 review identity 绑定的只读 diff：
+Review UI 只能显示与当前 review identity 绑定的只读 diff：
 
 - stale review 必须整体失败，不得混入 Ready 后新修改；
 - binary file 返回 `patch: null`；
@@ -171,9 +171,9 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 - patch 内容不得成为 mutation input；
 - 不支持 hunk acceptance；Preview/rollback 使用 Host 内部 tree/receipt，不使用浏览器提供的 patch bytes。
 
-建议初始预算：最多 200 files、单文件 100 KiB、总响应 1 MiB；Backend Track 可根据 Harness Gateway 限制下调，但必须记录并测试。
+建议初始预算：最多 200 files、单文件 100 KiB、总响应 1 MiB；Host 层可根据 Harness Gateway 限制下调，但必须记录并测试。
 
-### 7.1 Review / Recovery P1-A
+### 7.1 Review / Recovery
 
 - 自动 Preflight 的共享缓存键是 `sessionId + checkoutId + revision + reviewId`，只用于避免 Review 卡与 composer dock 重复读取；强制重检会覆盖该只读快照。
 - `stale_local` 表示 Local 事实已变化，不自动废弃 Review；Client 停止当前写操作并刷新 Preflight。`stale_isolated` 或 review/revision 身份变化会使旧 Preview/Finalize 立即失效。
@@ -200,48 +200,19 @@ Review Track 只能显示与当前 review identity 绑定的只读 diff：
 - fresh handoff 是 additive recovery：新 managed Worktree 以 proof 绑定的最新 Local HEAD 为 base，拥有新的 checkout/session/cwd/continuation identity；旧 detached checkout 保持冻结证据。创建或打开失败时不能回滚旧证据来“补偿”。
 - strict Remote schema 对所有 recovery request/response 拒绝 unknown fields、 malformed OID/generation、absolute paths 和 parent-traversal conflict paths；list/holder/proof 继续 path-free。
 
-## 8. 并行文件所有权
+## 8. 模块职责与维护入口
 
-### Shared foundation（本轮后冻结）
+| 模块 | 入口 | 职责 |
+| --- | --- | --- |
+| 共享契约 | `src/console-contract.ts`、`tests/support/worktree-console.ts` | DTO、状态投影契约与测试 fixture；Host 和 Client 使用同一套协议 |
+| Host Control Plane | `src/console-host/`、`src/console-remote/` | caller-scoped API、权限校验、只读 diff、strict Typert contribution |
+| Client Remote | `src/client/console-remote/` | mount Remote、归一化 transport/domain outcome、提供 adapter |
+| Session Target UI | `src/client/target-console/`、`src/client/pre-session/` | Header 状态、关联 Manager、创建和打开 Worktree |
+| Review UI | `src/client/review-console/`、`src/client/WorktreeReviewRow.tsx` | Review 展示、Preflight、Preview 与恢复操作 |
+| Client 集成 | `src/client/index.tsx`、`src/client/console-remote/index.ts` | Slot 注册、服务依赖与生命周期 |
+| 构建与发布 | `package.json`、`tsdown.config.ts`、`scripts/check-publish.mjs` | exports/files、Client bundle 与发布门禁 |
 
-- `src/console-contract.ts`
-- `tests/support/worktree-console.ts`
-- `docs/WORKTREE-CONSOLE-ARCHITECTURE.md`
-- 三份 `docs/handoffs/worktree-console-*.md`
-
-三个并行 Worktree 不得自行改变共享 DTO 字段或状态。发现契约阻塞时，在交付报告中提出，不直接分叉协议。
-
-### Backend Control Plane 独占
-
-- 新增 `src/console-host/**`
-- 新增 `src/client/console-remote/**`
-- Host Remote tests
-- Typert/package build 与 Remote publication 配置
-- `src/index.ts`、`package.json`、`tsdown.config.ts` 中与 Remote wiring 相关的区域
-
-### Session Target UI 独占
-
-- 新增 `src/client/target-console/**`
-- Header 状态胶囊、保留但暂不挂载的 Worktree Console、Create/Open
-- target UI component tests
-- `src/client/index.tsx` 中 Slot wiring 区域
-
-### Review UI 独占
-
-- 新增 `src/client/review-console/**`
-- 现有 `WorktreeReviewRow.tsx` 的 Review 展示演进
-- review/diff component tests
-
-### 共享入口集成
-
-三个 Worktree 都从同一 foundation commit 开始。建议合并顺序：Backend → Review → Session Target UI，最后单独做一次小型 integration pass，统一：
-
-- Client `inject` 和 `ctx.remote.$mount()` 生命周期；
-- `src/client/index.tsx` 的 ToolView、Target Console 与 Pre-session registrar；
-- package exports/files；
-- Client bundle smoke 与真实浏览器 E2E。
-
-任何一条并行线都不得通过复制 shared contract 来“避免冲突”。
+共享契约变更需要同步更新 Host、Client 和相关测试，不通过复制 DTO 分叉协议。修改集成入口时需关注 Client 服务依赖顺序、Remote mount/dispose、Slot 注册与 package exports 的一致性。UI 开发和聚焦验证入口见 [UI 开发说明](UI-DEVELOPMENT.md)。
 
 ## 9. 非目标
 
