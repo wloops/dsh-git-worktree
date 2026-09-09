@@ -1,3 +1,4 @@
+import { useClientTranslator } from '../i18n.js'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorktreeConsoleAdapter } from '../../console-contract.js'
 import type { WorktreeClientServices } from '../actions.js'
@@ -23,13 +24,15 @@ export function WorktreeManagerModal({
   onClose,
   onTargetChange,
 }: WorktreeManagerModalProps) {
+  const t = useClientTranslator()
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="关联 Worktrees"
-      closeLabel="关闭关联 Worktrees"
-      description="由插件 registry 维护的 source/target 逻辑关联；DSH 仍按各自 cwd 显示独立 Workspace。"
+      title={t("linked.worktrees")}
+      closeLabel={t("close.linked.worktrees")}
+      description={t("source.target.logical.links.are.maintained.by.the")}
       className="dsh-wtc-manager-dialog"
       contentClassName="dsh-wtc-manager-content"
     >

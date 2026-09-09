@@ -1,3 +1,4 @@
+import { hostMessage } from '../i18n/host.js'
 /**
  * DSH adapter for the session-checkout git port: runs git through
  * `ctx.subprocess` (tree-scoped termination, bounded collected output,
@@ -80,7 +81,7 @@ async function runGit(ctx: Context, cwd: string, args: string[], options: GitPor
     const stdout = handle.collected.stdout?.readFrom(0).text ?? ''
     const stderr = handle.collected.stderr?.readFrom(0).text ?? ''
     if (outcome.signal === 'SIGTERM' || outcome.signal === 'SIGKILL' || controller.signal.aborted) {
-      return { code: -1, stdout, stderr: `git ${args.join(' ')} 超时（${graceMs}ms），已终止` }
+      return { code: -1, stdout, stderr: hostMessage('gitTimedOutMsAndWasTerminated', { p0: args.join(' '), p1: graceMs }) }
     }
     return { code: outcome.exitCode ?? -1, stdout: stdout.trim(), stderr: stderr.trim() }
   } catch (error) {
@@ -96,7 +97,7 @@ async function runGitChecked(ctx: Context, cwd: string, args: string[], options:
   if (result.code !== 0) {
     throw new SessionCheckoutError(
       'git_operation_failed',
-      `Git 操作失败: git ${args.join(' ')}${result.stderr ? `: ${result.stderr}` : ''}`,
+      hostMessage('gitOperationFailedGit', { p0: args.join(' '), p1: result.stderr ? `: ${result.stderr}` : '' }),
     )
   }
   return result.stdout
@@ -113,7 +114,7 @@ function assertArtifactName(artifactName: string): void {
     segments.length === 0
     || segments.some((segment) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(segment))
   ) {
-    throw new SessionCheckoutError('invalid_input', '内部 Git artifact 名称无效')
+    throw new SessionCheckoutError('invalid_input', hostMessage('invalidInternalGitArtifactName'))
   }
 }
 
@@ -180,7 +181,7 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
       const result = await runSessionGit(localRoot, ['rev-parse', '--verify', '--quiet', internalArtifactRef(checkoutId, artifactName)])
       if (result.code === 0 && result.stdout) return result.stdout
       if (result.code === 1) return null
-      throw new SessionCheckoutError('git_operation_failed', result.stderr || '无法读取内部 Git artifact')
+      throw new SessionCheckoutError('git_operation_failed', result.stderr || hostMessage('cannotReadTheInternalGitArtifact'))
     },
     releaseInternalArtifacts: async (localRoot, checkoutId, artifactPrefix) => {
       const prefix = artifactPrefix
@@ -194,7 +195,7 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
       const result = await runSessionGit(root, ['merge-base', '--is-ancestor', ancestorOid, descendantOid])
       if (result.code === 0) return true
       if (result.code === 1) return false
-      throw new Error(result.stderr || '无法证明 Git commit ancestry')
+      throw new Error(result.stderr || hostMessage('cannotProveGitCommitAncestry'))
     },
   }
 }

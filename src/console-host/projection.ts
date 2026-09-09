@@ -1,3 +1,5 @@
+import { hostMessage } from '../i18n/host.js'
+import { hostPersistedCleanupMessage } from '../i18n/host-messages.js'
 import {
   consoleStateFromDomain,
   type WorktreeConsoleCapabilities,
@@ -135,7 +137,7 @@ export function projectRecord(
       expiresAt: delivery.expiresAt,
     } : {}),
     ...((delivery.state === 'retained' || delivery.state === 'finalized') && delivery.cleanupMessage !== undefined
-      ? { cleanupMessage: delivery.cleanupMessage }
+      ? { cleanupMessage: hostPersistedCleanupMessage(delivery.cleanupMessage, hostMessage) }
       : {}),
     ...(projectedProof === undefined ? {} : { deliveryProof: projectedProof }),
     ...(projectedReview === undefined ? {} : { review: projectedReview }),

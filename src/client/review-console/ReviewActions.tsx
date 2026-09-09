@@ -1,3 +1,4 @@
+import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
@@ -57,13 +58,13 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
-function preflightMessage(preflight: WorktreeApplyPreflightView): string {
-  if (preflight.status === 'ready') return '同步预检通过，正在创建可撤回的 Local Preview。'
-  if (preflight.status === 'local_advanced') return 'Local 已前进，但预检确认可以安全合并。'
-  if (preflight.status === 'already_in_local') return '本轮内容已在 Local 中；同步将是安全空操作。'
-  if (preflight.status === 'conflict') return `同步预检发现 ${preflight.conflictingFiles.length} 个冲突文件；Local 未修改。`
-  if (preflight.status === 'blocked') return `同步暂时阻塞：${preflight.message}`
-  return '同步预检完成；Local 未修改。'
+function preflightMessage(preflight: WorktreeApplyPreflightView, t: ClientTranslator = defaultClientTranslator): string {
+  if (preflight.status === 'ready') return t("sync.preflight.passed.creating.a.reversible.local.preview")
+  if (preflight.status === 'local_advanced') return t("local.advanced.but.preflight.confirmed.a.safe.merge")
+  if (preflight.status === 'already_in_local') return t("this.iteration.is.already.in.local.sync.will")
+  if (preflight.status === 'conflict') return t("sync.preflight.found.conflicting.files.local.is.unchanged", { p0: preflight.conflictingFiles.length })
+  if (preflight.status === 'blocked') return t("sync.is.temporarily.blocked", { p0: preflight.message })
+  return t("sync.preflight.finished.local.is.unchanged")
 }
 
 export function ReviewActions({
@@ -79,6 +80,8 @@ export function ReviewActions({
   onStale,
   onTargetChange,
 }: ReviewActionsProps) {
+  const t = useClientTranslator()
+
   const formId = useId()
   const moreMenuRef = useRef<HTMLDetailsElement>(null)
   const [submitting, setSubmitting] = useState<Mutation | null>(null)
@@ -90,8 +93,9 @@ export function ReviewActions({
   const checkpointRequestId = useRef<string | null>(null)
   const [retainEnvironment, setRetainEnvironment] = useState(false)
   const [retention, setRetention] = useState<Exclude<WorktreeRetentionMode, 'cleanup'>>('retain_24h')
-  const [message, setMessage] = useState<string | null>(null)
-  const [error, setError] = useState<WorktreeConsoleError | null>(null)
+  const [message, setMessage] = useState<((t: ClientTranslator) => string) | null>(null)
+  const [errorText, setError] = useState<((t: ClientTranslator) => WorktreeConsoleError) | null>(null)
+  const error = errorText?.(t) ?? null
   const [runtimeConflict, setRuntimeConflict] = useState<WorktreeApplyConflictContinuation | null>(null)
   const mutationLock = useRef(false)
   const observedTargetRevision = useRef(target?.revision)
@@ -216,14 +220,14 @@ export function ReviewActions({
       setRuntimeConflict(nextError.continuation)
       setCommitMode(null)
       setError(null)
-      setMessage('实时写入校验发现冲突；Local 未修改。请明确让 Agent 在 managed Worktree 中解决。')
+      setMessage(() => (t: ClientTranslator) => t("the.live.write.check.found.conflicts.local.is"))
       finish()
       return
     }
-    setError(nextError)
+    setError(() => (t: ClientTranslator): WorktreeConsoleError => (nextError))
     if (nextError.code === 'stale_target') onStale(nextError)
     if (nextError.code === 'stale_local' || nextError.code === 'stale_isolated') {
-      setMessage('状态在写入前发生变化；已停止操作，请按最新只读预检恢复。')
+      setMessage(() => (t: ClientTranslator) => t("state.changed.before.writing.the.operation.stopped.recover"))
       void refreshPreflight()
     }
     finish()
@@ -262,7 +266,7 @@ export function ReviewActions({
       return
     }
     if (latest.status !== 'success' || latest.preflight.status !== 'conflict') {
-      setMessage(latest.status === 'success' ? preflightMessage(latest.preflight) : '冲突预检未完成。')
+      setMessage(() => (t: ClientTranslator) => latest.status === 'success' ? preflightMessage(latest.preflight, t) : t("conflict.preflight.has.not.finished"))
       finish()
       return
     }
@@ -273,7 +277,7 @@ export function ReviewActions({
       || latest.preflight.localHeadOid !== preflight.localHeadOid
       || !sameStrings(latest.preflight.conflictingFiles, preflight.conflictingFiles)
     ) {
-      setError({ code: 'stale_target', message: '冲突身份在恢复前已变化，请按最新预检重试。' })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'stale_target', message: t("the.conflict.identity.changed.before.recovery.retry.using") }))
       finish()
       return
     }
@@ -302,7 +306,7 @@ export function ReviewActions({
       || nextTarget.state !== 'working'
       || nextTarget.revision !== preflight.revision + 1
     ) {
-      setError({ code: 'checkout_mismatch', message: '恢复编辑后 Host 返回的 Working 身份不一致。' })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: t("the.working.identity.returned.by.host.after.resuming") }))
       finish()
       return
     }
@@ -316,7 +320,7 @@ export function ReviewActions({
       || recovery.localHeadOid !== preflight.localHeadOid
       || !sameStrings(recovery.conflictingFiles, preflight.conflictingFiles)
     ) {
-      setError({ code: 'checkout_mismatch', message: 'Host 未返回精确的冲突恢复凭证。' })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: t("host.did.not.return.an.exact.conflict.recovery") }))
       finish()
       return
     }
@@ -332,7 +336,7 @@ export function ReviewActions({
       localHeadOid: recovery.localHeadOid,
       conflictingFiles: [...recovery.conflictingFiles],
     })
-    setMessage('已安全恢复 Working，冲突解决请求正在等待精确 owner Session 空闲。Local 未修改。')
+    setMessage(() => (t: ClientTranslator) => t("safely.resumed.working.the.conflict.resolution.request.is"))
     finish()
   }
 
@@ -363,7 +367,7 @@ export function ReviewActions({
       || latest.preflight.reviewId !== preflight.reviewId
       || latest.preflight.revision !== preflight.revision
     ) {
-      setMessage(latest.status === 'success' ? preflightMessage(latest.preflight) : '只读复核未完成。')
+      setMessage(() => (t: ClientTranslator) => latest.status === 'success' ? preflightMessage(latest.preflight, t) : t("read.only.recheck.has.not.finished"))
       finish()
       return
     }
@@ -384,7 +388,7 @@ export function ReviewActions({
       || recovery.reviewId !== preflight.reviewId
       || recovery.revision !== preflight.revision
     ) {
-      setError({ code: 'checkout_mismatch', message: 'Host 未返回精确的只读验收再生成凭证。' })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: t("host.did.not.return.an.exact.read.only") }))
       finish()
       return
     }
@@ -396,7 +400,7 @@ export function ReviewActions({
       reviewId: recovery.reviewId,
       revision: recovery.revision,
     })
-    setMessage('只读验收再生成请求正在等待精确 owner Session 空闲；不会恢复 Working 或修改文件。')
+    setMessage(() => (t: ClientTranslator) => t("read.only.review.regeneration.is.waiting.for.the"))
     finish()
   }
 
@@ -444,7 +448,7 @@ export function ReviewActions({
       finish()
       return
     }
-    setMessage(preflightMessage(inspected.preflight))
+    setMessage(() => (t: ClientTranslator) => preflightMessage(inspected.preflight, t))
     if (inspected.preflight.status === 'conflict' || inspected.preflight.status === 'blocked') {
       finish()
       return
@@ -459,7 +463,7 @@ export function ReviewActions({
       return
     }
     applyTarget(outcome.value.target)
-    setMessage('已同步为可撤回的 Local Preview；请在 Local 中验收。')
+    setMessage(() => (t: ClientTranslator) => t("synced.as.a.reversible.local.preview.review.the"))
     finish()
   }
 
@@ -501,14 +505,14 @@ export function ReviewActions({
       || nextTarget.review !== undefined
       || nextTarget.checkpoints?.at(-1)?.checkpointId !== saved.checkpointId
     ) {
-      setError({ code: 'checkout_mismatch', message: 'Host 返回的 Checkpoint 身份或 Working 状态不一致。' })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: t("host.returned.a.mismatched.checkpoint.identity.or.working") }))
       finish()
       return
     }
     applyTarget(nextTarget)
     setCheckpointOpen(false)
     checkpointRequestId.current = null
-    setMessage(`已保存第 ${saved.sequence} 个 Worktree 阶段并继续修改；阶段尚未发布到 Local。`)
+    setMessage(() => (t: ClientTranslator) => t("saved.worktree.stage.and.resumed.editing.the.stage", { p0: saved.sequence }))
     finish()
   }
 
@@ -528,12 +532,12 @@ export function ReviewActions({
       ? prefillSessionDraft(
           services,
           identity.sessionId,
-          '请重新检查当前 Worktree 的修改，重新运行必要验证，并重新生成验收稿。',
+          t("please.recheck.the.current.worktree.changes.rerun.the"),
         )
       : false
-    setMessage(drafted
-      ? '已恢复编辑并预填重新验收请求；Local 未受影响。'
-      : '已恢复编辑；请重新检查、验证并生成新的验收稿。Local 未受影响。')
+    setMessage(() => (t: ClientTranslator) => drafted
+      ? t("resumed.editing.and.prefilled.a.new.review.request")
+      : t("resumed.editing.recheck.validate.and.generate.a.new"))
     finish()
   }
 
@@ -542,7 +546,7 @@ export function ReviewActions({
     let freshProof: WorktreePreviewRecoveryProof | undefined
     if (target?.state === 'preview_detached') {
       if (!recoveryIdentity) {
-        setError({ code: 'stale_target', message: 'Detached Preview 身份不完整，请刷新。' })
+        setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'stale_target', message: t("detached.preview.identity.is.incomplete.please.refresh") }))
         finish()
         return
       }
@@ -556,14 +560,15 @@ export function ReviewActions({
         return
       }
       if (inspected.status !== 'success' || inspected.preflight.status !== 'assessed') {
-        setMessage(inspected.status === 'success' && inspected.preflight.status === 'blocked'
+        setMessage(() => (t: ClientTranslator) => inspected.status === 'success' && inspected.preflight.status === 'blocked'
           ? inspected.preflight.message
-          : 'Preview Recovery 预检未完成。')
+          : t("preview.recovery.preflight.has.not.finished"))
         finish()
         return
       }
       if (inspected.preflight.proof.rollback.status !== 'safe') {
-        setMessage(inspected.preflight.proof.rollback.message)
+        const explanation = inspected.preflight.proof.rollback.message
+        setMessage(() => () => explanation)
         finish()
         return
       }
@@ -583,9 +588,9 @@ export function ReviewActions({
       return
     }
     applyTarget(outcome.value.target)
-    setMessage(outcome.value.target.state === 'preview_detached'
-      ? '恢复条件在写入前发生变化；Preview 证据和 Worktree 已保留，请重新检查。'
-      : resumeRevision ? '已撤回 Local Preview，可以继续修改 Worktree。' : '已撤回 Local Preview，验收卡仍可再次同步。')
+    setMessage(() => (t: ClientTranslator) => outcome.value.target.state === 'preview_detached'
+      ? t("recovery.conditions.changed.before.writing.preview.evidence.and")
+      : resumeRevision ? t("local.preview.rolled.back.you.can.continue.editing") : t("local.preview.rolled.back.the.review.can.be"))
     finish()
   }
 
@@ -606,7 +611,7 @@ export function ReviewActions({
         return
       }
       if (inspected.status !== 'success' || inspected.preflight.status === 'blocked' || inspected.preflight.status === 'conflict') {
-        setMessage(inspected.status === 'success' ? preflightMessage(inspected.preflight) : '同步预检未完成。')
+        setMessage(() => (t: ClientTranslator) => inspected.status === 'success' ? preflightMessage(inspected.preflight, t) : t("sync.preflight.has.not.finished"))
         finish()
         return
       }
@@ -614,7 +619,7 @@ export function ReviewActions({
     let previewProof: WorktreePreviewRecoveryProof | undefined
     if (mode === 'finalize_preview' && target?.state === 'preview_detached') {
       if (!recoveryIdentity) {
-        setError({ code: 'stale_target', message: 'Detached Preview 身份不完整，请刷新。' })
+        setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'stale_target', message: t("detached.preview.identity.is.incomplete.please.refresh") }))
         finish()
         return
       }
@@ -628,14 +633,15 @@ export function ReviewActions({
         return
       }
       if (inspected.status !== 'success' || inspected.preflight.status !== 'assessed') {
-        setMessage(inspected.status === 'success' && inspected.preflight.status === 'blocked'
+        setMessage(() => (t: ClientTranslator) => inspected.status === 'success' && inspected.preflight.status === 'blocked'
           ? inspected.preflight.message
-          : 'Preview Recovery 预检未完成。')
+          : t("preview.recovery.preflight.has.not.finished"))
         finish()
         return
       }
       if (inspected.preflight.proof.finalize.status !== 'safe') {
-        setMessage(inspected.preflight.proof.finalize.message)
+        const explanation = inspected.preflight.proof.finalize.message
+        setMessage(() => () => explanation)
         finish()
         return
       }
@@ -654,9 +660,9 @@ export function ReviewActions({
     }
     applyTarget(outcome.value.target)
     if (outcome.value.target.state === 'preview_detached') {
-      setMessage('Local 已变化，无法可靠提交；Preview 恢复证据和 Worktree 已保留。')
+      setMessage(() => (t: ClientTranslator) => t("local.changed.a.reliable.commit.is.not.possible"))
     } else {
-      setMessage(selectedRetention === 'cleanup' ? '已提交到 Local，并开始清理 Worktree。' : '已提交到 Local，并保留当前运行环境。')
+      setMessage(() => (t: ClientTranslator) => selectedRetention === 'cleanup' ? t("committed.to.local.and.started.worktree.cleanup") : t("committed.to.local.and.retained.the.current.environment"))
     }
     setCommitMode(null)
     finish()
@@ -680,9 +686,9 @@ export function ReviewActions({
       return
     }
     applyTarget(outcome.value.target)
-    setMessage(outcome.value.target.state === 'preview_detached'
-      ? 'Local 已变化，无法无损撤回；未删除 Worktree。'
-      : '已放弃本轮 Worktree 修改，Local 未受影响。')
+    setMessage(() => (t: ClientTranslator) => outcome.value.target.state === 'preview_detached'
+      ? t("local.changed.lossless.rollback.is.not.possible.the")
+      : t("discarded.this.iteration.s.worktree.changes.local.is"))
     setDiscardOpen(false)
     finish()
   }
@@ -696,9 +702,9 @@ export function ReviewActions({
       return null
     }
     if (inspected.status !== 'success' || inspected.preflight.status !== 'assessed') {
-      setMessage(inspected.status === 'success' && inspected.preflight.status === 'blocked'
+      setMessage(() => (t: ClientTranslator) => inspected.status === 'success' && inspected.preflight.status === 'blocked'
         ? inspected.preflight.message
-        : 'Preview Recovery 预检未完成。')
+        : t("preview.recovery.preflight.has.not.finished"))
       return null
     }
     return inspected.preflight.proof
@@ -729,7 +735,7 @@ export function ReviewActions({
       || continuation.revision !== identity.expectedRevision
       || continuation.generation !== proof.generation
     ) {
-      setError({ code: 'checkout_mismatch', message: 'Host 未返回精确的 detached Recovery 分析凭证。' })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: t("host.did.not.return.an.exact.detached.recovery") }))
       finish()
       return
     }
@@ -742,20 +748,20 @@ export function ReviewActions({
       if (!verified.ok || verified.value.target.recoveryContinuation?.kind !== continuation.kind
         || verified.value.target.recoveryContinuation.requestId !== continuation.requestId
         || verified.value.target.recoveryContinuation.generation !== continuation.generation) {
-        throw new Error('二次 Host 检查未确认 detached Recovery 分析凭证。')
+        throw new Error(t("the.second.host.inspection.did.not.confirm.the"))
       }
       const binding = services.sessions.binding(identity.sessionId)
       const prompt = binding?.session.prompt
-      if (!binding || !prompt) throw new Error('Owner Session 尚未提供 Harness prompt API。')
+      if (!binding || !prompt) throw new Error(t("the.owner.session.has.not.provided.the.harness"))
       const result = await prompt.call(binding.session, [{ type: 'text', text: [
-        `请只读分析 detached Preview Recovery：checkout ${identity.checkoutId}，review ${identity.expectedReviewId}，preview ${recoveryIdentity.expectedPreviewId}，generation ${proof.generation}。`,
-        '禁止修改旧 managed Worktree、Local、Git refs、index、receipt 或 retained artifacts；不要运行 reset/rebase/force checkout/clean。',
-        '请解释 rollback/finalize blocker、仍缺失的任务增量与最安全的人工下一步。',
+        t("analyze.detached.preview.recovery.in.read.only.mode", { p0: identity.checkoutId, p1: identity.expectedReviewId, p2: recoveryIdentity.expectedPreviewId, p3: proof.generation }),
+        t("do.not.modify.the.old.managed.worktree.local"),
+        t("explain.the.rollback.finalize.blockers.missing.task.changes"),
       ].join('\n') }], 'queue')
       if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`)
-      setMessage('已向精确 owner Session 发送只读 Recovery 分析请求。')
+      setMessage(() => (t: ClientTranslator) => t("sent.a.read.only.recovery.analysis.request.to"))
     } catch (reason) {
-      setError({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) }))
     }
     finish()
   }
@@ -787,7 +793,7 @@ export function ReviewActions({
       || continuation.checkoutId !== created.value.target.checkoutId
       || continuation.checkoutId === identity.checkoutId
     ) {
-      setError({ code: 'checkout_mismatch', message: 'Host 返回的 Recovery handoff 身份不一致。' })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: t("host.returned.a.mismatched.recovery.handoff.identity") }))
       finish()
       return
     }
@@ -803,20 +809,20 @@ export function ReviewActions({
       if (!verified.ok || verified.value.target.managedRoot !== created.value.managedRoot
         || verified.value.target.recoveryContinuation?.kind !== continuation.kind
         || verified.value.target.recoveryContinuation.requestId !== continuation.requestId) {
-        throw new Error('新 Worktree 的二次 Host/cwd 检查未通过。')
+        throw new Error(t("the.second.host.cwd.check.of.the.new"))
       }
       const binding = services.sessions.binding(created.value.targetSessionId)
       const prompt = binding?.session.prompt
-      if (!binding || !prompt) throw new Error('新 owner Session 尚未提供 Harness prompt API。')
+      if (!binding || !prompt) throw new Error(t("the.new.owner.session.has.not.provided.the"))
       const result = await prompt.call(binding.session, [{ type: 'text', text: [
-        `这是 detached Preview Recovery handoff。旧 checkout ${identity.checkoutId} / review ${identity.expectedReviewId} / preview ${recoveryIdentity.expectedPreviewId} / generation ${proof.generation} 只读。`,
-        '当前新 Worktree 基于最新 Local HEAD；只恢复仍缺失的任务增量。禁止修改 Local、旧 Worktree、旧 receipt/refs，禁止 reset/rebase/force checkout/clean。',
-        '完成后运行必要验证并生成新的 Ready for Review。',
+        t("this.is.a.detached.preview.recovery.handoff.the", { p0: identity.checkoutId, p1: identity.expectedReviewId, p2: recoveryIdentity.expectedPreviewId, p3: proof.generation }),
+        t("the.new.worktree.is.based.on.the.latest"),
+        t("run.the.necessary.validation.and.generate.a.new"),
       ].join('\n') }], 'queue')
       if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`)
-      setMessage('已创建并打开基于最新 Local HEAD 的 fresh Worktree，Recovery handoff 请求已发送。')
+      setMessage(() => (t: ClientTranslator) => t("created.and.opened.a.fresh.worktree.based.on"))
     } catch (reason) {
-      setError({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) }))
     }
     finish()
   }
@@ -837,7 +843,7 @@ export function ReviewActions({
       return
     }
     applyTarget(outcome.value.target)
-    setMessage(outcome.value.target.state === 'delivered' ? 'Worktree 环境已清理。' : '清理仍未完成，已保留恢复信息。')
+    setMessage(() => (t: ClientTranslator) => outcome.value.target.state === 'delivered' ? t("worktree.environment.cleaned.up") : t("cleanup.is.still.incomplete.recovery.information.was.retained"))
     finish()
   }
 
@@ -854,7 +860,7 @@ export function ReviewActions({
     try {
       await openAuthorizedWorktreeTarget(adapter, services, identity.sessionId, holder, isActive)
     } catch (reason) {
-      setError({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) })
+      setError(() => (t: ClientTranslator): WorktreeConsoleError => ({ code: 'checkout_mismatch', message: reason instanceof Error ? reason.message : String(reason) }))
     } finally {
       finish()
     }
@@ -889,91 +895,90 @@ export function ReviewActions({
   const primary = ready ? (
     <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.preview || !safeReadyPreflight} onClick={() => { void previewLocal() }}>
       {submitting === 'preview'
-        ? '同步中…'
+        ? t("syncing")
         : autoPreflightEnabled && (preflightSnapshot.status === 'idle' || preflightSnapshot.status === 'loading')
-          ? '检查中…'
-          : '预览修改'}
+          ? t("checking")
+          : t("preview.changes")}
     </button>
   ) : previewActive ? (
     <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => setCommitMode('finalize_preview')}>
-      确认并保存
-    </button>
+      {t("confirm.and.save")} </button>
   ) : previewRecovery ? (
     rollbackRecoverySafe ? (
       <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview(true) }}>
-        {submitting === 'rollback' ? '处理中…' : '恢复并撤回预览'}
+        {submitting === 'rollback' ? t("processing") : t("recover.and.roll.back.preview")}
       </button>
     ) : (
       <button type="button" className="dsh-wt-button" disabled={allDisabled || target?.state !== 'preview_detached'} onClick={() => { void refreshRecoveryPreflight() }}>
-        {recoveryPreflight.status === 'loading' ? '检查中…' : '重新检查'}
+        {recoveryPreflight.status === 'loading' ? t("checking") : t("check.again")}
       </button>
     )
   ) : cleanupPending ? (
     <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.retryCleanup} onClick={() => { void retryCleanup() }}>
-      {submitting === 'retry_cleanup' ? '清理中…' : '重试清理环境'}
+      {submitting === 'retry_cleanup' ? t("cleaning.up") : t("retry.environment.cleanup")}
     </button>
   ) : null
 
   return (
-    <section className="dsh-wt-review-actions" aria-label="验收操作">
+    <section className="dsh-wt-review-actions" aria-label={t("review.actions")}>
       {!live ? <p className="dsh-wt-status">{unavailableMessage}</p> : null}
       {terminal ? (
         <p className="dsh-wt-status">
           {target.state === 'retained'
-            ? `本轮已提交，运行环境暂时保留${target.commitOid ? ` · ${target.commitOid.slice(0, 8)}` : ''}`
-            : `本轮已交付${target.commitOid ? ` · ${target.commitOid.slice(0, 8)}` : ''}`}
+            ? t("this.iteration.was.committed.the.environment.is.temporarily", { p0: target.commitOid ? ` · ${target.commitOid.slice(0, 8)}` : '' })
+            : t("this.iteration.was.delivered", { p0: target.commitOid ? ` · ${target.commitOid.slice(0, 8)}` : '' })}
         </p>
       ) : (
         <div className="dsh-wt-actions">
           {primary}
           <details ref={moreMenuRef} className="dsh-wt-more-menu">
-            <summary className="dsh-wt-more-trigger" aria-label="更多交付操作">•••</summary>
+            <summary className="dsh-wt-more-trigger" aria-label={t("more.delivery.actions")}>{t("symbol")}</summary>
             <div className="dsh-wt-more-content" role="menu">
               {focusReview ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" onClick={() => {
                   focusReview()
                   closeMoreMenu()
-                }}>查看验收卡</button>
+                }}>{t("view.review")}</button>
               ) : null}
               {ready ? (
                 <>
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.checkpoint || !target.checkpointGeneration} onClick={() => {
                     openCheckpoint()
                     closeMoreMenu()
-                  }}>保存阶段并继续</button>
+                  }}>{t("save.stage.and.continue")}</button>
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.resumeRevision} onClick={() => {
                     void resumeRevision()
                     closeMoreMenu()
-                  }}>{submitting === 'resume_revision' ? '恢复中…' : '继续修改'}</button>
+                  }}>{submitting === 'resume_revision' ? t("recovering") : t("continue.editing")}</button>
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize || !safeReadyPreflight} onClick={() => {
                     setCommitMode('finish')
                     closeMoreMenu()
-                  }}>跳过预览并保存</button>
+                  }}>{t("skip.preview.and.save")}</button>
                 </>
               ) : null}
               {previewActive && target.capabilities.checkpoint && target.checkpointGeneration ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled} onClick={() => {
                   openCheckpoint()
                   closeMoreMenu()
-                }}>保存阶段并继续</button>
+                }}>{t("save.stage.and.continue")}</button>
               ) : null}
               {previewActive || rollbackRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
                   void rollbackPreview(true)
                   closeMoreMenu()
-                }}>{previewActive ? '撤回本次预览' : '重新尝试撤回'}</button>
+                }}>{previewActive ? t("roll.back.this.preview") : t("retry.rollback")}</button>
               ) : null}
               {finalizeRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => {
                   setCommitMode('finalize_preview')
                   closeMoreMenu()
-                }}>保存修改</button>
+                }}>{t("save.changes")}</button>
               ) : null}
               {canDiscard ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item dsh-wt-danger-text" disabled={allDisabled} onClick={() => {
                   setDiscardOpen(true)
                   closeMoreMenu()
-                }}>放弃任务</button>
+                }}>{t("discard.task")}</button>
               ) : null}
             </div>
           </details>
@@ -983,28 +988,28 @@ export function ReviewActions({
       <Modal
         open={checkpointOpen}
         onClose={closeCheckpoint}
-        title="保存当前进度并继续？"
-        closeLabel="关闭保存进度确认"
+        title={t("save.current.progress.and.continue")}
+        closeLabel={t("close.save.progress.confirmation")}
         description={previewActive
-          ? '会先安全撤回当前预览，再保存本轮任务进度并继续开发；无法证明可以安全撤回时会停止。当前项目不会立即更新。'
-          : '保存当前任务进度并继续下一阶段；当前项目不会立即更新，最终确认时仍只会生成一次交付。'}
+          ? t("first.safely.roll.back.the.preview.then.save")
+          : t("save.task.progress.and.continue.to.the.next")}
         footer={(
           <div className="dsh-wt-modal-footer">
-            <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCheckpoint}>取消</button>
+            <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCheckpoint}>{t("cancel")}</button>
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={submitting !== null || !checkpointMessage.trim() || checkpointMessage.trim().length > 500} onClick={() => { void checkpoint() }}>
-              {submitting === 'checkpoint' ? '正在保存…' : '保存进度并继续'}
+              {submitting === 'checkpoint' ? t("saving") : t("save.progress.and.continue")}
             </button>
           </div>
         )}
       >
         <div className="dsh-wt-commit-dialog">
           <div className="dsh-wt-checkpoint-note">
-            <strong>阶段不会发布到 Local</strong>
-            <span>已有 {target?.checkpoints?.length ?? 0} 个阶段；最终交付仍会从原始任务基线汇总为一个 Local Commit。</span>
+            <strong>{t("stages.are.not.published.to.local")}</strong>
+            <span>{t("checkpoint.summary", { count: target?.checkpoints?.length ?? 0 })}</span>
           </div>
-          <label htmlFor={`${formId}-checkpoint-message`}>Checkpoint Commit Message</label>
-          <textarea id={`${formId}-checkpoint-message`} aria-label="Checkpoint Commit Message" rows={6} maxLength={500} value={checkpointMessage} onChange={event => setCheckpointMessage(event.target.value)} />
-          <div className="dsh-wt-character-count">{checkpointMessage.length}/500</div>
+          <label htmlFor={`${formId}-checkpoint-message`}>{t("checkpoint.commit.message")}</label>
+          <textarea id={`${formId}-checkpoint-message`} aria-label={t("checkpoint.commit.message")} rows={6} maxLength={500} value={checkpointMessage} onChange={event => setCheckpointMessage(event.target.value)} />
+          <div className="dsh-wt-character-count">{checkpointMessage.length}{t("500")}</div>
         </div>
       </Modal>
 
@@ -1012,38 +1017,38 @@ export function ReviewActions({
         open={commitMode !== null}
         onClose={closeCommit}
         title={commitMode === 'finalize_preview'
-          ? '确认并保存本次修改？'
-          : target?.state === 'preview_detached' ? '保存本次修改？' : '跳过预览并直接保存？'}
-        closeLabel="关闭保存确认"
+          ? t("confirm.and.save.these.changes")
+          : target?.state === 'preview_detached' ? t("save.these.changes") : t("skip.preview.and.save.directly")}
+        closeLabel={t("close.save.confirmation")}
         description={commitMode === 'finalize_preview'
-          ? '只会保存当前预览对应的本轮任务内容；Local 中已有或之后新增的无关修改不会进入该 Commit。'
-          : '将跳过 Local Preview，直接把本轮 Worktree 增量保存为一个 Commit。'}
+          ? t("only.this.iteration.s.task.changes.in.the")
+          : t("skip.local.preview.and.save.this.iteration.s")}
         footer={(
           <div className="dsh-wt-modal-footer">
-            <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCommit}>取消</button>
+            <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCommit}>{t("cancel")}</button>
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={submitting !== null || !commitMessage.trim() || commitMessage.trim().length > 500} onClick={() => { void submitCommit() }}>
               {submitting === 'finish' || submitting === 'finalize_preview'
-                ? '正在保存…'
-                : retainEnvironment ? '确认交付并保留环境' : '确认交付并清理'}
+                ? t("saving")
+                : retainEnvironment ? t("confirm.delivery.and.retain.environment") : t("confirm.delivery.and.clean.up")}
             </button>
           </div>
         )}
       >
         <div className="dsh-wt-commit-dialog">
-          <label htmlFor={`${formId}-message`}>Commit Message</label>
-          <textarea id={`${formId}-message`} aria-label="Commit Message" rows={6} maxLength={500} value={commitMessage} onChange={event => setCommitMessage(event.target.value)} />
-          <div className="dsh-wt-character-count">{commitMessage.length}/500</div>
+          <label htmlFor={`${formId}-message`}>{t("commit.message")}</label>
+          <textarea id={`${formId}-message`} aria-label={t("commit.message")} rows={6} maxLength={500} value={commitMessage} onChange={event => setCommitMessage(event.target.value)} />
+          <div className="dsh-wt-character-count">{commitMessage.length}{t("500")}</div>
           <label className="dsh-wt-retention-check">
             <input type="checkbox" checked={retainEnvironment} onChange={event => setRetainEnvironment(event.target.checked)} />
-            <span>提交后暂时保留当前运行环境</span>
+            <span>{t("temporarily.retain.the.current.environment.after.committing")}</span>
           </label>
           {retainEnvironment ? (
             <label className="dsh-wt-retention-select">
-              <span>保留时长</span>
-              <select aria-label="保留时长" value={retention} onChange={event => setRetention(event.target.value as Exclude<WorktreeRetentionMode, 'cleanup'>)}>
-                <option value="retain_24h">保留 24 小时</option>
-                <option value="retain_3d">保留 3 天</option>
-                <option value="retain_manual">手动清理</option>
+              <span>{t("retention.period")}</span>
+              <select aria-label={t("retention.period")} value={retention} onChange={event => setRetention(event.target.value as Exclude<WorktreeRetentionMode, 'cleanup'>)}>
+                <option value="retain_24h">{t("retain.for.24.hours")}</option>
+                <option value="retain_3d">{t("retain.for.3.days")}</option>
+                <option value="retain_manual">{t("manual.cleanup")}</option>
               </select>
             </label>
           ) : null}
@@ -1053,16 +1058,16 @@ export function ReviewActions({
       <Modal
         open={discardOpen}
         onClose={closeDiscard}
-        title="放弃本轮任务？"
-        closeLabel="关闭放弃确认"
+        title={t("discard.this.iteration")}
+        closeLabel={t("close.discard.confirmation")}
         description={previewActive
-          ? '会先安全撤回本次 Local Preview，再清理 Worktree；无法无损撤回时会停止，不会覆盖 Local 修改。'
-          : 'Worktree 中尚未交付的修改将被永久丢弃，Local 不受影响。'}
+          ? t("first.safely.roll.back.this.local.preview.then")
+          : t("undelivered.worktree.changes.will.be.permanently.discarded.local")}
         footer={(
           <div className="dsh-wt-modal-footer">
-            <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeDiscard}>取消</button>
+            <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeDiscard}>{t("cancel")}</button>
             <button type="button" className="dsh-wt-button dsh-wt-danger" disabled={submitting !== null} onClick={() => { void discard() }}>
-              {submitting === 'discard' ? '正在放弃…' : '确认放弃任务'}
+              {submitting === 'discard' ? t("discarding") : t("confirm.discard.task")}
             </button>
           </div>
         )}
@@ -1081,42 +1086,38 @@ export function ReviewActions({
       {target?.state === 'preview_detached' ? (
         <div className="dsh-wt-preflight" data-status={recoveryPreflight.status}>
           <div className="dsh-wt-preflight-head">
-            <strong>Detached Preview Recovery</strong>
+            <strong>{t("detached.preview.recovery")}</strong>
             <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || recoveryPreflight.status === 'loading'} onClick={() => { void refreshRecoveryPreflight() }}>
-              重新检查
-            </button>
+              {t("check.again")} </button>
           </div>
-          <p>Detached 是交付恢复状态，不是 Git detached HEAD。检查严格只读，写操作会在 Host 锁内再次验证。</p>
-          {recoveryPreflight.status === 'loading' ? <p>正在检查 Local HEAD、index、working tree、retained artifacts 与验收槽位…</p> : null}
+          <p>{t("detached.is.a.delivery.recovery.state.not.git")}</p>
+          {recoveryPreflight.status === 'loading' ? <p>{t("checking.local.head.index.working.tree.retained.artifacts")}</p> : null}
           {recoveryPreflight.status === 'error' ? <p className="dsh-wt-error">{recoveryPreflight.error.message}</p> : null}
           {recoveryPreflight.status === 'success' && recoveryPreflight.preflight.status === 'blocked' ? (
             <p className="dsh-wt-error">{recoveryPreflight.preflight.message}</p>
           ) : null}
           {recoveryProof ? (
             <>
-              <p className="dsh-wt-code">generation {recoveryProof.generation.slice(0, 12)} · HEAD {recoveryProof.localHeadOid.slice(0, 12)} · {recoveryProof.localHeadRef ?? 'detached HEAD'}</p>
-              <ul className="dsh-wt-test-list" aria-label="Preview Recovery 结论">
-                <li>撤回：{recoveryProof.rollback.status === 'safe' ? '可证明安全' : recoveryProof.rollback.message}</li>
-                <li>提交：{recoveryProof.finalize.status === 'safe' ? '可证明安全' : recoveryProof.finalize.message}</li>
+              <p className="dsh-wt-code">{t("generation")} {recoveryProof.generation.slice(0, 12)} {t("head")} {recoveryProof.localHeadOid.slice(0, 12)} · {recoveryProof.localHeadRef ?? 'detached HEAD'}</p>
+              <ul className="dsh-wt-test-list" aria-label={t("preview.recovery.outcome")}>
+                <li>{t("rollback")}{recoveryProof.rollback.status === 'safe' ? t("verified.safe") : recoveryProof.rollback.message}</li>
+                <li>{t("commit.2")}{recoveryProof.finalize.status === 'safe' ? t("verified.safe") : recoveryProof.finalize.message}</li>
               </ul>
               {recoveryProof.rollback.status === 'blocked' && recoveryProof.rollback.conflictingFiles?.length ? (
-                <p>撤回冲突：{recoveryProof.rollback.conflictingFiles.join('、')}</p>
+                <p>{t("rollback.conflicts")}{recoveryProof.rollback.conflictingFiles.join('、')}</p>
               ) : null}
               {recoveryProof.finalize.status === 'blocked' && recoveryProof.finalize.conflictingFiles?.length ? (
-                <p>提交冲突：{recoveryProof.finalize.conflictingFiles.join('、')}</p>
+                <p>{t("commit.conflicts")}{recoveryProof.finalize.conflictingFiles.join('、')}</p>
               ) : null}
               {recoveryProof.blocker ? (
                 <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void openHolder() }}>
-                  打开占用 Local 验收槽位的 Worktree
-                </button>
+                  {t("open.the.worktree.holding.the.local.review.slot")} </button>
               ) : null}
               <div className="dsh-wt-recovery-actions">
                 <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void analyzeRecovery() }}>
-                  让 Agent 只读分析
-                </button>
+                  {t("ask.agent.for.read.only.analysis")} </button>
                 <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void handoffRecovery() }}>
-                  交接到新 Worktree
-                </button>
+                  {t("hand.off.to.a.new.worktree")} </button>
               </div>
             </>
           ) : null}
@@ -1125,36 +1126,34 @@ export function ReviewActions({
       {runtimeConflict ? (
         <div className="dsh-wt-recovery-actions">
           <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={recoverRuntimeConflict}>
-            让 Agent 解决冲突
-          </button>
+            {t("ask.agent.to.resolve.conflicts")} </button>
         </div>
       ) : null}
       {activeRecovery ? (
         <div className="dsh-wt-action-status" data-recovery-status={activeRecovery.status}>
-          {activeRecovery.status === 'queued' ? '恢复请求已排队，等待 owner Session 加载完成且停止 streaming。' : null}
-          {activeRecovery.status === 'sending' ? '正在通过 Harness 官方 Session API 发送恢复请求…' : null}
+          {activeRecovery.status === 'queued' ? t("recovery.request.queued.waiting.for.the.owner.session") : null}
+          {activeRecovery.status === 'sending' ? t("sending.the.recovery.request.through.the.official.harness") : null}
           {activeRecovery.status === 'sent'
             ? activeRecovery.request.kind === 'worktree_apply_conflict'
-              ? '已交给 Agent 解决冲突；完成后必须生成新的验收卡。'
-              : '已交给 Agent 只读重新生成验收结果；不会修改 Worktree。'
+              ? t("agent.will.resolve.the.conflicts.and.must.generate")
+              : t("agent.will.regenerate.the.review.in.read.only")
             : null}
-          {activeRecovery.status === 'cancelled' ? 'Session/checkout 已切换，旧恢复请求已取消。' : null}
+          {activeRecovery.status === 'cancelled' ? t("session.checkout.changed.the.old.recovery.request.was") : null}
           {activeRecovery.status === 'failed' ? (
             <>
-              <span>恢复请求发送失败：{activeRecovery.error}</span>
-              <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null} onClick={() => retryWorktreeRecovery(activeRecovery.request.sessionId)}>重新发送</button>
+              <span>{t("recovery.request.failed")}{activeRecovery.error}</span>
+              <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null} onClick={() => retryWorktreeRecovery(activeRecovery.request.sessionId)}>{t("resend")}</button>
             </>
           ) : null}
         </div>
       ) : null}
       {target && (target.state === 'cleanup_pending' || terminal) ? <DeliveryProof target={target} /> : null}
       <div className="dsh-wt-action-status" aria-live="polite">
-        {submitting ? '正在处理 Worktree，请稍候…' : message}
+        {submitting ? t("processing.worktree.please.wait") : message?.(t)}
       </div>
       {error && !isStale(error) ? (
         <div className="dsh-wt-error" role="alert">
-          {error.message}（{worktreeConsoleErrorMeta(error.code).category}；恢复方式：{worktreeConsoleErrorMeta(error.code).recovery}）
-        </div>
+          {t("error.detail", { message: error.message, category: t(`error.category.${worktreeConsoleErrorMeta(error.code).category}`), recovery: t(`error.recovery.${worktreeConsoleErrorMeta(error.code).recovery}`) })} </div>
       ) : null}
     </section>
   )

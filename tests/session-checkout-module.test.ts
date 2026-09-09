@@ -351,7 +351,7 @@ describe('SessionCheckoutModule', () => {
       checkout: {
         id: 'local:project-1',
         kind: 'local',
-        label: 'Local Checkout',
+        label: '本地检出',
         phase: 'ready',
       },
       source: { ref: 'refs/heads/main', oid: expectedOid },

@@ -1,3 +1,6 @@
+import { readClientLanguage } from '../i18n.js'
+import { createTranslator } from '../../i18n/core.js'
+import { transportMessages } from '../../i18n/transport-messages.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
 import type { WorktreeConsoleAdapter } from '../../console-contract.js'
@@ -31,8 +34,9 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
   const disposeRemote = await ctx.remote.$mount(contribution)
   ctx.effect(() => disposeRemote)
   const remote = ctx.get('remote.gitWorktree') as GitWorktreeRemote | undefined
-  if (remote === undefined) throw new Error('Worktree Console Remote namespace 挂载失败')
-  const adapter = createWorktreeConsoleRemoteAdapter(remote)
+  const getLanguage = () => readClientLanguage(ctx.get('locale'))
+  if (remote === undefined) throw new Error(createTranslator(transportMessages, getLanguage())('mountFailed'))
+  const adapter = createWorktreeConsoleRemoteAdapter(remote, getLanguage)
   ctx.provide('worktreeConsole', adapter)
 
   // Host lifecycle selects this replacement only while the plugin is active.

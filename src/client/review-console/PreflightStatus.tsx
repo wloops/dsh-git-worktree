@@ -1,3 +1,4 @@
+import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import type { WorktreeConsoleTargetSummary } from '../../console-contract.js'
 import type { WorktreeApplyPreflightView } from '../../types.js'
 import type { PreflightSnapshot } from './preflight-cache.js'
@@ -6,12 +7,12 @@ function shortOid(value: string): string {
   return value.slice(0, 8)
 }
 
-function statusLabel(preflight: WorktreeApplyPreflightView): string {
+function statusLabel(preflight: WorktreeApplyPreflightView, t: ClientTranslator = defaultClientTranslator): string {
   switch (preflight.status) {
-    case 'ready': return '同步条件已确认'
-    case 'local_advanced': return 'Local 已前进，可安全合并'
-    case 'already_in_local': return '本轮内容已在 Local'
-    case 'conflict': return `发现 ${preflight.conflictingFiles.length} 个冲突文件`
+    case 'ready': return t("sync.conditions.confirmed")
+    case 'local_advanced': return t("local.advanced.safe.to.merge")
+    case 'already_in_local': return t("this.iteration.is.already.in.local")
+    case 'conflict': return t("found.conflicting.files", { p0: preflight.conflictingFiles.length })
     case 'blocked': return preflight.message
   }
 }
@@ -33,15 +34,17 @@ export function PreflightStatus({
   onOpenHolder(): void
   busy: boolean
 }) {
+  const t = useClientTranslator()
+
   if (snapshot.status === 'idle') return null
   if (snapshot.status === 'loading') {
-    return <div className="dsh-wt-preflight" data-preflight="loading">正在执行只读同步预检… Local 不会被修改。</div>
+    return <div className="dsh-wt-preflight" data-preflight="loading">{t("running.read.only.sync.preflight.local.will.not")}</div>
   }
   if (snapshot.status === 'error') {
     return (
       <div className="dsh-wt-preflight" data-preflight="error">
-        <span>预检失败：{snapshot.error.message}</span>
-        <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}>重新检查</button>
+        <span>{t("preflight.failed")}{snapshot.error.message}</span>
+        <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}>{t("check.again")}</button>
       </div>
     )
   }
@@ -55,37 +58,39 @@ export function PreflightStatus({
   return (
     <div className="dsh-wt-preflight" data-preflight={preflight.status}>
       <div className="dsh-wt-preflight-head">
-        <strong>{statusLabel(preflight)}</strong>
-        <span>只读检查 · Local 未修改</span>
+        <strong>{statusLabel(preflight, t)}</strong>
+        <span>{t("read.only.check.local.unchanged")}</span>
       </div>
       {!compact && preflight.status !== 'blocked' ? (
         <dl className="dsh-wt-preflight-facts">
-          <div><dt>Local</dt><dd>{preflight.localBranch ?? 'detached'} · <code>{shortOid(preflight.localHeadOid)}</code></dd></div>
-          <div><dt>Worktree</dt><dd><code>{shortOid(preflight.isolatedHeadOid)}</code></dd></div>
-          <div><dt>Effective base</dt><dd><code>{shortOid(preflight.effectiveBaseOid)}</code></dd></div>
-          <div><dt>变更</dt><dd>{preflight.changedFiles.length} 个文件</dd></div>
+          <div><dt>{t("local")}</dt><dd>{preflight.localBranch ?? 'detached'} · <code>{shortOid(preflight.localHeadOid)}</code></dd></div>
+          <div><dt>{t("worktree")}</dt><dd><code>{shortOid(preflight.isolatedHeadOid)}</code></dd></div>
+          <div><dt>{t("effective.base")}</dt><dd><code>{shortOid(preflight.effectiveBaseOid)}</code></dd></div>
+          <div><dt>{t("changes")}</dt><dd>{t("count.files", { count: preflight.changedFiles.length })}</dd></div>
         </dl>
       ) : null}
       {!compact && preflight.status === 'conflict' && preflight.conflictingFiles.length > 0 ? (
-        <ul className="dsh-wt-conflict-list" aria-label="冲突文件">
+        <ul className="dsh-wt-conflict-list" aria-label={t("conflicting.files")}>
           {preflight.conflictingFiles.map(path => <li key={path}><code>{path}</code></li>)}
         </ul>
       ) : null}
-      {holder ? <p>占用任务：{holder.checkoutId.slice(0, 8)} · Session {holder.ownerSessionId.slice(0, 8)} · {holder.state}</p> : null}
+      {holder ? <p>{t("holding.task")}{holder.checkoutId.slice(0, 8)} {t("session")} {holder.ownerSessionId.slice(0, 8)} · {{
+        preview_active: t('previewing'), preview_detached: t('awaiting.recovery'),
+        finalized: t('completed'), retained: t('retained'), working: t('in.progress'),
+        ready_for_review: t('ready.for.review'), delivered: t('delivered'),
+      }[holder.state]}</p> : null}
       {preflight.status === 'conflict' || blocked ? (
         <div className="dsh-wt-recovery-actions">
-          <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}>重新检查</button>
+          <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}>{t("check.again")}</button>
           {preflight.status === 'conflict' ? (
             <button type="button" className="dsh-wt-inline-action" disabled={busy || !target?.capabilities.resumeRevision} onClick={() => onRecovery(preflight)}>
-              让 Agent 解决冲突
-            </button>
+              {t("ask.agent.to.resolve.conflicts")} </button>
           ) : staleIsolated ? (
             <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={() => onRecovery(preflight)}>
-              重新生成验收结果
-            </button>
+              {t("regenerate.review")} </button>
           ) : null}
           {holder ? (
-            <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onOpenHolder}>打开占用任务</button>
+            <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onOpenHolder}>{t("open.holding.task")}</button>
           ) : null}
         </div>
       ) : null}

@@ -1,3 +1,4 @@
+import { ClientI18nProvider, useClientTranslator } from '../i18n.js'
 import { useEffect, useMemo, useState, type ComponentType } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -33,6 +34,7 @@ export function ManagedOfficialWorkspaceBrowser({
   OfficialBrowser,
   ...officialProps
 }: OfficialWorkspaceBrowserProps) {
+  const t = useClientTranslator()
   const props = officialProps as unknown as WorkspaceBrowserProps
   const workspaceState = props.useWorkspaces((state: WorkspaceListState) => state) as WorkspaceListState
   const sessionState = props.useSessions((state: SessionListState) => state) as SessionListState
@@ -64,7 +66,7 @@ export function ManagedOfficialWorkspaceBrowser({
     workspaces: workspaceState.items,
     sessions: sessionState.byId,
     topology,
-  }), [sessionState.byId, topology, workspaceState.items])
+  }, t), [sessionState.byId, topology, workspaceState.items, t])
 
   const projectedWorkspaceState = useMemo<WorkspaceListState>(() => ({
     ...workspaceState,
@@ -145,11 +147,11 @@ function officialContextProxy(
         return (descriptor: Record<string, unknown>, component: ComponentType<any>): unknown => {
           if (descriptor.name !== 'sidebar.workspaces') return target.register(descriptor, component)
           const OfficialBrowser = component as ComponentType<WorkspaceBrowserProps>
-          const Browser = (props: WorkspaceBrowserProps) => <ManagedOfficialWorkspaceBrowser
+          const Browser = (props: WorkspaceBrowserProps) => <ClientI18nProvider locale={typeof ctx.get === 'function' ? ctx.get('locale') : undefined}><ManagedOfficialWorkspaceBrowser
             {...props}
             adapter={adapter}
             OfficialBrowser={OfficialBrowser}
-          />
+          /></ClientI18nProvider>
           return target.register(descriptor, Browser)
         }
       }

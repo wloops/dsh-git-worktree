@@ -1,3 +1,5 @@
+import { hostMessages, hostPersistedCleanupMessage } from './i18n/host-messages.js'
+import { hostMessage } from './i18n/host.js'
 import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -72,8 +74,8 @@ const UNVERSIONED_OID = 'unversioned'
 const UNVERSIONED_REF = 'WORKING_TREE'
 const RETENTION_24H_MS = 24 * 60 * 60 * 1000
 const RETENTION_3D_MS = 3 * RETENTION_24H_MS
-const CLEANUP_IDENTITY_CHANGED_MESSAGE = 'Worktree 的 Git 身份或路径已变化，未执行清理。'
-const CLEANUP_RESIDUE_MESSAGE = 'Git Worktree 已解除注册，仅剩物理目录残余；可重试清理环境。'
+const CLEANUP_IDENTITY_CHANGED_MESSAGE = hostMessages.cleanupIdentityChanged.zh
+const CLEANUP_RESIDUE_MESSAGE = hostMessages.cleanupResidue.zh
 const TRANSIENT_CLEANUP_RETRY_DELAYS_MS = [100, 300, 800]
 
 /**
@@ -93,7 +95,7 @@ async function withCleanupTimeout<T>(
       operation(),
       new Promise<null>((resolve) => {
         timeoutHandle = setTimeout(() => {
-          console.warn(`[session-checkout] ${checkoutId.slice(0, 8)} 清理超时（${CHECKOUT_CLEANUP_TIMEOUT_MS}ms），已跳过本次收敛`)  
+          console.warn(hostMessage('cleanupTimeout', { p0: checkoutId.slice(0, 8), p1: CHECKOUT_CLEANUP_TIMEOUT_MS }))
           resolve(null)
         }, CHECKOUT_CLEANUP_TIMEOUT_MS)
       }),
@@ -170,17 +172,17 @@ export function createSessionCheckoutModule(
 ): SessionCheckoutModule {
   function requireSession(sessionId: string): SessionCheckoutSessionRecord {
     const session = dependencies.lookup.getSession(sessionId)
-    if (!session) throw new SessionCheckoutError('session_not_found', `会话不存在: ${sessionId}`)
+    if (!session) throw new SessionCheckoutError('session_not_found', hostMessage('sessionNotFound', { p0: sessionId }))
     return session
   }
 
   async function resolveSessionProject(sessionId: string): Promise<ResolvedSessionProject> {
     const session = requireSession(sessionId)
-    if (!session.projectId) throw new SessionCheckoutError('project_not_found', '会话尚未关联项目')
+    if (!session.projectId) throw new SessionCheckoutError('project_not_found', hostMessage('theSessionIsNotAssociatedWithAProject'))
     const project = dependencies.lookup.getProject(session.projectId)
-    if (!project) throw new SessionCheckoutError('project_not_found', `项目不存在: ${session.projectId}`)
+    if (!project) throw new SessionCheckoutError('project_not_found', hostMessage('projectNotFound', { p0: session.projectId }))
     if (!dependencies.files.exists(project.root)) {
-      throw new SessionCheckoutError('project_root_missing', `项目根目录不存在: ${project.name}`)
+      throw new SessionCheckoutError('project_root_missing', hostMessage('projectRootDirectoryNotFound', { p0: project.name }))
     }
     return { session, project }
   }
@@ -199,7 +201,7 @@ export function createSessionCheckoutModule(
       checkout: {
         id: `local:${binding.projectId}`,
         kind: 'local',
-        label: 'Local Checkout',
+        label: hostMessage('localCheckout'),
         phase: 'ready',
       },
       source: { ref: binding.sourceRef, oid: binding.sourceOid },
@@ -273,7 +275,7 @@ export function createSessionCheckoutModule(
         commitOid: delivery.commitOid,
         ...(projectProof(delivery.proof) ? { proof: projectProof(delivery.proof) } : {}),
         cleanup: delivery.cleanup,
-        ...(delivery.cleanupMessage ? { cleanupMessage: delivery.cleanupMessage } : {}),
+        ...(delivery.cleanupMessage ? { cleanupMessage: hostPersistedCleanupMessage(delivery.cleanupMessage, hostMessage) } : {}),
       }
     }
     if (delivery.state === 'retained') {
@@ -286,7 +288,7 @@ export function createSessionCheckoutModule(
         retainedAt: delivery.retainedAt,
         expiresAt: delivery.expiresAt,
         cleanup: delivery.cleanup,
-        ...(delivery.cleanupMessage ? { cleanupMessage: delivery.cleanupMessage } : {}),
+        ...(delivery.cleanupMessage ? { cleanupMessage: hostPersistedCleanupMessage(delivery.cleanupMessage, hostMessage) } : {}),
       }
     }
     if (delivery.state === 'delivered') {
@@ -328,7 +330,7 @@ export function createSessionCheckoutModule(
       checkout: {
         id: record?.checkoutId ?? (binding.target.kind === 'isolated' ? binding.target.checkoutId : `local:${binding.projectId}`),
         kind: binding.target.kind === 'isolated' ? 'isolated' : 'local',
-        label: binding.target.kind === 'isolated' ? 'Isolated Checkout' : 'Local Checkout',
+        label: binding.target.kind === 'isolated' ? hostMessage('isolatedCheckout') : hostMessage('localCheckout'),
         phase,
       },
       source: { ref: binding.sourceRef, oid: binding.sourceOid },
@@ -399,7 +401,7 @@ export function createSessionCheckoutModule(
       checkout: {
         id: record.checkoutId,
         kind: 'isolated',
-        label: 'Isolated Checkout',
+        label: hostMessage('isolatedCheckout'),
         // Commit 已是权威交付事实；残余环境异常只能影响 cleanup，不能降级整个会话。
         phase: delivery.state === 'retained' ? 'retained' : delivery.state === 'delivered' ? 'discarded' : 'finalized',
       },
@@ -652,7 +654,7 @@ export function createSessionCheckoutModule(
         checkout: {
           id: record.checkoutId,
           kind: 'isolated',
-          label: 'Isolated Checkout',
+          label: hostMessage('isolatedCheckout'),
           phase: 'discarded',
         },
       }
@@ -723,7 +725,7 @@ export function createSessionCheckoutModule(
       checkout: {
         id: record.checkoutId,
         kind: 'isolated',
-        label: 'Isolated Checkout',
+        label: hostMessage('isolatedCheckout'),
         phase: record.phase,
       },
       source: { ref: record.sourceRef, oid: record.baseOid },
@@ -858,13 +860,13 @@ export function createSessionCheckoutModule(
         if (!isolatedWorkspaceMatches) {
           throw new SessionCheckoutError(
             'project_mismatch',
-            '会话当前 Workspace 与已绑定 Session Target 不一致，已停止访问 checkout',
+            hostMessage('theSessionWorkspaceNoLongerMatchesItsBoundSession'),
           )
         }
       }
       return persisted
     }
-    throw new SessionCheckoutError('target_unselected', '会话尚未选择 Session Target')
+    throw new SessionCheckoutError('target_unselected', hostMessage('theSessionHasNotSelectedASessionTarget'))
   }
 
   type BindingOperationMode = 'exclusive' | 'maintenance' | 'maintenance_draining'
@@ -1061,7 +1063,7 @@ export function createSessionCheckoutModule(
             try {
               await dependencies.git.releaseInternalArtifacts(current.localRoot, current.checkoutId, `checkpoints/${journal.checkpointId}`)
             } catch {
-              console.warn('[session-checkout] 清理未生效 Checkpoint ref 失败，已保守保留不可见引用')
+              console.warn(hostMessage('checkpointRefCleanupFailed'))
             }
             record = { ...current, phase: 'ready', journal: null, revision: current.revision + 1 }
           } else if (recovered.status === 'checkpoint_recovered') {
@@ -1232,21 +1234,21 @@ export function createSessionCheckoutModule(
   ): Promise<SessionTargetView> {
     const binding = await resolveBinding(sessionId)
     if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
-      throw new SessionCheckoutError('not_owner', '只有 owner Isolated 会话可以准备验收')
+      throw new SessionCheckoutError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanPrepareAReview'))
     }
     const summary = input.summary.trim()
     const suggestedCommitMessage = input.suggestedCommitMessage.trim()
     if (!summary || !suggestedCommitMessage || input.tests.length > 20) {
-      throw new SessionCheckoutError('invalid_input', '验收摘要、提交信息或验证项目无效')
+      throw new SessionCheckoutError('invalid_input', hostMessage('theReviewSummaryCommitMessageOrValidationItemsAre'))
     }
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) throw new SessionCheckoutError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) throw new SessionCheckoutError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.phase !== 'ready' || record.delivery.state === 'preview_active' || record.delivery.state === 'preview_detached') {
-      throw new SessionCheckoutError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能准备验收`)
+      throw new SessionCheckoutError('operation_not_allowed', hostMessage('cannotPrepareAReviewInTheCurrentState', { p0: record.phase, p1: record.delivery.state }))
     }
     const inspected = await inspectIsolated(binding)
     if (inspected.checkout.phase !== 'ready') {
-      throw new SessionCheckoutError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复')
+      throw new SessionCheckoutError('recovery_required', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'))
     }
     const snapshot = await dependencies.applyEngine.inspectReview({
       baseOid: record.applyBaseOid ?? record.baseOid,
@@ -1300,7 +1302,7 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
-      return operationError('not_owner', '只有 owner Isolated 会话可以保存阶段')
+      return operationError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanSaveACheckpoint'))
     }
     const commitMessage = input.commitMessage.trim()
     if (
@@ -1311,10 +1313,10 @@ export function createSessionCheckoutModule(
       || !input.requestId.trim()
       || input.requestId.length > 200
       || /[\0\r\n]/u.test(input.requestId)
-    ) return operationError('invalid_input', 'Checkpoint 请求或 Commit Message 无效')
+    ) return operationError('invalid_input', hostMessage('theCheckpointRequestOrCommitMessageIsInvalid'))
 
     let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     const previousRequest = record.checkpoints?.find(checkpoint => checkpoint.requestId === input.requestId)
     if (previousRequest) {
       const exactReplay = record.delivery.state === 'working'
@@ -1323,7 +1325,7 @@ export function createSessionCheckoutModule(
         && previousRequest.requestedRevision === input.expectedRevision
         && previousRequest.generation === input.expectedGeneration
         && previousRequest.commitMessage === commitMessage
-      if (!exactReplay) return operationError('stale_target', 'Checkpoint requestId 已被其他状态使用，请刷新')
+      if (!exactReplay) return operationError('stale_target', hostMessage('theCheckpointRequestIdIsAlreadyUsedByAnotherState'))
       return {
         status: 'checkpointed',
         target: await inspectIsolated(binding),
@@ -1332,21 +1334,21 @@ export function createSessionCheckoutModule(
       }
     }
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     if (record.phase !== 'ready' || (record.delivery.state !== 'ready_for_review' && record.delivery.state !== 'preview_active')) {
-      return operationError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能保存阶段`, await inspectIsolated(binding))
+      return operationError('operation_not_allowed', hostMessage('cannotSaveACheckpointInTheCurrentState', { p0: record.phase, p1: record.delivery.state }), await inspectIsolated(binding))
     }
     if (record.delivery.review.reviewId !== input.expectedReviewId || checkpointGenerationForRecord(record) !== input.expectedGeneration) {
-      return operationError('stale_target', 'Checkpoint Review 或 generation 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theCheckpointReviewOrGenerationHasChangedRefreshAnd'), await inspectIsolated(binding))
     }
     const holder = findProjectAcceptanceHolder(record)
     if (holder) {
-      return operationError('project_acceptance_busy', '另一个任务正在占用该项目的 Local 验收槽位', await inspectIsolated(binding))
+      return operationError('project_acceptance_busy', hostMessage('anotherTaskIsOccupyingThisProjectSLocalAcceptance'), await inspectIsolated(binding))
     }
     const inspected = await inspectIsolated(binding)
     if (inspected.checkout.phase !== 'ready') {
-      return operationError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复', inspected)
+      return operationError('recovery_required', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'), inspected)
     }
     record = dependencies.registry.read().managedCheckouts[record.checkoutId]
     if (
@@ -1356,7 +1358,7 @@ export function createSessionCheckoutModule(
       || (record.delivery.state !== 'ready_for_review' && record.delivery.state !== 'preview_active')
       || record.delivery.review.reviewId !== input.expectedReviewId
       || checkpointGenerationForRecord(record) !== input.expectedGeneration
-    ) return operationError('stale_target', 'Checkpoint 状态在 Host CAS 前发生变化，请刷新后重试')
+    ) return operationError('stale_target', hostMessage('theCheckpointStateChangedBeforeTheHostCASRefresh'))
 
     if (record.delivery.state === 'preview_active') {
       const { preview, review } = record.delivery
@@ -1408,13 +1410,13 @@ export function createSessionCheckoutModule(
         journal: null,
         revision: current.revision + 1,
       }))
-      if (!restored) return operationError('checkout_missing', 'Preview 已撤回，但 Checkout 记录丢失')
+      if (!restored) return operationError('checkout_missing', hostMessage('previewWasRolledBackButTheCheckoutRecordIs'))
       await releasePreviewArtifactsBestEffort(record, preview.previewId)
       record = restored
     }
 
     if (record.delivery.state !== 'ready_for_review') {
-      return operationError('operation_not_allowed', '当前没有可保存的验收阶段', await inspectIsolated(binding))
+      return operationError('operation_not_allowed', hostMessage('thereIsNoReviewCheckpointToSave'), await inspectIsolated(binding))
     }
     const review = record.delivery.review
     const checkpointId = dependencies.createCheckoutId()
@@ -1441,7 +1443,7 @@ export function createSessionCheckoutModule(
       },
       revision: current.revision + 1,
     }))
-    if (!mutating) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!mutating) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
 
     const result = await dependencies.applyEngine.checkpoint({
       isolatedPath: mutating.managedRoot,
@@ -1464,7 +1466,7 @@ export function createSessionCheckoutModule(
           revision: current.revision + 1,
         }))
         if (!journaled?.journal || journaled.journal.operation !== 'checkpoint' || journaled.journal.commitOid !== prepared.commitOid) {
-          throw new SessionCheckoutError('stale_target', 'Checkpoint journal 在保留内部 ref 前发生变化')
+          throw new SessionCheckoutError('stale_target', hostMessage('theCheckpointJournalChangedBeforeRetainingTheInternalRef'))
         }
         await dependencies.git.retainInternalArtifact(mutating.localRoot, mutating.checkoutId, `checkpoints/${checkpointId}`, prepared.commitOid)
       },
@@ -1517,7 +1519,7 @@ export function createSessionCheckoutModule(
         revision: current.revision + 1,
       }
     })
-    if (!completed) return operationError('checkout_missing', 'Checkpoint 已创建，但 Checkout 记录丢失')
+    if (!completed) return operationError('checkout_missing', hostMessage('checkpointWasCreatedButTheCheckoutRecordIsMissing'))
     return {
       status: 'checkpointed',
       target: await inspectIsolated(binding),
@@ -1534,22 +1536,22 @@ export function createSessionCheckoutModule(
   ): Promise<SessionTargetView> {
     const binding = await resolveBinding(sessionId)
     if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
-      throw new SessionCheckoutError('not_owner', '只有 owner Isolated 会话可以恢复编辑')
+      throw new SessionCheckoutError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanResumeEditing'))
     }
     let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) throw new SessionCheckoutError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) throw new SessionCheckoutError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== expectedRevision) {
-      throw new SessionCheckoutError('stale_target', 'Session Target 已变化，请刷新后重试')
+      throw new SessionCheckoutError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'))
     }
     if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
-      throw new SessionCheckoutError('operation_not_allowed', '当前 Worktree 没有可恢复编辑的未同步验收稿')
+      throw new SessionCheckoutError('operation_not_allowed', hostMessage('theCurrentWorktreeHasNoUnsyncedReviewToResume'))
     }
     if (record.delivery.review.reviewId !== expectedReviewId) {
-      throw new SessionCheckoutError('stale_target', '该验收卡已不是当前 Review，请刷新后重试')
+      throw new SessionCheckoutError('stale_target', hostMessage('thisReviewCardIsNoLongerTheCurrentReview'))
     }
     const inspected = await inspectIsolated(binding)
     if (inspected.checkout.phase !== 'ready') {
-      throw new SessionCheckoutError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复')
+      throw new SessionCheckoutError('recovery_required', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'))
     }
     record = dependencies.registry.read().managedCheckouts[record.checkoutId]
     if (
@@ -1559,7 +1561,7 @@ export function createSessionCheckoutModule(
       || record.delivery.state !== 'ready_for_review'
       || record.delivery.review.reviewId !== expectedReviewId
     ) {
-      throw new SessionCheckoutError('stale_target', '验收状态在恢复编辑前发生变化，请刷新后重试')
+      throw new SessionCheckoutError('stale_target', hostMessage('theAcceptanceStateChangedBeforeResumingEditingRefreshAnd'))
     }
     if (recovery) {
       const preflight = await preflightTarget(sessionId, expectedRevision)
@@ -1573,14 +1575,14 @@ export function createSessionCheckoutModule(
         || preflight.status !== 'conflict'
         || preflight.localHeadOid !== recovery.localHeadOid
         || !sameFiles
-      ) throw new SessionCheckoutError('stale_target', '冲突恢复身份在 Host CAS 前已变化，请重新预检')
+      ) throw new SessionCheckoutError('stale_target', hostMessage('theConflictRecoveryIdentityChangedBeforeHostCASRun'))
       record = dependencies.registry.read().managedCheckouts[record.checkoutId]
       if (
         !record
         || record.revision !== expectedRevision
         || record.delivery.state !== 'ready_for_review'
         || record.delivery.review.reviewId !== expectedReviewId
-      ) throw new SessionCheckoutError('stale_target', '验收状态在冲突恢复前发生变化，请刷新后重试')
+      ) throw new SessionCheckoutError('stale_target', hostMessage('theAcceptanceStateChangedBeforeConflictRecoveryRefreshAnd'))
     }
     const reviewBeforeResume = record.delivery.review
     const iteration = reviewBeforeResume.iteration
@@ -1607,7 +1609,7 @@ export function createSessionCheckoutModule(
   ): Promise<ManagedReviewRegenerationContinuation> {
     const binding = await resolveBinding(sessionId)
     if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
-      throw new SessionCheckoutError('not_owner', '只有 owner Isolated 会话可以请求重新生成验收结果')
+      throw new SessionCheckoutError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanRequestReviewRegeneration'))
     }
     const preflight = await preflightTarget(sessionId, expectedRevision)
     if (
@@ -1616,7 +1618,7 @@ export function createSessionCheckoutModule(
       || preflight.checkoutId !== binding.target.checkoutId
       || preflight.reviewId !== expectedReviewId
       || preflight.revision !== expectedRevision
-    ) throw new SessionCheckoutError('stale_target', '只读验收再生成身份在 Host 授权前已变化')
+    ) throw new SessionCheckoutError('stale_target', hostMessage('theReadOnlyReviewRegenerationIdentityChangedBeforeHost'))
     const continuation: ManagedReviewRegenerationContinuation = {
       kind: 'worktree_review_regeneration', requestId, reviewId: expectedReviewId, revision: expectedRevision,
     }
@@ -1625,10 +1627,10 @@ export function createSessionCheckoutModule(
         current.revision !== expectedRevision
         || current.delivery.state !== 'ready_for_review'
         || current.delivery.review.reviewId !== expectedReviewId
-      ) throw new SessionCheckoutError('stale_target', 'Ready Review 在只读授权前发生变化')
+      ) throw new SessionCheckoutError('stale_target', hostMessage('theReadyReviewChangedBeforeReadOnlyAuthorization'))
       return { ...current, recoveryContinuation: continuation }
     })
-    if (!updated) throw new SessionCheckoutError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!updated) throw new SessionCheckoutError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     return continuation
   }
 
@@ -1644,7 +1646,7 @@ export function createSessionCheckoutModule(
       proof.previewId,
     )
     if (recovery.status !== 'assessed' || !recoveryProofMatches(proof, recovery.proof)) {
-      throw new SessionCheckoutError('stale_target', 'Detached Preview Recovery proof 已变化，请重新检查')
+      throw new SessionCheckoutError('stale_target', hostMessage('theDetachedPreviewRecoveryProofHasChangedCheckAgain'))
     }
     const continuation: ManagedPreviewRecoveryAnalysisContinuation = {
       kind: 'worktree_preview_recovery_analysis',
@@ -1661,10 +1663,10 @@ export function createSessionCheckoutModule(
         || current.delivery.state !== 'preview_detached'
         || current.delivery.review.reviewId !== proof.reviewId
         || current.delivery.preview.previewId !== proof.previewId
-      ) throw new SessionCheckoutError('stale_target', 'Detached Preview 在分析授权前发生变化')
+      ) throw new SessionCheckoutError('stale_target', hostMessage('theDetachedPreviewChangedBeforeAnalysisAuthorization'))
       return { ...current, recoveryContinuation: continuation }
     })
-    if (!updated) throw new SessionCheckoutError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!updated) throw new SessionCheckoutError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     return continuation
   }
 
@@ -1675,10 +1677,10 @@ export function createSessionCheckoutModule(
     requestId: string,
   ): Promise<IsolatedTargetLaunch & { continuation: ManagedPreviewRecoveryHandoffContinuation }> {
     if (!targetSessionId || targetSessionId === sessionId) {
-      throw new SessionCheckoutError('invalid_input', 'Recovery handoff 必须使用新的预分配 Session ID')
+      throw new SessionCheckoutError('invalid_input', hostMessage('recoveryHandoffRequiresANewPreallocatedSessionID'))
     }
     if (dependencies.lookup.getSession(targetSessionId) || getPersistedBinding(targetSessionId)) {
-      throw new SessionCheckoutError('target_already_bound', 'Recovery handoff Session ID 已被占用')
+      throw new SessionCheckoutError('target_already_bound', hostMessage('theRecoveryHandoffSessionIDIsAlreadyInUse'))
     }
     const recovery = await preflightPreviewRecoveryTarget(
       sessionId,
@@ -1687,22 +1689,22 @@ export function createSessionCheckoutModule(
       proof.previewId,
     )
     if (recovery.status !== 'assessed' || !recoveryProofMatches(proof, recovery.proof)) {
-      throw new SessionCheckoutError('stale_target', 'Detached Preview Recovery proof 已变化，请重新检查')
+      throw new SessionCheckoutError('stale_target', hostMessage('theDetachedPreviewRecoveryProofHasChangedCheckAgain'))
     }
     const source = dependencies.registry.read().managedCheckouts[proof.checkoutId]
     if (!source || source.ownerSessionId !== sessionId || source.delivery.state !== 'preview_detached') {
-      throw new SessionCheckoutError('stale_target', '旧 Detached Preview 身份已变化')
+      throw new SessionCheckoutError('stale_target', hostMessage('thePreviousDetachedPreviewIdentityHasChanged'))
     }
     const originSessionId = source.sourceSessionId ?? source.ownerSessionId
     if (!dependencies.lookup.getSession(originSessionId)) {
-      throw new SessionCheckoutError('session_not_found', '原始 source Session 不可用，未创建 handoff Worktree')
+      throw new SessionCheckoutError('session_not_found', hostMessage('theOriginalSourceSessionIsUnavailableNoHandoffWorktree'))
     }
     const target = await bindTarget(targetSessionId, { kind: 'isolated' }, 0, Date.now(), originSessionId)
     const binding = getPersistedBinding(targetSessionId)
     const created = binding?.target.kind === 'isolated'
       ? dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
       : undefined
-    if (!created) throw new SessionCheckoutError('checkout_missing', 'Recovery handoff Worktree 创建后记录缺失')
+    if (!created) throw new SessionCheckoutError('checkout_missing', hostMessage('theRecoveryHandoffWorktreeRecordIsMissingAfterCreation'))
     const continuation: ManagedPreviewRecoveryHandoffContinuation = {
       kind: 'worktree_preview_recovery_handoff',
       requestId,
@@ -1721,36 +1723,36 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId) {
-      return operationError('not_owner', '继承 Session Target 的会话不能执行 Apply')
+      return operationError('not_owner', hostMessage('aSessionThatInheritedItsSessionTargetCannotPerform'))
     }
     if (binding.target.kind !== 'isolated') {
-      return operationError('operation_not_allowed', 'Local Checkout 不支持 Apply')
+      return operationError('operation_not_allowed', hostMessage('localCheckoutDoesNotSupportApply'))
     }
 
     let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     if (record.phase !== 'ready') {
-      return operationError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能 Apply`, await inspectIsolated(binding))
+      return operationError('operation_not_allowed', hostMessage('cannotApplyInTheCurrentState', { p0: record.phase, p1: record.delivery.state }), await inspectIsolated(binding))
     }
     const holder = findProjectAcceptanceHolder(record)
     if (holder) {
       return operationError(
         'project_acceptance_busy',
-        `同一项目已有验收任务正在占用 Local：${holder.projectName}`,
+        hostMessage('anotherAcceptanceTaskInTheSameProjectIsOccupying', { p0: holder.projectName }),
         await inspectIsolated(binding),
       )
     }
 
     const inspected = await inspectIsolated(binding)
     if (inspected.checkout.phase !== 'ready') {
-      return operationError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复', inspected)
+      return operationError('recovery_required', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'), inspected)
     }
     record = dependencies.registry.read().managedCheckouts[record.checkoutId]
     if (!record || record.phase !== 'ready') {
-      return operationError('recovery_required', 'Isolated Checkout 状态已变化，需要恢复')
+      return operationError('recovery_required', hostMessage('theIsolatedCheckoutStateHasChangedRecoveryIsRequired'))
     }
 
     const startedAt = Date.now()
@@ -1762,7 +1764,7 @@ export function createSessionCheckoutModule(
       journal: { operation: 'apply', operationId, step: 'planning', startedAt, baseOid: applyBaseOid },
       revision: current.revision + 1,
     }))
-    if (!applying) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!applying) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
 
     const planResult = await dependencies.applyEngine.plan({
       baseOid: applyBaseOid,
@@ -1799,7 +1801,7 @@ export function createSessionCheckoutModule(
         journal: null,
         revision: current.revision + 1,
       }))
-      return operationError('stale_isolated', 'Worktree 在标记可验收后又发生变化，请重新准备验收', await inspectIsolated(binding))
+      return operationError('stale_isolated', hostMessage('worktreeChangedAfterBeingMarkedReadyForReviewPrepare'), await inspectIsolated(binding))
     }
     if (planResult.plan.changedFiles.length === 0) {
       updateManagedCheckout(applying.checkoutId, (current) => ({ ...current, phase: 'ready', journal: null, revision: current.revision + 1 }))
@@ -1817,11 +1819,11 @@ export function createSessionCheckoutModule(
           reviewId: operationId,
           iteration,
           preparedAt: startedAt,
-          summary: 'Worktree 修改已通过 ApplyWorktree 写入 Local Preview',
+          summary: hostMessage('worktreeChangesWereWrittenToLocalPreviewThroughApplyWorktree'),
           validationStatus: 'not_run' as const,
           tests: [],
           changedFiles: [...planResult.plan.changedFiles],
-          suggestedCommitMessage: 'chore: 提交 Worktree 修改',
+          suggestedCommitMessage: hostMessage('choreCommitWorktreeChanges'),
           isolatedFingerprint: planResult.plan.isolatedFingerprint,
           isolatedHeadOid: planResult.plan.isolatedHeadOid,
         }
@@ -1899,7 +1901,7 @@ export function createSessionCheckoutModule(
     try {
       await dependencies.git.releaseInternalArtifacts(record.localRoot, record.checkoutId, `previews/${previewId}`)
     } catch {
-      console.warn('[session-checkout] 清理 Preview refs 失败，已保守保留不可见引用')
+      console.warn(hostMessage('previewRefsCleanupFailed'))
     }
   }
 
@@ -1963,12 +1965,12 @@ export function createSessionCheckoutModule(
   ): Promise<WorktreePreviewRecoveryPreflightView> {
     const binding = await resolveBinding(sessionId)
     if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
-      return blockedPreviewRecovery(undefined, 'not_owner', '只有 owner Isolated 会话可以检查 Preview 恢复')
+      return blockedPreviewRecovery(undefined, 'not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanCheckPreviewRecovery'))
     }
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return blockedPreviewRecovery(undefined, 'checkout_unavailable', 'Isolated Checkout 记录不存在')
+    if (!record) return blockedPreviewRecovery(undefined, 'checkout_unavailable', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== expectedRevision) {
-      return blockedPreviewRecovery(record, 'stale_target', 'Session Target 已变化，请刷新后重新检查')
+      return blockedPreviewRecovery(record, 'stale_target', hostMessage('theSessionTargetHasChangedRefreshBeforeCheckingAgain'))
     }
     if (
       record.phase !== 'ready'
@@ -1976,16 +1978,16 @@ export function createSessionCheckoutModule(
       || record.delivery.review.reviewId !== expectedReviewId
       || record.delivery.preview.previewId !== expectedPreviewId
     ) {
-      return blockedPreviewRecovery(record, 'not_preview_detached', '当前并非指定的 detached Preview 恢复状态')
+      return blockedPreviewRecovery(record, 'not_preview_detached', hostMessage('theCurrentStateIsNotTheSpecifiedDetachedPreview'))
     }
     const validated = await validateManagedCheckoutDetailed(binding, record, false)
     if (validated.status !== 'valid') {
-      return blockedPreviewRecovery(record, 'checkout_unavailable', 'Worktree 身份、路径或 Git 状态暂时无法确认')
+      return blockedPreviewRecovery(record, 'checkout_unavailable', hostMessage('theWorktreeIdentityPathOrGitStateCannotCurrently'))
     }
     const { review, preview } = record.delivery
     try {
       if (!await previewArtifactsMatch(record, preview)) {
-        return blockedPreviewRecovery(record, 'artifacts_missing', 'Preview retained artifacts 缺失或与 receipt 不一致')
+        return blockedPreviewRecovery(record, 'artifacts_missing', hostMessage('previewRetainedArtifactsAreMissingOrDoNotMatch'))
       }
       const assessment = await dependencies.applyEngine.assessPreviewRecovery({
         localPath: record.localRoot,
@@ -1999,10 +2001,10 @@ export function createSessionCheckoutModule(
         ? { checkoutId: holder.checkoutId, ownerSessionId: holder.ownerSessionId, revision: holder.revision, state: holder.delivery.state }
         : undefined
       const rollback = holder
-        ? { status: 'blocked' as const, code: 'project_acceptance_busy' as const, message: '另一个任务正在占用该项目的 Local 验收槽位' }
+        ? { status: 'blocked' as const, code: 'project_acceptance_busy' as const, message: hostMessage('anotherTaskIsOccupyingThisProjectSLocalAcceptance') }
         : assessment.rollback
       const finalize = holder
-        ? { status: 'blocked' as const, code: 'project_acceptance_busy' as const, message: '另一个任务正在占用该项目的 Local 验收槽位' }
+        ? { status: 'blocked' as const, code: 'project_acceptance_busy' as const, message: hostMessage('anotherTaskIsOccupyingThisProjectSLocalAcceptance') }
         : assessment.finalize
       const facts: Omit<WorktreePreviewRecoveryProof, 'generation'> = {
         sessionId,
@@ -2030,15 +2032,15 @@ export function createSessionCheckoutModule(
         || current.delivery.review.reviewId !== review.reviewId
         || current.delivery.preview.previewId !== preview.previewId
       ) {
-        return blockedPreviewRecovery(current, 'stale_target', 'Preview 恢复状态在检查期间发生变化')
+        return blockedPreviewRecovery(current, 'stale_target', hostMessage('thePreviewRecoveryStateChangedDuringTheCheck'))
       }
       if (!await previewArtifactsMatch(current, current.delivery.preview)) {
-        return blockedPreviewRecovery(current, 'artifacts_missing', 'Preview retained artifacts 在检查期间发生变化')
+        return blockedPreviewRecovery(current, 'artifacts_missing', hostMessage('previewRetainedArtifactsChangedDuringTheCheck'))
       }
       const proof: WorktreePreviewRecoveryProof = { ...facts, generation: recoveryGeneration(facts) }
       return { status: 'assessed', localModified: false, proof }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Preview 恢复检查失败'
+      const message = error instanceof Error ? error.message : hostMessage('previewRecoveryCheckFailed')
       return blockedPreviewRecovery(record, 'git_error', message)
     }
   }
@@ -2077,23 +2079,23 @@ export function createSessionCheckoutModule(
   async function preflightTarget(sessionId: string, expectedRevision: number): Promise<WorktreeApplyPreflightView> {
     const binding = await resolveBinding(sessionId)
     if (binding.ownerSessionId !== sessionId || binding.target.kind !== 'isolated') {
-      return blockedPreflight(undefined, 'not_owner', '只有 owner Isolated 会话可以执行同步预检')
+      return blockedPreflight(undefined, 'not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanRunSyncPreflight'))
     }
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return blockedPreflight(undefined, 'checkout_unavailable', 'Isolated Checkout 记录不存在')
+    if (!record) return blockedPreflight(undefined, 'checkout_unavailable', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== expectedRevision) {
-      return blockedPreflight(record, 'stale_target', 'Session Target 已变化，请刷新后重新预检')
+      return blockedPreflight(record, 'stale_target', hostMessage('theSessionTargetHasChangedRefreshBeforeRunningPreflight'))
     }
     if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
-      return blockedPreflight(record, 'not_ready_for_review', '当前 Worktree 尚未处于可验收状态')
+      return blockedPreflight(record, 'not_ready_for_review', hostMessage('theCurrentWorktreeIsNotReadyForReview'))
     }
     const holder = findProjectAcceptanceHolder(record)
     if (holder) {
-      return blockedPreflight(record, 'project_acceptance_busy', '另一个任务正在占用该项目的 Local 验收槽位', holder)
+      return blockedPreflight(record, 'project_acceptance_busy', hostMessage('anotherTaskIsOccupyingThisProjectSLocalAcceptance'), holder)
     }
     const validated = await validateManagedCheckoutDetailed(binding, record, false)
     if (validated.status !== 'valid') {
-      return blockedPreflight(record, 'checkout_unavailable', 'Worktree 身份、路径或 Git 状态暂时无法确认')
+      return blockedPreflight(record, 'checkout_unavailable', hostMessage('theWorktreeIdentityPathOrGitStateCannotCurrently'))
     }
     const review = record.delivery.review
     const result = await dependencies.applyEngine.preflight({
@@ -2107,7 +2109,7 @@ export function createSessionCheckoutModule(
       || current.revision !== expectedRevision
       || current.delivery.state !== 'ready_for_review'
       || current.delivery.review.reviewId !== review.reviewId
-    ) return blockedPreflight(current, 'stale_target', 'Session Target 在预检期间发生变化，请刷新后重试')
+    ) return blockedPreflight(current, 'stale_target', hostMessage('theSessionTargetChangedDuringPreflightRefreshAndRetry'))
     if (result.status === 'error') {
       const reason = result.error.code === 'stale_isolated'
         ? 'stale_isolated'
@@ -2120,7 +2122,7 @@ export function createSessionCheckoutModule(
       ? result.plan.isolatedFingerprint
       : result.isolatedFingerprint
     if (isolatedFingerprint !== review.isolatedFingerprint) {
-      return blockedPreflight(current, 'stale_isolated', 'Worktree 在准备验收后发生变化，请重新生成验收结果')
+      return blockedPreflight(current, 'stale_isolated', hostMessage('worktreeChangedAfterTheReviewWasPreparedRegenerateThe'))
     }
     const localBranch = result.status === 'ready' && result.plan.localHeadRef?.startsWith('refs/heads/')
       ? result.plan.localHeadRef.slice('refs/heads/'.length)
@@ -2154,31 +2156,31 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
-      return operationError('not_owner', '只有 owner Isolated 会话可以同步验收')
+      return operationError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanSyncAReview'))
     }
     let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
-      return operationError('operation_not_allowed', '当前 Worktree 尚未处于可验收状态', await inspectIsolated(binding))
+      return operationError('operation_not_allowed', hostMessage('theCurrentWorktreeIsNotReadyForReview'), await inspectIsolated(binding))
     }
     const holder = findProjectAcceptanceHolder(record)
     if (holder) {
       return operationError(
         'project_acceptance_busy',
-        `同一项目已有验收任务正在占用 Local：${holder.projectName}`,
+        hostMessage('anotherAcceptanceTaskInTheSameProjectIsOccupying', { p0: holder.projectName }),
         await inspectIsolated(binding),
       )
     }
     const inspected = await inspectIsolated(binding)
     if (inspected.checkout.phase !== 'ready') {
-      return operationError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复', inspected)
+      return operationError('recovery_required', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'), inspected)
     }
     record = dependencies.registry.read().managedCheckouts[record.checkoutId]
     if (!record || record.delivery.state !== 'ready_for_review') {
-      return operationError('stale_target', '验收状态已变化，请刷新后重试')
+      return operationError('stale_target', hostMessage('theAcceptanceStateHasChangedRefreshAndRetry'))
     }
     const review = record.delivery.review
     const operationId = dependencies.createCheckoutId()
@@ -2199,7 +2201,7 @@ export function createSessionCheckoutModule(
       },
       revision: current.revision + 1,
     }))
-    if (!mutating) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!mutating) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
 
     const planResult = await dependencies.applyEngine.plan({
       baseOid: applyBaseOid,
@@ -2233,7 +2235,7 @@ export function createSessionCheckoutModule(
         journal: null,
         revision: current.revision + 1,
       }))
-      return operationError('stale_isolated', 'Worktree 在标记可验收后又发生变化，请重新准备验收', await inspectIsolated(binding))
+      return operationError('stale_isolated', hostMessage('worktreeChangedAfterBeingMarkedReadyForReviewPrepare'), await inspectIsolated(binding))
     }
     updateManagedCheckout(mutating.checkoutId, (current) => ({
       ...current,
@@ -2303,7 +2305,7 @@ export function createSessionCheckoutModule(
     attemptedAction: 'rollback_preview' | 'finalize_preview' | 'discard',
   ): Promise<SessionCheckoutOperationResult> {
     if (record.delivery.state !== 'preview_active') {
-      return operationError('preview_not_active', '当前没有可解除的 Local Preview', await inspectIsolated(binding))
+      return operationError('preview_not_active', hostMessage('thereIsNoLocalPreviewToRelease'), await inspectIsolated(binding))
     }
     const { review, preview } = record.delivery
     const detached = updateManagedCheckout(record.checkoutId, (current) => {
@@ -2324,7 +2326,7 @@ export function createSessionCheckoutModule(
       }
     })
     if (!detached || detached.delivery.state !== 'preview_detached') {
-      return operationError('stale_target', 'Preview 状态已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('thePreviewStateHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     return {
       status: 'preview_detached',
@@ -2340,12 +2342,12 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
-      return operationError('not_owner', '只有 owner Isolated 会话可以撤回验收')
+      return operationError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanRollBackAcceptance'))
     }
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     const retryingRecovery = record.phase === 'recovery_required'
       && record.delivery.state === 'preview_active'
@@ -2354,7 +2356,7 @@ export function createSessionCheckoutModule(
       (record.phase !== 'ready' && !retryingRecovery)
       || (record.delivery.state !== 'preview_active' && record.delivery.state !== 'preview_detached')
     ) {
-      return operationError('preview_not_active', '当前没有可撤回的 Local Preview', await inspectIsolated(binding))
+      return operationError('preview_not_active', hostMessage('thereIsNoLocalPreviewToRollBack'), await inspectIsolated(binding))
     }
     const retryingDetached = record.delivery.state === 'preview_detached'
     if (retryingDetached) {
@@ -2368,7 +2370,7 @@ export function createSessionCheckoutModule(
         return operationError('stale_target', recovery.message, await inspectIsolated(binding))
       }
       if (!recoveryProofMatches(input.recoveryProof, recovery.proof)) {
-        return operationError('stale_target', 'Preview Recovery proof 已过期或不匹配，请重新检查', await inspectIsolated(binding))
+        return operationError('stale_target', hostMessage('thePreviewRecoveryProofHasExpiredOrDoesNot'), await inspectIsolated(binding))
       }
       if (recovery.proof.rollback.status !== 'safe') {
         return operationError(recovery.proof.rollback.code, recovery.proof.rollback.message, await inspectIsolated(binding))
@@ -2497,10 +2499,10 @@ export function createSessionCheckoutModule(
         }
         return current
       })
-      return { cleaned: false, message, reason }
+      return { cleaned: false, message: hostPersistedCleanupMessage(message, hostMessage), reason }
     }
     if (record.delivery.state !== 'finalized' && record.delivery.state !== 'retained') {
-      return block('Worktree 交付状态不完整，未执行清理。')
+      return block(hostMessages.cleanupIncompleteDelivery.zh)
     }
     if (
       (record.delivery.state === 'finalized' || record.delivery.state === 'retained')
@@ -2548,7 +2550,7 @@ export function createSessionCheckoutModule(
       residue: ValidatedCleanupResidue,
     ): Promise<void> => {
       const journal = currentRecord.journal?.operation === 'cleanup' ? currentRecord.journal : undefined
-      if (!journal?.managedDirectoryIdentity) throw new SessionCheckoutError('checkout_mismatch', 'Worktree cleanup receipt 不完整')
+      if (!journal?.managedDirectoryIdentity) throw new SessionCheckoutError('checkout_mismatch', hostMessages.cleanupIncompleteReceipt.zh)
       const quarantinePath = journal.cleanupQuarantinePath ?? join(
         dirname(currentRecord.managedGitRoot),
         `.dsh-wt-cleanup--${currentRecord.checkoutId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8)}--${journal.operationId}`,
@@ -2562,7 +2564,7 @@ export function createSessionCheckoutModule(
               : current.journal,
             revision: current.revision + 1,
           }))
-      if (!quarantining) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录在 quarantine 前丢失')
+      if (!quarantining) throw new SessionCheckoutError('checkout_missing', hostMessages.cleanupMissingBeforeQuarantine.zh)
       if (!dependencies.files.exists(quarantinePath)) {
         await retryTransientCleanup(() => dependencies.files.quarantineDirectoryTree(
           residue.canonicalManagedGitRoot,
@@ -2571,7 +2573,7 @@ export function createSessionCheckoutModule(
         ))
       }
       const validatedQuarantine = await validateCleanupQuarantine(quarantining)
-      if (!validatedQuarantine) throw new SessionCheckoutError('checkout_mismatch', 'Worktree quarantine 身份无法验证')
+      if (!validatedQuarantine) throw new SessionCheckoutError('checkout_mismatch', hostMessages.cleanupQuarantineIdentity.zh)
       await retryTransientCleanup(() => dependencies.files.removeDirectoryTree(validatedQuarantine))
     }
 
@@ -2592,12 +2594,12 @@ export function createSessionCheckoutModule(
             localPath: record.localRoot,
           })
           if (snapshot.status !== 'ready' || snapshot.isolatedFingerprint !== record.delivery.isolatedFingerprint) {
-            return block('Worktree 在提交后出现了新修改，未执行清理。')
+            return block(hostMessages.cleanupNewChanges.zh)
           }
           const directoryIdentity = await dependencies.files.inspectDirectoryIdentity(validated.canonicalManagedGitRoot)
           if (!directoryIdentity) return block(CLEANUP_IDENTITY_CHANGED_MESSAGE)
           const removing = beginRemoval(record, directoryIdentity)
-          if (!removing) return block('Worktree 记录在清理前丢失，未执行清理。')
+          if (!removing) return block(hostMessages.cleanupMissingBeforeRemoval.zh)
           await retryTransientCleanup(() => dependencies.git.removeWorktree(removing.localRoot, removing.managedGitRoot))
           if (dependencies.files.exists(removing.managedGitRoot)) {
             const residue = await validateDetachedCleanupResidue(removing)
@@ -2608,7 +2610,7 @@ export function createSessionCheckoutModule(
           const residue = await validateDetachedCleanupResidue(record, options.allowLegacyResidue === true)
           if (!residue) return block(CLEANUP_IDENTITY_CHANGED_MESSAGE)
           const removing = beginRemoval(record, residue.directoryIdentity)
-          if (!removing) return block('Worktree 记录在清理前丢失，未执行清理。')
+          if (!removing) return block(hostMessages.cleanupMissingBeforeRemoval.zh)
           const revalidatedResidue = await validateDetachedCleanupResidue(removing)
           if (!revalidatedResidue) return block(CLEANUP_IDENTITY_CHANGED_MESSAGE)
           await quarantineAndRemove(removing, revalidatedResidue)
@@ -2638,8 +2640,8 @@ export function createSessionCheckoutModule(
       const quarantineBusy = failureRecord.journal?.operation === 'cleanup' && Boolean(failureRecord.journal.cleanupQuarantinePath)
       const reason: WorktreeCleanupReason = quarantineBusy ? 'quarantine_busy' : 'directory_busy'
       const message = quarantineBusy
-        ? 'Worktree 已安全移入 quarantine，但目录仍被进程占用；dsh-git-worktree 会在同一清理授权内有限重试。'
-        : 'Worktree 目录仍被进程占用或 Windows 暂时拒绝删除；dsh-git-worktree 已完成有限重试，可稍后重试清理。'
+        ? hostMessages.cleanupQuarantineBusy.zh
+        : hostMessages.cleanupDirectoryBusy.zh
       updateManagedCheckout(record.checkoutId, (current) => {
         const journal = current.journal?.operation === 'cleanup' ? current.journal : null
         if (current.delivery.state === 'finalized') {
@@ -2660,18 +2662,18 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
-      return operationError('not_owner', '只有 owner Isolated 会话可以完成验收提交')
+      return operationError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanFinalizeTheAcceptance'))
     }
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     if (
       record.phase !== 'ready'
       || (record.delivery.state !== 'preview_active' && record.delivery.state !== 'preview_detached')
     ) {
-      return operationError('preview_not_active', '当前没有等待验收的 Local Preview', await inspectIsolated(binding))
+      return operationError('preview_not_active', hostMessage('thereIsNoLocalPreviewAwaitingAcceptance'), await inspectIsolated(binding))
     }
     const retryingDetached = record.delivery.state === 'preview_detached'
     if (retryingDetached) {
@@ -2685,7 +2687,7 @@ export function createSessionCheckoutModule(
         return operationError('stale_target', recovery.message, await inspectIsolated(binding))
       }
       if (!recoveryProofMatches(input.recoveryProof, recovery.proof)) {
-        return operationError('stale_target', 'Preview Recovery proof 已过期或不匹配，请重新检查', await inspectIsolated(binding))
+        return operationError('stale_target', hostMessage('thePreviewRecoveryProofHasExpiredOrDoesNot'), await inspectIsolated(binding))
       }
       if (recovery.proof.finalize.status !== 'safe') {
         return operationError(recovery.proof.finalize.code, recovery.proof.finalize.message, await inspectIsolated(binding))
@@ -2771,11 +2773,11 @@ export function createSessionCheckoutModule(
       journal: null,
       revision: current.revision + 1,
     }))
-    if (!finalized) return operationError('checkout_missing', '提交已创建，但 Checkout 记录丢失')
+    if (!finalized) return operationError('checkout_missing', hostMessage('theCommitWasCreatedButTheCheckoutRecordIs'))
     const retention = input.retention ?? 'cleanup'
     if (retention !== 'cleanup') {
       const retained = retainFinalized(finalized, retention)
-      if (!retained) return operationError('checkout_missing', '提交已创建，但保留 Worktree 状态写入失败')
+      if (!retained) return operationError('checkout_missing', hostMessage('theCommitWasCreatedButSavingTheRetainedWorktree'))
       return {
         status: 'finished',
         target: await inspectIsolated(binding),
@@ -2801,15 +2803,15 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId || binding.target.kind !== 'isolated') {
-      return operationError('not_owner', '只有 owner Isolated 会话可以重试清理')
+      return operationError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanRetryCleanup'))
     }
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     if (record.delivery.state !== 'finalized' && record.delivery.state !== 'retained') {
-      return operationError('operation_not_allowed', '当前没有待重试的 Worktree 清理', await inspectIsolated(binding))
+      return operationError('operation_not_allowed', hostMessage('thereIsNoWorktreeCleanupToRetry'), await inspectIsolated(binding))
     }
     const cleanup = await cleanupFinalized(record, { allowLegacyResidue: true })
     return {
@@ -2828,49 +2830,49 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId) {
-      return operationError('not_owner', '继承 Session Target 的会话不能执行 Finish')
+      return operationError('not_owner', hostMessage('aSessionThatInheritedItsSessionTargetCannotPerform162'))
     }
     if (binding.target.kind !== 'isolated') {
-      return operationError('operation_not_allowed', 'Local Checkout 不支持 Finish')
+      return operationError('operation_not_allowed', hostMessage('localCheckoutDoesNotSupportFinish'))
     }
 
     let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     if (input.expectedReviewId !== undefined && (
       record.delivery.state !== 'ready_for_review'
       || record.delivery.review.reviewId !== input.expectedReviewId
     )) {
-      return operationError('stale_target', '该验收卡已不是当前 Review，请刷新并确认最新交付', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('thisReviewCardIsNoLongerTheCurrentReview166'), await inspectIsolated(binding))
     }
     if (record.applyBaseOid && (record.delivery.state === 'working' || record.delivery.state === 'ready_for_review')) {
       return operationError(
         'operation_not_allowed',
-        '该历史 Worktree 已通过旧版 Apply 写入 Local；为避免遗漏或重复提交，已禁止自动 Finish，请先人工核对 Local 后再清理记录。',
+        hostMessage('thisLegacyWorktreeWasWrittenToLocalThroughAn'),
         await inspectIsolated(binding),
       )
     }
     if (record.phase !== 'ready' || record.delivery.state === 'preview_active' || record.delivery.state === 'preview_detached') {
-      return operationError('operation_not_allowed', `当前 ${record.phase}/${record.delivery.state} 状态不能直接 Finish`, await inspectIsolated(binding))
+      return operationError('operation_not_allowed', hostMessage('cannotFinishDirectlyInTheCurrentState', { p0: record.phase, p1: record.delivery.state }), await inspectIsolated(binding))
     }
     const holder = findProjectAcceptanceHolder(record)
     if (holder) {
       return operationError(
         'project_acceptance_busy',
-        `同一项目已有验收任务正在占用 Local：${holder.projectName}`,
+        hostMessage('anotherAcceptanceTaskInTheSameProjectIsOccupying', { p0: holder.projectName }),
         await inspectIsolated(binding),
       )
     }
 
     const inspected = await inspectIsolated(binding)
     if (inspected.checkout.phase !== 'ready') {
-      return operationError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复', inspected)
+      return operationError('recovery_required', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'), inspected)
     }
     record = dependencies.registry.read().managedCheckouts[record.checkoutId]
     if (!record || record.phase !== 'ready') {
-      return operationError('recovery_required', 'Isolated Checkout 状态已变化，需要恢复')
+      return operationError('recovery_required', hostMessage('theIsolatedCheckoutStateHasChangedRecoveryIsRequired'))
     }
     const startedAt = Date.now()
     const operationId = dependencies.createCheckoutId()
@@ -2887,7 +2889,7 @@ export function createSessionCheckoutModule(
       },
       revision: current.revision + 1,
     }))
-    if (!applying) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!applying) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
 
     const planResult = await dependencies.applyEngine.plan({
       baseOid: applyBaseOid,
@@ -2941,7 +2943,7 @@ export function createSessionCheckoutModule(
         journal: null,
         revision: current.revision + 1,
       }))
-      return operationError('stale_isolated', 'Worktree 在验收后又发生变化，请重新准备验收', await inspectIsolated(binding))
+      return operationError('stale_isolated', hostMessage('worktreeChangedAfterReviewPrepareTheReviewAgain'), await inspectIsolated(binding))
     }
 
     const iteration = applying.delivery.state === 'working'
@@ -2955,7 +2957,7 @@ export function createSessionCheckoutModule(
           reviewId: operationId,
           iteration,
           preparedAt: startedAt,
-          summary: '跳过 Local 验收并直接提交',
+          summary: hostMessage('skipLocalAcceptanceAndCommitDirectly'),
           validationStatus: 'not_run' as const,
           tests: [],
           changedFiles: [...planResult.plan.changedFiles],
@@ -3077,12 +3079,12 @@ export function createSessionCheckoutModule(
       revision: current.revision + 1,
     }))
     if (!finalized) {
-      return operationError('checkout_missing', '任务提交已创建，但 Checkout 记录丢失，需要人工检查')
+      return operationError('checkout_missing', hostMessage('theTaskCommitWasCreatedButTheCheckoutRecord'))
     }
     const retention = input.retention ?? 'cleanup'
     if (retention !== 'cleanup') {
       const retained = retainFinalized(finalized, retention)
-      if (!retained) return operationError('checkout_missing', '任务提交已创建，但保留 Worktree 状态写入失败')
+      if (!retained) return operationError('checkout_missing', hostMessage('theTaskCommitWasCreatedButSavingTheRetained'))
       return {
         status: 'finished',
         target: await inspectIsolated(binding),
@@ -3109,7 +3111,7 @@ export function createSessionCheckoutModule(
       await dependencies.git.releaseInternalArtifacts(record.localRoot, record.checkoutId)
     } catch {
       // checkout 删除优先；内部无 ref artifact 的清理失败不能阻止 owner 明确收口。
-      console.warn('[session-checkout] 清理内部 Session Checkout refs 失败，已保守保留不可见引用')
+      console.warn(hostMessage('internalRefsCleanupFailed'))
     }
   }
 
@@ -3118,28 +3120,28 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId) {
-      return operationError('not_owner', '继承 Session Target 的会话不能执行 Discard')
+      return operationError('not_owner', hostMessage('aSessionThatInheritedItsSessionTargetCannotPerform178'))
     }
     if (binding.target.kind !== 'isolated') {
-      return operationError('operation_not_allowed', 'Local Checkout 不支持 Discard')
+      return operationError('operation_not_allowed', hostMessage('localCheckoutDoesNotSupportDiscard'))
     }
 
     let record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     if (record.delivery.state === 'preview_detached') {
       return operationError(
         'preview_modified',
-        'Local Preview 已因漂移进入 detached 恢复态；为保留恢复证据，不能删除 Worktree。请先成功撤回 Preview。',
+        hostMessage('localPreviewDriftedIntoDetachedRecoveryToPreserveRecovery'),
         await inspectIsolated(binding),
       )
     }
     if (record.applyBaseOid && (record.delivery.state === 'working' || record.delivery.state === 'ready_for_review')) {
       return operationError(
         'operation_not_allowed',
-        '该历史 Worktree 已通过旧版 Apply 写入 Local；不会自动 Discard，请先人工核对 Local 的未提交修改。',
+        hostMessage('thisLegacyWorktreeWasWrittenToLocalThroughAn183'),
         await inspectIsolated(binding),
       )
     }
@@ -3147,7 +3149,7 @@ export function createSessionCheckoutModule(
       if (!input.rollbackPreview) {
         return operationError(
           'preview_not_active',
-          '本任务正在 Local 预览；放弃任务前必须先安全撤回 Preview',
+          hostMessage('thisTaskIsPreviewingInLocalSafelyRollBack'),
           await inspectIsolated(binding),
         )
       }
@@ -3169,7 +3171,7 @@ export function createSessionCheckoutModule(
         journal: null,
         revision: current.revision + 1,
       }))
-      if (!rolledBack) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+      if (!rolledBack) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
       await releasePreviewArtifactsBestEffort(record, previewId)
       record = rolledBack
     }
@@ -3185,7 +3187,7 @@ export function createSessionCheckoutModule(
       return { status: 'discarded', target: await inspectIsolated(binding) }
     }
     if (record.phase !== 'ready' && record.phase !== 'recovery_required') {
-      return operationError('operation_not_allowed', `当前 ${record.phase} 状态不能 Discard`, await inspectIsolated(binding))
+      return operationError('operation_not_allowed', hostMessage('cannotDiscardInTheCurrentState', { p0: record.phase }), await inspectIsolated(binding))
     }
 
     let inspected: SessionTargetView
@@ -3193,11 +3195,11 @@ export function createSessionCheckoutModule(
     if (record.phase === 'ready') {
       inspected = await inspectIsolated(binding)
       if (inspected.checkout.phase !== 'ready') {
-        return operationError('recovery_required', 'Isolated Checkout 身份无法确认，需要恢复', inspected)
+        return operationError('recovery_required', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'), inspected)
       }
       record = dependencies.registry.read().managedCheckouts[record.checkoutId]
       if (!record || record.phase !== 'ready') {
-        return operationError('recovery_required', 'Isolated Checkout 状态已变化，需要恢复')
+        return operationError('recovery_required', hostMessage('theIsolatedCheckoutStateHasChangedRecoveryIsRequired'))
       }
       dirty = (await dependencies.git.status(record.managedRoot)).dirty || (record.checkpoints?.length ?? 0) > 0
     } else {
@@ -3210,15 +3212,15 @@ export function createSessionCheckoutModule(
     }
     if (dirty && !input.confirmDirty) {
       const checkpointDetail = (record.checkpoints?.length ?? 0) > 0
-        ? `；确认后会永久删除 ${record.checkpoints!.length} 个尚未交付到 Local 的阶段`
+        ? hostMessage('confirmationWillPermanentlyDeleteCheckpointsNotYetDeliveredTo', { p0: record.checkpoints!.length })
         : ''
-      return operationError('dirty_confirmation_required', `Isolated Checkout 含未提交修改、未交付阶段或状态无法确认，需要明确确认${checkpointDetail}`, inspected)
+      return operationError('dirty_confirmation_required', hostMessage('theIsolatedCheckoutHasUncommittedChangesUndeliveredCheckpointsOr', { p0: checkpointDetail }), inspected)
     }
 
     try {
       await dependencies.git.removeWorktree(record.localRoot, record.managedGitRoot)
     } catch {
-      return operationError('git_operation_failed', '删除 managed checkout 失败', await inspectIsolated(binding))
+      return operationError('git_operation_failed', hostMessage('failedToDeleteTheManagedCheckout'), await inspectIsolated(binding))
     }
     await releaseApplyBaseBestEffort(record)
     updateManagedCheckout(record.checkoutId, (current) => ({
@@ -3235,32 +3237,32 @@ export function createSessionCheckoutModule(
     binding: SessionBindingRecord,
   ): Promise<SessionCheckoutOperationResult> {
     if (binding.ownerSessionId !== input.sessionId) {
-      return operationError('not_owner', '继承 Session Target 的会话不能执行 Recover')
+      return operationError('not_owner', hostMessage('aSessionThatInheritedItsSessionTargetCannotPerform192'))
     }
     if (binding.target.kind !== 'isolated') {
-      return operationError('operation_not_allowed', 'Local Checkout 不支持 Recover')
+      return operationError('operation_not_allowed', hostMessage('localCheckoutDoesNotSupportRecover'))
     }
 
     const record = dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
-    if (!record) return operationError('checkout_missing', 'Isolated Checkout 记录不存在')
+    if (!record) return operationError('checkout_missing', hostMessage('theIsolatedCheckoutRecordDoesNotExist'))
     if (record.revision !== input.expectedRevision) {
-      return operationError('stale_target', 'Session Target 已变化，请刷新后重试', await inspectIsolated(binding))
+      return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     const recoverCreate = record.journal?.operation === 'create'
     if ((record.journal !== null && !recoverCreate) || record.phase === 'mutating') {
       return operationError(
         'recovery_unsafe',
-        'Apply 是否已修改 Local 无法安全确认；不会自动重试或猜测成功',
+        hostMessage('cannotSafelyDetermineWhetherApplyModifiedLocalItWill'),
         await inspectIsolated(binding),
       )
     }
     if (!dependencies.files.exists(record.managedRoot)) {
-      return operationError('recovery_required', 'Isolated Checkout 缺失，只能由 owner 明确 Discard 收口')
+      return operationError('recovery_required', hostMessage('theIsolatedCheckoutIsMissingOnlyAnExplicitDiscard'))
     }
 
     const validated = await validateManagedCheckout(binding, record, recoverCreate)
     if (!validated) {
-      return operationError('recovery_unsafe', 'Isolated Checkout 的路径、Git 身份、项目、HEAD 或状态无法完整确认')
+      return operationError('recovery_unsafe', hostMessage('theIsolatedCheckoutPathGitIdentityProjectHEADOr'))
     }
 
     updateManagedCheckout(record.checkoutId, (current) => ({
@@ -3374,7 +3376,7 @@ export function createSessionCheckoutModule(
       checkoutId: record.checkoutId,
       revision: record.revision,
       ownerSessionId: record.ownerSessionId,
-      ownerSessionTitle: dependencies.lookup.getSession(record.ownerSessionId)?.title?.trim() || '已删除的 Agent 会话',
+      ownerSessionTitle: dependencies.lookup.getSession(record.ownerSessionId)?.title?.trim() || hostMessage('deletedAgentSession'),
       project: { id: record.projectId, name: record.projectName },
       iteration: managedIteration(record),
       state,
@@ -3387,7 +3389,7 @@ export function createSessionCheckoutModule(
         retainedAt: delivery.retainedAt,
         expiresAt: delivery.expiresAt,
       } : {}),
-      ...(cleanupMessage ? { cleanupMessage } : {}),
+      ...(cleanupMessage ? { cleanupMessage: hostPersistedCleanupMessage(cleanupMessage, hostMessage) } : {}),
       ...(cleanupReason ? { cleanupReason } : {}),
       approximateBytes,
       updatedAt: managedUpdatedAt(record),
@@ -3400,33 +3402,33 @@ export function createSessionCheckoutModule(
   }
 
   async function inspectCleanupForRecord(record: ManagedCheckoutRecord): Promise<ManagedWorktreeCleanupView> {
-    if (record.delivery.state === 'working') return cleanupBlocked('working', '当前轮次仍在修改，尚未形成可清理的交付环境。', record.revision)
-    if (record.delivery.state === 'ready_for_review') return cleanupBlocked('review_pending', '当前轮次正在等待验收，不能清理。', record.revision)
+    if (record.delivery.state === 'working') return cleanupBlocked('working', hostMessage('theCurrentIterationIsStillBeingEditedAndHas'), record.revision)
+    if (record.delivery.state === 'ready_for_review') return cleanupBlocked('review_pending', hostMessage('theCurrentIterationIsAwaitingAcceptanceAndCannotBe'), record.revision)
     if (record.delivery.state === 'preview_active' || record.delivery.state === 'preview_detached') {
-      return cleanupBlocked('preview_active', 'Local Preview 尚未完成安全收口，不能清理。', record.revision)
+      return cleanupBlocked('preview_active', hostMessage('localPreviewHasNotBeenSafelyResolvedAndCannot'), record.revision)
     }
     if (record.delivery.state === 'delivered' || record.phase === 'discarded') {
-      return cleanupBlocked('unknown', 'Worktree 已交付并解除管理，无需再次清理。', record.revision)
+      return cleanupBlocked('unknown', hostMessage('worktreeHasBeenDeliveredAndReleasedFromManagementNo'), record.revision)
     }
     if (record.delivery.commitOid && record.delivery.proof) {
       const local = await validateCommittedLocalCheckout(bindingForManagedRecord(record), record)
-      if (!local) return cleanupBlocked('identity_mismatch', 'Local checkout identity 无法验证，不能证明本轮交付仍存在。', record.revision)
+      if (!local) return cleanupBlocked('identity_mismatch', hostMessage('theLocalCheckoutIdentityCannotBeVerifiedThisIteration'), record.revision)
       try {
         const delivered = await dependencies.git.isAncestor(local.canonicalLocalRoot, record.delivery.commitOid, local.snapshot.headOid)
-        if (!delivered) return cleanupBlocked('identity_mismatch', '本轮交付 commit 已不在 Local 历史中，不能清理环境。', record.revision)
+        if (!delivered) return cleanupBlocked('identity_mismatch', hostMessage('thisIterationSDeliveryCommitIsNoLongerIn'), record.revision)
       } catch {
-        return cleanupBlocked('unknown', '无法验证本轮交付 commit 是否仍在 Local 历史中。', record.revision)
+        return cleanupBlocked('unknown', hostMessage('cannotVerifyWhetherThisIterationSDeliveryCommitIs'), record.revision)
       }
     }
     const quarantine = await validateCleanupQuarantine(record)
     const residue = quarantine ? undefined : await validateDetachedCleanupResidue(record, true)
     if (record.journal?.operation === 'cleanup' && record.journal.cleanupQuarantinePath && !quarantine) {
-      return cleanupBlocked('identity_mismatch', '清理目录身份无法重新验证，已保留环境。', record.revision)
+      return cleanupBlocked('identity_mismatch', hostMessage('theCleanupDirectoryIdentityCannotBeReverifiedTheEnvironment'), record.revision)
     }
     if (!quarantine && !residue && dependencies.files.exists(record.managedRoot)) {
       const binding = bindingForManagedRecord(record)
       const validated = await validateManagedCheckout(binding, record, false)
-      if (!validated) return cleanupBlocked('identity_mismatch', 'Worktree checkout identity 无法验证，已保留环境。', record.revision)
+      if (!validated) return cleanupBlocked('identity_mismatch', hostMessage('theWorktreeCheckoutIdentityCannotBeVerifiedTheEnvironment'), record.revision)
       try {
         const snapshot = await dependencies.applyEngine.inspectReview({
           baseOid: record.applyBaseOid ?? record.baseOid,
@@ -3434,24 +3436,25 @@ export function createSessionCheckoutModule(
           localPath: record.localRoot,
         })
         if (snapshot.status !== 'ready' || snapshot.isolatedFingerprint !== record.delivery.isolatedFingerprint) {
-          return cleanupBlocked('uncommitted_changes', '提交或保留后检测到新增修改，不能批量清理。', record.revision)
+          return cleanupBlocked('uncommitted_changes', hostMessage('newChangesWereDetectedAfterCommitOrRetentionBulk'), record.revision)
         }
       } catch {
-        return cleanupBlocked('unknown', '无法证明 Worktree 当前状态安全，已保留环境。', record.revision)
+        return cleanupBlocked('unknown', hostMessage('cannotProveTheCurrentWorktreeStateIsSafeThe'), record.revision)
       }
     }
     if (record.delivery.cleanup === 'blocked' || record.delivery.cleanup === 'pending') {
-      const cleanupMessage = record.delivery.cleanupMessage ?? '上次清理未完成，可重新校验后重试。'
-      if (cleanupReasonForMessage(cleanupMessage) === 'identity_changed') return cleanupBlocked('identity_mismatch', cleanupMessage, record.revision)
-      if (cleanupReasonForMessage(cleanupMessage) === 'modified_after_finalize') return cleanupBlocked('uncommitted_changes', cleanupMessage, record.revision)
+      const cleanupReason = cleanupReasonForMessage(record.delivery.cleanupMessage ?? '')
+      const cleanupMessage = record.delivery.cleanupMessage ? hostPersistedCleanupMessage(record.delivery.cleanupMessage, hostMessage) : hostMessage('thePreviousCleanupDidNotFinishRevalidateAndRetry')
+      if (cleanupReason === 'identity_changed') return cleanupBlocked('identity_mismatch', cleanupMessage, record.revision)
+      if (cleanupReason === 'modified_after_finalize') return cleanupBlocked('uncommitted_changes', cleanupMessage, record.revision)
     }
     if (
       record.delivery.state === 'retained'
       && (record.delivery.retention === 'retain_manual' || record.delivery.expiresAt === null || record.delivery.expiresAt > Date.now())
     ) {
-      return { eligibility: 'retained', reason: 'retention_active', message: record.delivery.retention === 'retain_manual' ? '按用户选择手动保留。' : '保留期限尚未到期。', inspectedRevision: record.revision }
+      return { eligibility: 'retained', reason: 'retention_active', message: record.delivery.retention === 'retain_manual' ? hostMessage('retainedManuallyAtTheUserSRequest') : hostMessage('theRetentionPeriodHasNotExpired'), inspectedRevision: record.revision }
     }
-    return { eligibility: 'safe', reason: 'cleanup_failed', message: record.delivery.cleanupMessage ?? '已通过只读安全巡检，可以清理。', inspectedRevision: record.revision }
+    return { eligibility: 'safe', reason: 'cleanup_failed', message: record.delivery.cleanupMessage ? hostPersistedCleanupMessage(record.delivery.cleanupMessage, hostMessage) : hostMessage('readOnlySafetyInspectionPassedCleanupIsAvailable'), inspectedRevision: record.revision }
   }
 
   async function inspectManagedWorktreeCleanup(input: ListManagedWorktreesInput = {}): Promise<ManagedWorktreeSummaryView[]> {
@@ -3482,7 +3485,7 @@ export function createSessionCheckoutModule(
         retained.push({
           checkoutId: record.checkoutId,
           iteration: managedIteration(record),
-          cleanup: cleanupBlocked('unknown', 'Worktree revision 已变化，未执行清理。', record.revision),
+          cleanup: cleanupBlocked('unknown', hostMessage('theWorktreeRevisionHasChangedCleanupWasNotPerformed'), record.revision),
         })
         continue
       }
@@ -3496,7 +3499,7 @@ export function createSessionCheckoutModule(
         retained.push({
           checkoutId: record.checkoutId,
           iteration: managedIteration(record),
-          cleanup: cleanupBlocked('unknown', 'Worktree 在清理前发生变化，未执行清理。', latest?.revision ?? record.revision),
+          cleanup: cleanupBlocked('unknown', hostMessage('worktreeChangedBeforeCleanupCleanupWasNotPerformed'), latest?.revision ?? record.revision),
         })
         continue
       }
@@ -3537,7 +3540,7 @@ export function createSessionCheckoutModule(
     const session = requireSession(sessionId)
     const persisted = getPersistedBinding(sessionId)
     const projectId = persisted?.projectId ?? session.projectId
-    if (!projectId) throw new SessionCheckoutError('project_not_found', '会话尚未关联项目')
+    if (!projectId) throw new SessionCheckoutError('project_not_found', hostMessage('theSessionIsNotAssociatedWithAProject'))
     const allowedCheckoutIds = new Set(Object.values(dependencies.registry.read().managedCheckouts)
       .filter((record) => record.projectId === projectId)
       .filter((record) => record.ownerSessionId === sessionId || record.sourceSessionId === sessionId)
@@ -3552,25 +3555,25 @@ export function createSessionCheckoutModule(
   ): Promise<ManagedWorktreeSummaryView> {
     requireSession(sessionId)
     const record = dependencies.registry.read().managedCheckouts[input.checkoutId]
-    if (!record) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
+    if (!record) throw new SessionCheckoutError('checkout_missing', hostMessage('theWorktreeRecordDoesNotExist'))
     if (record.ownerSessionId !== sessionId && record.sourceSessionId !== sessionId) {
-      throw new SessionCheckoutError('not_owner', '当前 Session 无权管理该 Worktree')
+      throw new SessionCheckoutError('not_owner', hostMessage('theCurrentSessionIsNotAllowedToManageThis'))
     }
     if (record.ownerSessionId !== sessionId && dependencies.lookup.getSession(record.ownerSessionId)) {
-      throw new SessionCheckoutError('not_owner', 'Owner Session 已接管该 Worktree，只有 owner 可以管理')
+      throw new SessionCheckoutError('not_owner', hostMessage('theOwnerSessionHasTakenOverThisWorktreeOnly'))
     }
     const persisted = getPersistedBinding(sessionId)
     const callerProjectId = persisted?.projectId ?? dependencies.lookup.getSession(sessionId)?.projectId
     if (callerProjectId !== record.projectId) {
-      throw new SessionCheckoutError('project_mismatch', '当前 Session 与 Worktree 不属于同一原始项目')
+      throw new SessionCheckoutError('project_mismatch', hostMessage('theCurrentSessionAndWorktreeDoNotBelongTo'))
     }
     return manageManagedWorktree(input)
   }
 
   async function manageManagedWorktree(input: ManageManagedWorktreeInput): Promise<ManagedWorktreeSummaryView> {
     const record = dependencies.registry.read().managedCheckouts[input.checkoutId]
-    if (!record) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
-    if (record.revision !== input.expectedRevision) throw new SessionCheckoutError('stale_target', 'Worktree 状态已变化，请刷新后重试')
+    if (!record) throw new SessionCheckoutError('checkout_missing', hostMessage('theWorktreeRecordDoesNotExist'))
+    if (record.revision !== input.expectedRevision) throw new SessionCheckoutError('stale_target', hostMessage('theWorktreeStateHasChangedRefreshAndRetry'))
     if (input.action === 'discard') {
       // Caller authorization is performed by the scoped wrapper (or a trusted Host manager).
       // The reserved owner Session may not exist yet, so do not re-resolve it through lookup.
@@ -3583,12 +3586,12 @@ export function createSessionCheckoutModule(
       }, bindingForManagedRecord(record))
       if (result.status === 'error') throw new SessionCheckoutError(result.code, result.message)
       const updated = dependencies.registry.read().managedCheckouts[record.checkoutId]
-      if (!updated) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
+      if (!updated) throw new SessionCheckoutError('checkout_missing', hostMessage('theWorktreeRecordDoesNotExist'))
       return summarizeManagedWorktree(updated)
     }
     if (input.action === 'set_retention') {
       if (record.phase !== 'retained' || record.delivery.state !== 'retained' || !input.retention) {
-        throw new SessionCheckoutError('operation_not_allowed', '只有已保留的冻结 Worktree 可以调整保留期限')
+        throw new SessionCheckoutError('operation_not_allowed', hostMessage('onlyRetainedFrozenWorktreesCanHaveTheirRetentionPeriod'))
       }
       const retainedAt = Date.now()
       const updated = updateManagedCheckout(record.checkoutId, (current) => {
@@ -3606,23 +3609,23 @@ export function createSessionCheckoutModule(
           revision: current.revision + 1,
         }
       })
-      if (!updated) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
+      if (!updated) throw new SessionCheckoutError('checkout_missing', hostMessage('theWorktreeRecordDoesNotExist'))
       return summarizeManagedWorktree(updated)
     }
     if (record.delivery.state !== 'retained' && record.delivery.state !== 'finalized') {
-      throw new SessionCheckoutError('operation_not_allowed', '当前 Worktree 不处于可清理状态')
+      throw new SessionCheckoutError('operation_not_allowed', hostMessage('theCurrentWorktreeIsNotInACleanableState'))
     }
     await cleanupFinalized(record, { allowLegacyResidue: true })
     const updated = dependencies.registry.read().managedCheckouts[record.checkoutId]
-    if (!updated) throw new SessionCheckoutError('checkout_missing', 'Worktree 记录不存在')
+    if (!updated) throw new SessionCheckoutError('checkout_missing', hostMessage('theWorktreeRecordDoesNotExist'))
     return summarizeManagedWorktree(updated)
   }
 
   async function resolveManagedRoot(checkoutId: string): Promise<string> {
     const record = dependencies.registry.read().managedCheckouts[checkoutId]
-    if (!record || record.phase === 'discarded') throw new SessionCheckoutError('checkout_missing', 'Worktree 目录已不存在')
+    if (!record || record.phase === 'discarded') throw new SessionCheckoutError('checkout_missing', hostMessage('theWorktreeDirectoryNoLongerExists'))
     const validated = await validateManagedCheckout(bindingForManagedRecord(record), record, false)
-    if (!validated) throw new SessionCheckoutError('checkout_mismatch', 'Worktree 目录身份无法验证')
+    if (!validated) throw new SessionCheckoutError('checkout_mismatch', hostMessage('theWorktreeDirectoryIdentityCannotBeVerified'))
     return validated.canonicalManagedRoot
   }
 
@@ -3655,56 +3658,56 @@ export function createSessionCheckoutModule(
     const registry = dependencies.registry.read()
     const previousBinding = registry.sessionBindings[sessionId]
     if (!previousBinding || previousBinding.target.kind !== 'isolated') {
-      throw new SessionCheckoutError('operation_not_allowed', '只有已交付的 Isolated Session 可以开始下一轮')
+      throw new SessionCheckoutError('operation_not_allowed', hostMessage('onlyADeliveredIsolatedSessionCanBeginTheNext'))
     }
     const predecessor = registry.managedCheckouts[previousBinding.target.checkoutId]
-    if (!predecessor) throw new SessionCheckoutError('checkout_missing', '上一轮 Worktree 记录不存在')
+    if (!predecessor) throw new SessionCheckoutError('checkout_missing', hostMessage('thePreviousIterationSWorktreeRecordDoesNotExist'))
     if (predecessor.ownerSessionId !== sessionId || previousBinding.ownerSessionId !== sessionId) {
-      throw new SessionCheckoutError('not_owner', '只有 owner Session 可以开始下一轮')
+      throw new SessionCheckoutError('not_owner', hostMessage('onlyTheOwnerSessionCanBeginTheNextIteration'))
     }
     if (predecessor.revision !== expectedRevision) {
-      throw new SessionCheckoutError('stale_target', 'Worktree 状态已变化，请刷新后再开始下一轮')
+      throw new SessionCheckoutError('stale_target', hostMessage('theWorktreeStateHasChangedRefreshBeforeBeginningThe'))
     }
     if (predecessor.phase !== 'discarded' || predecessor.delivery.state !== 'delivered') {
-      throw new SessionCheckoutError('operation_not_allowed', '只有已成功清理的交付状态可以开始下一轮')
+      throw new SessionCheckoutError('operation_not_allowed', hostMessage('onlyADeliveredStateWithSuccessfulCleanupCanBegin'))
     }
-    if (!session.projectId) throw new SessionCheckoutError('project_not_found', '当前 Session 尚未关联 Workspace')
+    if (!session.projectId) throw new SessionCheckoutError('project_not_found', hostMessage('theCurrentSessionIsNotAssociatedWithAWorkspace'))
     const ownerWorkspace = dependencies.lookup.getProject(session.projectId)
     if (!ownerWorkspace || !resolvedPathsEqual(ownerWorkspace.root, predecessor.managedRoot)) {
-      throw new SessionCheckoutError('project_mismatch', '当前 Session 的 immutable cwd 与上一轮 Worktree 不一致')
+      throw new SessionCheckoutError('project_mismatch', hostMessage('theCurrentSessionSImmutableCwdDoesNotMatch'))
     }
     if (dependencies.files.exists(predecessor.managedGitRoot) || dependencies.files.exists(predecessor.managedRoot)) {
-      throw new SessionCheckoutError('checkout_mismatch', '上一轮 Worktree 路径已重新出现，拒绝覆盖未知内容')
+      throw new SessionCheckoutError('checkout_mismatch', hostMessage('thePreviousIterationSWorktreePathHasReappearedUnknown'))
     }
 
     const localProject = dependencies.lookup.getProject(predecessor.projectId)
     if (!localProject || !dependencies.files.exists(localProject.root) || !dependencies.files.exists(predecessor.localRoot)) {
-      throw new SessionCheckoutError('project_root_missing', '原始 Local 项目已不可用，不能开始下一轮')
+      throw new SessionCheckoutError('project_root_missing', hostMessage('theOriginalLocalProjectIsUnavailableTheNextIteration'))
     }
     const canonicalProjectRoot = await dependencies.files.canonicalize(localProject.root)
     const canonicalLocalRoot = await dependencies.files.canonicalize(predecessor.localRoot)
     if (!pathsEqual(canonicalProjectRoot, canonicalLocalRoot)) {
-      throw new SessionCheckoutError('project_mismatch', '原始 Local 项目身份已变化')
+      throw new SessionCheckoutError('project_mismatch', hostMessage('theOriginalLocalProjectIdentityHasChanged'))
     }
     const snapshot = await dependencies.git.inspect(canonicalLocalRoot)
     if (!snapshot || !pathsEqual(snapshot.commonDir, predecessor.gitCommonDir)) {
-      throw new SessionCheckoutError('checkout_mismatch', '原始 Local Git 身份已变化')
+      throw new SessionCheckoutError('checkout_mismatch', hostMessage('theOriginalLocalGitIdentityHasChanged'))
     }
     const projectRelativePath = relative(snapshot.root, canonicalLocalRoot)
     if (projectRelativePath.startsWith('..') || isAbsolute(projectRelativePath)) {
-      throw new SessionCheckoutError('checkout_mismatch', '项目根目录不在其 Git checkout 内')
+      throw new SessionCheckoutError('checkout_mismatch', hostMessage('theProjectRootIsNotInsideItsGitCheckout'))
     }
     if (!resolvedPathsEqual(resolve(predecessor.managedGitRoot, projectRelativePath), predecessor.managedRoot)) {
-      throw new SessionCheckoutError('checkout_mismatch', '上一轮 managed project 路径无法从 Local 身份重建')
+      throw new SessionCheckoutError('checkout_mismatch', hostMessage('thePreviousIterationSManagedProjectPathCannotBe'))
     }
 
     const managedContainer = dirname(predecessor.managedGitRoot)
     if (!dependencies.files.exists(managedContainer)) dependencies.files.ensureDirectory(managedContainer)
     const containerIdentity = await dependencies.files.inspectDirectoryIdentity(managedContainer)
-    if (!containerIdentity) throw new SessionCheckoutError('checkout_mismatch', 'Worktree 容器不是可信目录')
+    if (!containerIdentity) throw new SessionCheckoutError('checkout_mismatch', hostMessage('theWorktreeContainerIsNotATrustedDirectory'))
     const canonicalContainer = await dependencies.files.canonicalize(managedContainer)
     if (!resolvedPathsEqual(canonicalContainer, managedContainer)) {
-      throw new SessionCheckoutError('checkout_mismatch', 'Worktree 容器路径已被重定向')
+      throw new SessionCheckoutError('checkout_mismatch', hostMessage('theWorktreeContainerPathHasBeenRedirected'))
     }
 
     const checkoutId = dependencies.createCheckoutId()
@@ -3764,12 +3767,12 @@ export function createSessionCheckoutModule(
         || !pathsEqual(created.commonDir, snapshot.commonDir)
         || created.headOid !== snapshot.headOid
       ) {
-        throw new SessionCheckoutError('checkout_mismatch', '下一轮 checkout 的 Git 身份不匹配')
+        throw new SessionCheckoutError('checkout_mismatch', hostMessage('theNextIterationSCheckoutGitIdentityDoesNot'))
       }
       const readyRegistry = dependencies.registry.read()
       const current = readyRegistry.managedCheckouts[checkoutId]
       if (!current || current.phase !== 'preparing') {
-        throw new SessionCheckoutError('stale_target', '下一轮 Worktree 创建期间状态已变化')
+        throw new SessionCheckoutError('stale_target', hostMessage('theStateChangedWhileCreatingTheNextIterationS'))
       }
       readyRegistry.managedCheckouts[checkoutId] = {
         ...current,
@@ -3807,7 +3810,7 @@ export function createSessionCheckoutModule(
       if (!residueRemoved) {
         const current = dependencies.registry.read().managedCheckouts[checkoutId]
         if (current) markRecoveryRequired(current)
-        throw new SessionCheckoutError('recovery_required', '下一轮 Worktree 创建失败且残余目录包含未知内容，已保留现场')
+        throw new SessionCheckoutError('recovery_required', hostMessage('creatingTheNextIterationSWorktreeFailedAndIts'))
       }
 
       const failedRegistry = dependencies.registry.read()
@@ -3863,7 +3866,7 @@ export function createSessionCheckoutModule(
           }
         }
         if (!(choice.kind === 'isolated' && existing.target.kind === 'isolated' && nextIteration > 1)) {
-          throw new SessionCheckoutError('target_already_bound', '会话已经绑定 Session Target，不能切换')
+          throw new SessionCheckoutError('target_already_bound', hostMessage('theSessionIsAlreadyBoundToASessionTarget'))
         }
       }
 
@@ -3889,7 +3892,7 @@ export function createSessionCheckoutModule(
       }
 
       if (!snapshot) {
-        throw new SessionCheckoutError('not_git_repository', '非 Git 项目不能创建 Isolated Checkout')
+        throw new SessionCheckoutError('not_git_repository', hostMessage('aNonGitProjectCannotCreateAnIsolatedCheckout'))
       }
       // managed Worktree 不再使用全局数量硬上限；生命周期通过交付后清理收口。
       const checkoutId = dependencies.createCheckoutId()
@@ -3948,7 +3951,7 @@ export function createSessionCheckoutModule(
         }
         throw new SessionCheckoutError(
           'checkout_mismatch',
-          'Worktree 回退容器不是可信目录，未创建或修改任何 checkout',
+          hostMessage('theFallbackWorktreeContainerIsNotATrustedDirectory'),
         )
       }
       const managedGitRoot = pathCandidates
@@ -3960,12 +3963,12 @@ export function createSessionCheckoutModule(
         }
         throw new SessionCheckoutError(
           'checkout_mismatch',
-          'Worktree Checkout identity 路径均已存在，拒绝覆盖未知目录',
+          hostMessage('allWorktreeCheckoutIdentityPathsAlreadyExistUnknownDirectories'),
         )
       }
       const projectRelativePath = relative(localGitRoot, localRoot)
       if (projectRelativePath.startsWith('..') || isAbsolute(projectRelativePath)) {
-        throw new SessionCheckoutError('checkout_mismatch', '项目根目录不在其 Git checkout 内')
+        throw new SessionCheckoutError('checkout_mismatch', hostMessage('theProjectRootIsNotInsideItsGitCheckout'))
       }
       const managedRoot = join(managedGitRoot, projectRelativePath)
       const record: ManagedCheckoutRecord = {
@@ -4017,7 +4020,7 @@ export function createSessionCheckoutModule(
           || !pathsEqual(created.root, canonicalManagedGitRoot)
           || !pathsEqual(created.commonDir, snapshot.commonDir)
         ) {
-          throw new SessionCheckoutError('checkout_mismatch', '新建 checkout 的 Git common dir 不匹配')
+          throw new SessionCheckoutError('checkout_mismatch', hostMessage('theNewCheckoutSGitCommonDirectoryDoesNot'))
         }
         const readyRegistry = dependencies.registry.read()
         const readyRecord: ManagedCheckoutRecord = {
@@ -4059,7 +4062,7 @@ export function createSessionCheckoutModule(
           markRecoveryRequired(record)
           throw new SessionCheckoutError(
             'recovery_required',
-            'Worktree 创建失败且残余目录包含未知内容，已保留现场，请查看原因或改用新会话',
+            hostMessage('worktreeCreationFailedAndTheRemainingDirectoryContainsUnknown'),
           )
         }
 
@@ -4079,7 +4082,7 @@ export function createSessionCheckoutModule(
         if (createAttempt < 1) {
           return bindTarget(sessionId, choice, createAttempt + 1, requestStartedAt, sourceSessionId)
         }
-        throw new SessionCheckoutError('git_operation_failed', 'Worktree 创建失败，已安全清理残余目录，可直接重试')
+        throw new SessionCheckoutError('git_operation_failed', hostMessage('worktreeCreationFailedTheRemainingDirectoryWasSafelyCleaned'))
       }
   }
 
@@ -4102,23 +4105,23 @@ export function createSessionCheckoutModule(
     },
     createIsolatedTarget: (sourceSessionId, targetSessionId) => withBindingLock(async () => {
       if (!targetSessionId || targetSessionId === sourceSessionId) {
-        throw new SessionCheckoutError('invalid_input', 'Isolated Target 必须使用独立的预分配 Session ID')
+        throw new SessionCheckoutError('invalid_input', hostMessage('anIsolatedTargetRequiresASeparatePreallocatedSessionID'))
       }
       if (dependencies.lookup.getSession(targetSessionId) && !getPersistedBinding(targetSessionId)) {
-        throw new SessionCheckoutError('target_already_bound', '目标 Session ID 已被其他 Workspace 使用')
+        throw new SessionCheckoutError('target_already_bound', hostMessage('theTargetSessionIDIsAlreadyUsedByAnother'))
       }
       const sourceBinding = getPersistedBinding(sourceSessionId)
       if (!sourceBinding) {
         await bindTarget(sourceSessionId, { kind: 'local' })
       } else if (sourceBinding.target.kind !== 'local') {
-        throw new SessionCheckoutError('operation_not_allowed', '只能从 Local Session 创建新的 Isolated Target')
+        throw new SessionCheckoutError('operation_not_allowed', hostMessage('aNewIsolatedTargetCanOnlyBeCreatedFrom'))
       }
       const target = await bindTarget(targetSessionId, { kind: 'isolated' }, 0, Date.now(), sourceSessionId)
       const binding = getPersistedBinding(targetSessionId)
       const record = binding?.target.kind === 'isolated'
         ? dependencies.registry.read().managedCheckouts[binding.target.checkoutId]
         : undefined
-      if (!record) throw new SessionCheckoutError('checkout_missing', 'Isolated Target 创建后记录缺失')
+      if (!record) throw new SessionCheckoutError('checkout_missing', hostMessage('theIsolatedTargetRecordIsMissingAfterCreation'))
       return { targetSessionId, managedRoot: record.managedRoot, target }
     }),
     beginNextIteration: (sessionId, expectedRevision) => withBindingLock(

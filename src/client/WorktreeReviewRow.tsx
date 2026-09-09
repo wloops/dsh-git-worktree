@@ -1,3 +1,4 @@
+import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from './i18n.js'
 import { useEffect, useState } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetSummary } from '../console-contract.js'
 import type { WorktreeClientServices } from './actions.js'
@@ -16,14 +17,16 @@ interface Props extends ToolCallViewPropsLike {
   adapter?: WorktreeConsoleAdapter
 }
 
-function isLocalTargetUnselected(error: string | null): boolean {
+function isLocalTargetUnselected(error: string | null, t: ClientTranslator = defaultClientTranslator): boolean {
   if (error === null) return false
   return /(?:^|\b)target_unselected(?:\b|$)/iu.test(error)
-    || error.includes('会话尚未选择 Session Target')
+    || error.includes(t("no.session.target.has.been.selected"))
 }
 
 export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props) {
-  const model = parseReviewTool(block)
+  const t = useClientTranslator()
+
+  const model = parseReviewTool(block, t)
   const payload = model.payload
   const args = model.args
   const state = model.lifecycle === 'running' ? 'running' : model.lifecycle === 'ok' ? 'ok' : 'error'
@@ -84,7 +87,7 @@ export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props
     return () => { active = false }
   }, [adapter, payload?.reviewId, payload?.revision, refreshNonce, sessionId])
 
-  if (model.lifecycle === 'error' && isLocalTargetUnselected(model.error)) return null
+  if (model.lifecycle === 'error' && isLocalTargetUnselected(model.error, t)) return null
 
   const identity: WorktreeReviewIdentity | undefined = payload
     && sessionId
@@ -97,13 +100,13 @@ export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props
       }
     : undefined
   const unavailableMessage = liveError
-    ? `实时 Worktree Console 不可用：${liveError}`
+    ? t("live.worktree.console.unavailable", { p0: liveError })
     : adapter && sessionId
-      ? '正在连接实时 Worktree Console；历史验收证据仍可查看。'
-      : '实时 Worktree Console 未连接；连接后即可执行验收操作。'
+      ? t("connecting.to.live.worktree.console.historical.review.evidence")
+      : t("live.worktree.console.is.disconnected.review.actions.will")
 
   return (
-    <section className="dsh-wt-card" data-tool="worktree_ready_for_review" data-state={state} aria-label="Worktree 待验收">
+    <section className="dsh-wt-card" data-tool="worktree_ready_for_review" data-state={state} aria-label={t("worktree.ready.for.review")}>
       {review ? (
         <WorktreeReviewPanel
           review={review}
@@ -118,9 +121,9 @@ export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props
       ) : (
         <header className="dsh-wt-head">
           <span className="dsh-wt-mark" aria-hidden />
-          <strong className="dsh-wt-title">Worktree 待验收</strong>
+          <strong className="dsh-wt-title">{t("worktree.ready.for.review")}</strong>
           <span className="dsh-wt-subtitle">
-            {model.lifecycle === 'running' ? '正在冻结验收快照…' : '验收信息不可用'}
+            {model.lifecycle === 'running' ? t("freezing.the.review.snapshot") : t("review.information.unavailable")}
           </span>
         </header>
       )}

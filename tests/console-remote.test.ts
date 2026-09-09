@@ -13,6 +13,7 @@ import { WorktreeConsoleService } from '../src/console-host/service.js'
 import type { WorktreeConsoleControlPlane } from '../src/console-host/control-plane.js'
 import { createWorktreeConsoleRemoteAdapter } from '../src/client/console-remote/adapter.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
+import { currentHostLanguage } from '../src/i18n/host.js'
 
 interface ClientModuleHandoff {
   factory(require: (specifier: string) => unknown): { apply: (ctx: Context) => void; inject: string[] }
@@ -68,7 +69,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
       expect(descriptor.service).toBe('gitWorktree')
       expect(descriptor.result.mode).toBe('strict')
       if (descriptor.method === 'sidebarTopology') {
-        expect(descriptor.parameters).toEqual([])
+        expect(descriptor.parameters.map(parameter => parameter.name)).toEqual(['locale'])
       } else {
         expect(descriptor.parameters[0]).toMatchObject({
           name: 'agent',
@@ -83,7 +84,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
 
   it('keeps Sidebar topology path-free and callable without a current Agent Session', async () => {
     const descriptor = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'sidebarTopology')!
-    expect(descriptor.parameters).toEqual([])
+    expect(descriptor.parameters.map(parameter => parameter.name)).toEqual(['locale'])
     const payload = {
       ok: true as const,
       value: {
@@ -279,7 +280,11 @@ describe('manual strict Worktree Console Remote contribution', () => {
     const ctx = new Context()
     await ctx.plugin(TypertRegistry)
     const topology = { ok: true as const, value: { projects: [] } }
-    const control = { sidebarTopology: vi.fn(async () => topology) } as unknown as WorktreeConsoleControlPlane
+    const seenLanguages: string[] = []
+    const control = { sidebarTopology: vi.fn(async () => {
+      seenLanguages.push(currentHostLanguage())
+      return topology
+    }) } as unknown as WorktreeConsoleControlPlane
     new WorktreeConsoleService(ctx, control)
     new TypertGatewayService(ctx)
     ctx.typert.register(TYPERT)
@@ -287,6 +292,12 @@ describe('manual strict Worktree Console Remote contribution', () => {
     await expect(ctx.typertGateway.invoke({ namespace: 'gitWorktree', method: 'sidebarTopology', args: {} }))
       .resolves.toEqual(topology)
     expect(control.sidebarTopology).toHaveBeenCalledTimes(1)
+    await expect(ctx.typertGateway.invoke({ namespace: 'gitWorktree', method: 'sidebarTopology', args: { locale: 'en' } }))
+      .resolves.toEqual(topology)
+    expect(seenLanguages).toEqual(['zh', 'en'])
+    await expect(ctx.typertGateway.invoke({ namespace: 'gitWorktree', method: 'sidebarTopology', args: { locale: 'fr' } }))
+      .rejects.toThrow()
+    expect(control.sidebarTopology).toHaveBeenCalledTimes(2)
   })
 
   it('registers the Host manifest and resolves the official agent lookup before dispatch', async () => {
@@ -359,10 +370,10 @@ describe('manual strict Worktree Console Remote contribution', () => {
 
     const dispose = await client.remote.$mount(WORKTREE_CONSOLE_REMOTE)
     const retained = client.remote.gitWorktree.current
-    await expect(client.remote.gitWorktree.current('agent-1')).resolves.toEqual({ ok: true, value: expected })
+    await expect(client.remote.gitWorktree.current('agent-1', undefined)).resolves.toEqual({ ok: true, value: expected })
     expect(call).toHaveBeenCalledWith('/api', 'gitWorktree/current', { args: { agentId: 'agent-1' } }, expect.any(AbortSignal))
     expect(control.current).toHaveBeenCalledWith('agent-1')
-    await expect(client.remote.gitWorktree.list('agent-1', undefined, undefined)).resolves.toEqual({ ok: true, value: listed })
+    await expect(client.remote.gitWorktree.list('agent-1', undefined, undefined, undefined)).resolves.toEqual({ ok: true, value: listed })
     expect(call).toHaveBeenLastCalledWith('/api', 'gitWorktree/list', { args: { agentId: 'agent-1' } }, expect.any(AbortSignal))
     expect(control.list).toHaveBeenCalledWith({ sessionId: 'agent-1', needsAttention: undefined, includeDelivered: undefined })
 
@@ -402,7 +413,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
       expectedGeneration: '9'.repeat(64), requestId: `checkpoint:${'9'.repeat(64)}`, commitMessage: 'feat: save stage',
     })).resolves.toMatchObject({ ok: true, value: { checkpoint: { sequence: 1 }, target: { state: 'working' } } })
     expect(checkpoint).toHaveBeenCalledWith(
-      'agent-1', 'checkout-1', 7, 'review-1', '9'.repeat(64), `checkpoint:${'9'.repeat(64)}`, 'feat: save stage',
+      'agent-1', 'checkout-1', 7, 'review-1', '9'.repeat(64), `checkpoint:${'9'.repeat(64)}`, 'feat: save stage', 'zh',
     )
 
     const resumeRevision = vi.fn().mockResolvedValue({
@@ -415,7 +426,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
     await expect(resumeAdapter.resumeRevision({
       sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
     })).resolves.toMatchObject({ ok: true, value: { target: { state: 'working', iteration: 1 } } })
-    expect(resumeRevision).toHaveBeenCalledWith('agent-1', 'checkout-1', 7, 'review-1')
+    expect(resumeRevision).toHaveBeenCalledWith('agent-1', 'checkout-1', 7, 'review-1', undefined, 'zh')
 
     const beginNextIteration = vi.fn().mockResolvedValue({
       ok: true,
@@ -427,7 +438,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
     await expect(iterationAdapter.beginNextIteration({
       sessionId: 'agent-1', checkoutId: 'checkout-1', expectedRevision: 9,
     })).resolves.toMatchObject({ ok: true, value: { target: { state: 'working', iteration: 2 } } })
-    expect(beginNextIteration).toHaveBeenCalledWith('agent-1', 'checkout-1', 9)
+    expect(beginNextIteration).toHaveBeenCalledWith('agent-1', 'checkout-1', 9, 'zh')
 
     const malformedInputAdapter = createWorktreeConsoleRemoteAdapter({
       inspect: vi.fn().mockRejectedValue(new Error('client api: gitWorktree/inspect rejected "checkoutId"')),

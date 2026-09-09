@@ -1,3 +1,4 @@
+import { hostMessage } from '../i18n/host.js'
 import { SESSION_CHECKOUT_ERROR_CODES, type SessionCheckoutErrorCode } from '../types.js'
 import type { WorktreeConsoleError, WorktreeConsoleOutcome } from '../console-contract.js'
 
@@ -30,7 +31,7 @@ export function consoleFailure(error: unknown): WorktreeConsoleOutcome<never> {
     ok: false,
     error: {
       code: 'git_error',
-      message: error instanceof Error ? error.message : 'Worktree Console 操作失败',
+      message: error instanceof Error ? error.message : hostMessage('worktreeConsoleOperationFailed'),
     },
   }
 }

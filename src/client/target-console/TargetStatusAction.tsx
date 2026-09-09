@@ -1,9 +1,9 @@
+import { useClientLanguage, useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Menu, Modal, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   WorktreeConsoleAdapter,
   WorktreeConsoleTargetDetails,
-  WorktreeConsoleTargetState,
 } from '../../console-contract.js'
 import { openExistingSession, type WorktreeClientServices } from '../actions.js'
 import { requestWorktreeReviewRefresh, WORKTREE_REVIEW_REFRESH_EVENT } from '../review-console/status-events.js'
@@ -15,18 +15,18 @@ export interface TargetStatusActionProps {
   services: WorktreeClientServices
 }
 
-const STATE_LABELS: Record<WorktreeConsoleTargetState, string> = {
+const STATE_LABELS = (t: ClientTranslator = defaultClientTranslator) => ({
   local: 'Local',
-  creating: '创建中…',
-  working: '修改中',
-  ready_for_review: '待验收',
-  preview_active: 'Local 验收中',
-  preview_detached: '预览待恢复',
-  retained: '已保留',
-  cleanup_pending: '清理中',
-  recovery_required: '需要恢复',
-  delivered: '已交付',
-}
+  creating: t("creating.2"),
+  working: t("editing"),
+  ready_for_review: t("ready.for.review"),
+  preview_active: t("reviewing.in.local"),
+  preview_detached: t("preview.awaiting.recovery"),
+  retained: t("retained"),
+  cleanup_pending: t("cleanup.pending"),
+  recovery_required: t("recovery.required"),
+  delivered: t("delivered"),
+})
 
 function shortOid(value: string): string {
   return value === 'unversioned' ? value : value.slice(0, 7)
@@ -34,6 +34,9 @@ function shortOid(value: string): string {
 
 /** Interactive Session Target capsule with source-linked management actions. */
 export function TargetStatusAction({ sessionId, adapter, services }: TargetStatusActionProps) {
+  const t = useClientTranslator()
+  const language = useClientLanguage()
+
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -91,12 +94,12 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
   }, [refresh, sessionId])
 
   const state = target?.state ?? (loading ? 'loading' : 'error')
-  const stateLabel = state === 'loading' ? '加载中…' : state === 'error' ? '不可用' : STATE_LABELS[state]
+  const stateLabel = state === 'loading' ? t("loading") : state === 'error' ? t("unavailable") : STATE_LABELS(t)[state]
   const triggerLabel = target?.state === 'local' ? 'Local' : target ? `Worktree · ${stateLabel}` : stateLabel
   const expiry = target?.state === 'retained' && target.expiresAt
-    ? new Date(target.expiresAt).toLocaleDateString()
+    ? new Date(target.expiresAt).toLocaleDateString(language === 'en' ? 'en-US' : 'zh-CN')
     : null
-  const accessibleLabel = expiry === null ? `Session Target：${triggerLabel}` : `Session Target：${triggerLabel}，到期 ${expiry}`
+  const accessibleLabel = expiry === null ? t("session.target.label", { target: triggerLabel }) : t("session.target.expires", { p0: triggerLabel, p1: expiry })
 
   const reveal = (): void => {
     if (!target?.managedRoot) return
@@ -110,7 +113,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
     if (!target || target.sourceSessionId === sessionId) return
     setMenuOpen(false)
     if (target.sourceRoot === null || !openExistingSession(services, target.sourceSessionId, target.sourceRoot)) {
-      setError('来源 Session 的 cwd 无法与 Host 记录的 Local root 匹配。')
+      setError(t("the.source.session.cwd.cannot.be.matched.to"))
     }
   }
 
@@ -182,8 +185,8 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
     <span className="dsh-wtc-menu-summary">
       <strong>{triggerLabel}</strong>
       <span>{target.project.name}</span>
-      <span>来源 {shortOid(target.sourceOid)} · 当前 {shortOid(target.currentOid)} · Iteration {target.iteration}</span>
-      {expiry ? <span>保留至 {expiry}</span> : null}
+      <span>{t("source")} {shortOid(target.sourceOid)} {t("current")} {shortOid(target.currentOid)} {t("iteration.2")} {target.iteration}</span>
+      {expiry ? <span>{t("retained.until")} {expiry}</span> : null}
       {error ? <span className="dsh-wtc-menu-error">{error}</span> : null}
     </span>
   ) : error ?? triggerLabel
@@ -191,16 +194,16 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
   const items: MenuEntry[] = [
     { id: 'summary', label: summary, disabled: true },
     { type: 'separator', id: 'summary-separator' },
-    ...(target?.managedRoot && target.capabilities.open ? [{ id: 'reveal', label: '打开当前工作位置' } satisfies MenuEntry] : []),
+    ...(target?.managedRoot && target.capabilities.open ? [{ id: 'reveal', label: t("open.current.working.location") } satisfies MenuEntry] : []),
     ...(target && target.sourceSessionId !== sessionId
-      ? [{ id: 'source', label: '返回来源 Session' } satisfies MenuEntry]
+      ? [{ id: 'source', label: t("return.to.source.session") } satisfies MenuEntry]
       : []),
-    ...(target ? [{ id: 'manager', label: '管理关联 Worktrees' } satisfies MenuEntry] : []),
+    ...(target ? [{ id: 'manager', label: t("manage.linked.worktrees") } satisfies MenuEntry] : []),
   ]
   const footer: MenuEntry[] = target?.capabilities.retryCleanup
-    ? [{ id: 'retry_cleanup', label: pendingAction === 'retry_cleanup' ? '处理中…' : '重试清理环境', disabled: pendingAction !== null }]
+    ? [{ id: 'retry_cleanup', label: pendingAction === 'retry_cleanup' ? t("processing") : t("retry.environment.cleanup"), disabled: pendingAction !== null }]
     : target?.capabilities.discard
-      ? [{ id: 'discard', label: pendingAction === 'discard' ? '处理中…' : '放弃任务并清理 Worktree', danger: true, disabled: pendingAction !== null }]
+      ? [{ id: 'discard', label: pendingAction === 'discard' ? t("processing") : t("discard.task.and.clean.up.worktree"), danger: true, disabled: pendingAction !== null }]
       : []
 
   return (
@@ -228,11 +231,11 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
             aria-expanded={menuOpen}
             aria-haspopup="menu"
             aria-label={accessibleLabel}
-            title="Session Target 与关联 Worktrees"
+            title={t("session.target.and.linked.worktrees")}
             onClick={() => setMenuOpen(current => !current)}
           >
             <span className="dsh-wtc-target-dot" aria-hidden />
-            {target?.state === 'local' || !target ? triggerLabel : <>Worktree · <span>{stateLabel}</span></>}
+            {target?.state === 'local' || !target ? triggerLabel : <>{t("worktree.2")} <span>{stateLabel}</span></>}
             {expiry ? <span className="dsh-wtc-target-expiry">· {expiry}</span> : null}
             <span className="dsh-wtc-target-chevron" aria-hidden />
           </button>
@@ -253,17 +256,16 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
       <Modal
         open={cleanupConfirmOpen}
         onClose={() => setCleanupConfirmOpen(false)}
-        title="放弃任务并清理 Worktree？"
-        closeLabel="取消清理 Worktree"
+        title={t("discard.task.and.clean.up.worktree.2")}
+        closeLabel={t("cancel.worktree.cleanup")}
         description={target?.state === 'preview_active'
-          ? 'Host 会先安全撤回 Local Preview；无法证明可无损撤回时会停止并保留恢复现场。'
-          : 'Worktree 中尚未交付的修改会永久丢弃；Local Checkout 不会被静默覆盖。'}
+          ? t("host.will.safely.roll.back.local.preview.first")
+          : t("undelivered.worktree.changes.will.be.permanently.discarded.local.2")}
         footer={(
           <span className="dsh-wtc-confirm-actions">
-            <button type="button" className="dsh-wtc-button" onClick={() => setCleanupConfirmOpen(false)}>取消</button>
+            <button type="button" className="dsh-wtc-button" onClick={() => setCleanupConfirmOpen(false)}>{t("cancel")}</button>
             <button type="button" className="dsh-wtc-button dsh-wtc-danger" disabled={pendingAction !== null} onClick={() => { void discard() }}>
-              确认清理 Worktree
-            </button>
+              {t("confirm.worktree.cleanup")} </button>
           </span>
         )}
       />

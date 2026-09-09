@@ -1,3 +1,4 @@
+import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
@@ -33,16 +34,16 @@ function snapshotInput(input: PreSessionDraftState): PreSessionDraftState {
   }
 }
 
-function confirmationDescription(input: PreSessionDraftState): string {
+function confirmationDescription(input: PreSessionDraftState, t: ClientTranslator = defaultClientTranslator): string {
   const attachmentText = input.imageIds.length === 1
-    ? '1 个附件'
-    : `${input.imageIds.length} 个附件`
+    ? t("1.attachment")
+    : t("attachments", { p0: input.imageIds.length })
   if (input.draft.trim() !== '' && input.imageIds.length > 0) {
-    return `当前输入内容和 ${attachmentText}将移动到新的 Worktree 会话。`
+    return t("the.current.input.and.will.move.to.the", { p0: attachmentText })
   }
-  if (input.imageIds.length > 0) return `${attachmentText}将移动到新的 Worktree 会话。`
-  if (input.draft.trim() !== '') return '当前输入内容将移动到新的 Worktree 会话。'
-  return '将创建新的 Worktree 会话；当前 Local 会话不会收到消息。'
+  if (input.imageIds.length > 0) return t("will.move.to.the.new.worktree.session", { p0: attachmentText })
+  if (input.draft.trim() !== '') return t("the.current.input.will.move.to.the.new")
+  return t("a.new.worktree.session.will.be.created.the")
 }
 
 /** Blank-session Worktree switch mounted in Harness's public composer tool row. */
@@ -54,6 +55,8 @@ export function PreSessionWorktreeToggle({
   adapter,
   controller,
 }: PreSessionWorktreeToggleProps) {
+  const t = useClientTranslator()
+
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [state, setState] = useState<LoadState>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -118,13 +121,13 @@ export function PreSessionWorktreeToggle({
   const disabled = busy || selected || (!canCreate && !retryingLookup) || input.phase !== 'plain'
   const checked = selected || pendingInput !== null || state === 'preparing'
   const status = state === 'preparing'
-    ? '正在创建…'
+    ? t("creating")
     : selected
-      ? '已创建'
+      ? t("created")
       : pendingInput !== null
-        ? '待确认'
+        ? t("awaiting.confirmation")
         : state === 'error'
-          ? '重试'
+          ? t("retry")
           : 'Local'
 
   const beginConfirmation = async (): Promise<void> => {
@@ -178,7 +181,7 @@ export function PreSessionWorktreeToggle({
         onClick={() => { void beginConfirmation() }}
       >
         <span className="dsh-wt-pre-session-check" aria-hidden>{checked ? '✓' : ''}</span>
-        <span>Worktree</span>
+        <span>{t("worktree")}</span>
         <span className="dsh-wt-pre-session-state" aria-live="polite">{status}</span>
       </button>
       {error && pendingInput === null ? (
@@ -189,21 +192,20 @@ export function PreSessionWorktreeToggle({
       <Modal
         open={pendingInput !== null}
         onClose={cancelConfirmation}
-        title="在 Worktree 中开始？"
-        closeLabel="关闭"
-        description={pendingInput === null ? '' : confirmationDescription(pendingInput)}
+        title={t("start.in.a.worktree")}
+        closeLabel={t("close")}
+        description={pendingInput === null ? '' : confirmationDescription(pendingInput, t)}
         footer={(
           <>
             <button type="button" className="dsh-wt-button" disabled={state === 'preparing'} onClick={cancelConfirmation}>
-              取消
-            </button>
+              {t("cancel")} </button>
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={state === 'preparing'} onClick={() => { void confirm() }}>
-              {state === 'preparing' ? '正在创建…' : '创建并切换'}
+              {state === 'preparing' ? t("creating") : t("create.and.switch")}
             </button>
           </>
         )}
       >
-        <p className="dsh-wt-pre-session-note">Local 会话不会收到这条消息；切换后请在新会话中使用原生发送按钮。</p>
+        <p className="dsh-wt-pre-session-note">{t("the.local.session.will.not.receive.this.message")}</p>
         {error ? <p className="dsh-wt-error" role="alert">{error}</p> : null}
       </Modal>
     </span>

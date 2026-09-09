@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { ClientI18nProvider } from '../src/client/i18n.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails } from '../src/console-contract.js'
@@ -574,4 +575,28 @@ describe('Pre-session Worktree switch', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('true')
     expect(screen.getByRole('dialog', { name: '在 Worktree 中开始？' })).toBeTruthy()
   })
+})
+
+test('English pre-session confirmation uses localized copy without modifying the draft', async () => {
+  const fixture = successFixture()
+  fixture.adapter.current = vi.fn(async () => ({
+    ok: true,
+    value: { target: { ...fixture.target, checkoutId: null, targetSessionId: null, ownerSessionId: 'source-session', state: 'local', phase: 'local', managedRoot: null, capabilities: { ...fixture.target.capabilities, create: true } } },
+  }))
+  const prepare = vi.fn(async () => fixture.target)
+  const props = {
+    sessionId: 'source-session', session: { composerPhase: 'blank' as const },
+    input: { draft: '用户输入 unchanged', imageIds: ['附件-id'], occurrences: [], phase: 'plain' as const },
+    inputActions: { edit: vi.fn() }, adapter: fixture.adapter, controller: { prepare },
+  }
+  const view = render(<ClientI18nProvider language="en"><PreSessionWorktreeToggle {...props} /></ClientI18nProvider>)
+  const toggle = await screen.findByRole('switch', { name: 'Worktree' })
+  fireEvent.click(toggle)
+  expect(screen.getByRole('dialog', { name: 'Start in a Worktree?' })).toBeTruthy()
+  expect(screen.getByText('The current input and 1 attachment will move to the new Worktree session.')).toBeTruthy()
+  view.rerender(<ClientI18nProvider language="zh"><PreSessionWorktreeToggle {...props} /></ClientI18nProvider>)
+  expect(screen.getByRole('dialog', { name: '在 Worktree 中开始？' })).toBeTruthy()
+  expect(prepare).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '创建并切换' }))
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ draft: '用户输入 unchanged', imageIds: ['附件-id'] }) })))
 })

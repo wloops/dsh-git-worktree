@@ -1,3 +1,5 @@
+import { createTranslator, normalizeLanguage, type Language } from '../../i18n/core.js'
+import { transportMessages } from '../../i18n/transport-messages.js'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   WorktreeConsoleAdapter,
@@ -20,8 +22,8 @@ function transport<T>(message: string): WorktreeConsoleOutcome<T> {
   return { ok: false, error: { code: 'transport_unavailable', message } }
 }
 
-function malformed<T>(method: string): WorktreeConsoleOutcome<T> {
-  return { ok: false, error: { code: 'malformed_response', message: `Remote ${method} 返回了不符合 strict contract 的 payload` } }
+function malformed<T>(method: string, locale: Language): WorktreeConsoleOutcome<T> {
+  return { ok: false, error: { code: 'malformed_response', message: createTranslator(transportMessages, locale)('malformed', { method }) } }
 }
 
 function messageOf(value: unknown): string {
@@ -35,74 +37,51 @@ function isCodecRejection(value: unknown): boolean {
   return message.includes('rejected "') || message.includes('返回了不符合 strict contract')
 }
 
-export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote): WorktreeConsoleAdapter {
+export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote, getLanguage: () => Language = () => 'zh'): WorktreeConsoleAdapter {
   const descriptors = new Map(WORKTREE_CONSOLE_DESCRIPTORS.map(descriptor => [descriptor.method, descriptor]))
 
-  async function invoke<T>(method: string, call: () => Promise<RemoteResult<WorktreeConsoleOutcome<T>>>): Promise<WorktreeConsoleOutcome<T>> {
+  async function invoke<T>(method: string, call: (locale: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<T>>>): Promise<WorktreeConsoleOutcome<T>> {
+    const locale = normalizeLanguage(getLanguage())
     let carrier: RemoteResult<WorktreeConsoleOutcome<T>>
     try {
-      carrier = await call()
+      carrier = await call(locale)
     } catch (error) {
-      return isCodecRejection(error) ? malformed(method) : transport(messageOf(error))
+      return isCodecRejection(error) ? malformed(method, locale) : transport(messageOf(error))
     }
-    if (typeof carrier !== 'object' || carrier === null || typeof carrier.ok !== 'boolean') return malformed(method)
-    if (!carrier.ok) return isCodecRejection(carrier.error) ? malformed(method) : transport(carrier.error.message)
+    if (typeof carrier !== 'object' || carrier === null || typeof carrier.ok !== 'boolean') return malformed(method, locale)
+    if (!carrier.ok) return isCodecRejection(carrier.error) ? malformed(method, locale) : transport(carrier.error.message)
     const descriptor = descriptors.get(method)
-    if (descriptor?.result.mode !== 'strict') return malformed(method)
+    if (descriptor?.result.mode !== 'strict') return malformed(method, locale)
     try {
       return descriptor.result.schema.parse(carrier.value) as WorktreeConsoleOutcome<T>
     } catch {
-      return malformed(method)
+      return malformed(method, locale)
     }
   }
 
   return {
-    sidebarTopology: () => invoke<WorktreeSidebarTopologyResponse>('sidebarTopology', () => remote.sidebarTopology()),
-    current: request => invoke<WorktreeConsoleCurrentResponse>('current', () => remote.current(request.sessionId)),
-    list: request => invoke<WorktreeConsoleListResponse>('list', () => remote.list(request.sessionId, request.needsAttention, request.includeDelivered)),
-    create: request => invoke<WorktreeConsoleCreateResponse>('create', () => remote.create(request.sourceSessionId)),
-    inspect: request => invoke<WorktreeConsoleInspectResponse>('inspect', () => remote.inspect(request.sessionId, request.checkoutId)),
-    reviewDiff: request => invoke<WorktreeConsoleReviewDiffResponse>('reviewDiff', () => remote.reviewDiff(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
-    preflight: request => invoke<WorktreeConsolePreflightResponse>('preflight', () => remote.preflight(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
-    previewRecoveryPreflight: request => invoke<WorktreeConsolePreviewRecoveryPreflightResponse>('previewRecoveryPreflight', () => remote.previewRecoveryPreflight(
-      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId,
-    )),
-    preparePreviewRecoveryAnalysis: request => invoke<WorktreeConsoleMutationResponse>('preparePreviewRecoveryAnalysis', () => remote.preparePreviewRecoveryAnalysis(
-      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, request.recoveryProof,
-    )),
-    createPreviewRecoveryHandoff: request => invoke<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>('createPreviewRecoveryHandoff', () => remote.createPreviewRecoveryHandoff(
-      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, request.recoveryProof,
-    )),
-    preview: request => invoke<WorktreeConsoleMutationResponse>('preview', () => remote.preview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId)),
-    checkpoint: request => invoke<WorktreeConsoleMutationResponse>('checkpoint', () => remote.checkpoint(
-      request.sessionId,
-      request.checkoutId,
-      request.expectedRevision,
-      request.expectedReviewId,
-      request.expectedGeneration,
-      request.requestId,
-      request.commitMessage,
-    )),
-    resumeRevision: request => invoke<WorktreeConsoleMutationResponse>('resumeRevision', () => request.conflictContinuation
-      ? remote.resumeRevision(
-          request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.conflictContinuation,
-        )
-      : remote.resumeRevision(
-          request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId,
-        )),
-    prepareReviewRegeneration: request => invoke<WorktreeConsoleMutationResponse>('prepareReviewRegeneration', () => remote.prepareReviewRegeneration(
-      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId,
-    )),
-    rollbackPreview: request => invoke<WorktreeConsoleMutationResponse>('rollbackPreview', () => remote.rollbackPreview(
-      request.sessionId, request.checkoutId, request.expectedRevision, request.resumeRevision, request.recoveryProof,
-    )),
-    discard: request => invoke<WorktreeConsoleMutationResponse>('discard', () => remote.discard(request.sessionId, request.checkoutId, request.expectedRevision, request.confirmDirty, request.rollbackPreview)),
-    finalize: request => invoke<WorktreeConsoleMutationResponse>('finalize', () => remote.finalize(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention)),
-    finalizePreview: request => invoke<WorktreeConsoleMutationResponse>('finalizePreview', () => remote.finalizePreview(
-      request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention, request.recoveryProof,
-    )),
-    setRetention: request => invoke<WorktreeConsoleMutationResponse>('setRetention', () => remote.setRetention(request.sessionId, request.checkoutId, request.expectedRevision, request.retention)),
-    retryCleanup: request => invoke<WorktreeConsoleMutationResponse>('retryCleanup', () => remote.retryCleanup(request.sessionId, request.checkoutId, request.expectedRevision)),
-    beginNextIteration: request => invoke<WorktreeConsoleMutationResponse>('beginNextIteration', () => remote.beginNextIteration(request.sessionId, request.checkoutId, request.expectedRevision)),
+    sidebarTopology: () => invoke<WorktreeSidebarTopologyResponse>('sidebarTopology', locale => remote.sidebarTopology(locale)),
+    current: request => invoke<WorktreeConsoleCurrentResponse>('current', locale => remote.current(request.sessionId, locale)),
+    list: request => invoke<WorktreeConsoleListResponse>('list', locale => remote.list(request.sessionId, request.needsAttention, request.includeDelivered, locale)),
+    create: request => invoke<WorktreeConsoleCreateResponse>('create', locale => remote.create(request.sourceSessionId, locale)),
+    inspect: request => invoke<WorktreeConsoleInspectResponse>('inspect', locale => remote.inspect(request.sessionId, request.checkoutId, locale)),
+    reviewDiff: request => invoke<WorktreeConsoleReviewDiffResponse>('reviewDiff', locale => remote.reviewDiff(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, locale)),
+    preflight: request => invoke<WorktreeConsolePreflightResponse>('preflight', locale => remote.preflight(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, locale)),
+    previewRecoveryPreflight: request => invoke<WorktreeConsolePreviewRecoveryPreflightResponse>('previewRecoveryPreflight', locale => remote.previewRecoveryPreflight(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, locale)),
+    preparePreviewRecoveryAnalysis: request => invoke<WorktreeConsoleMutationResponse>('preparePreviewRecoveryAnalysis', locale => remote.preparePreviewRecoveryAnalysis(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, request.recoveryProof, locale)),
+    createPreviewRecoveryHandoff: request => invoke<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>('createPreviewRecoveryHandoff', locale => remote.createPreviewRecoveryHandoff(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedPreviewId, request.recoveryProof, locale)),
+    preview: request => invoke<WorktreeConsoleMutationResponse>('preview', locale => remote.preview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, locale)),
+    checkpoint: request => invoke<WorktreeConsoleMutationResponse>('checkpoint', locale => remote.checkpoint(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.expectedGeneration, request.requestId, request.commitMessage, locale)),
+    resumeRevision: request => invoke<WorktreeConsoleMutationResponse>('resumeRevision', locale => request.conflictContinuation
+      ? remote.resumeRevision(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.conflictContinuation, locale)
+      : remote.resumeRevision(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, undefined, locale)),
+    prepareReviewRegeneration: request => invoke<WorktreeConsoleMutationResponse>('prepareReviewRegeneration', locale => remote.prepareReviewRegeneration(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, locale)),
+    rollbackPreview: request => invoke<WorktreeConsoleMutationResponse>('rollbackPreview', locale => remote.rollbackPreview(request.sessionId, request.checkoutId, request.expectedRevision, request.resumeRevision, request.recoveryProof, locale)),
+    discard: request => invoke<WorktreeConsoleMutationResponse>('discard', locale => remote.discard(request.sessionId, request.checkoutId, request.expectedRevision, request.confirmDirty, request.rollbackPreview, locale)),
+    finalize: request => invoke<WorktreeConsoleMutationResponse>('finalize', locale => remote.finalize(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention, locale)),
+    finalizePreview: request => invoke<WorktreeConsoleMutationResponse>('finalizePreview', locale => remote.finalizePreview(request.sessionId, request.checkoutId, request.expectedRevision, request.expectedReviewId, request.commitMessage, request.retention, request.recoveryProof, locale)),
+    setRetention: request => invoke<WorktreeConsoleMutationResponse>('setRetention', locale => remote.setRetention(request.sessionId, request.checkoutId, request.expectedRevision, request.retention, locale)),
+    retryCleanup: request => invoke<WorktreeConsoleMutationResponse>('retryCleanup', locale => remote.retryCleanup(request.sessionId, request.checkoutId, request.expectedRevision, locale)),
+    beginNextIteration: request => invoke<WorktreeConsoleMutationResponse>('beginNextIteration', locale => remote.beginNextIteration(request.sessionId, request.checkoutId, request.expectedRevision, locale)),
   }
 }

@@ -3,6 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import '@deepseek-ai/dsh-system-prompt'
 import type { SessionCheckoutModule } from './index.js'
+import { languageForInvocation, withHostLanguage } from './i18n/host.js'
 
 interface ContextAgent {
   session?: { id?: unknown }
@@ -16,7 +17,9 @@ export function registerSessionTargetContext(ctx: Context, module: SessionChecko
       order: 118,
       text: (context) => {
         const sessionId = (context.agent as ContextAgent | undefined)?.session?.id
-        return typeof sessionId === 'string' ? module.runtimeContext(sessionId) : ''
+        return withHostLanguage(languageForInvocation(context.agent, scope), () => (
+          typeof sessionId === 'string' ? module.runtimeContext(sessionId) : ''
+        ))
       },
     })
   })

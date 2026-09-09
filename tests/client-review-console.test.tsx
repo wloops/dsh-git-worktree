@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { ClientI18nProvider } from '../src/client/i18n.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { WorktreeReviewRow } from '../src/client/WorktreeReviewRow.js'
@@ -322,7 +323,7 @@ describe('Domi-style Worktree Review', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '保存阶段并继续' }))
     expect(screen.getByRole('dialog', { name: '保存当前进度并继续？' })).toBeTruthy()
     expect(screen.getByText(/阶段不会发布到 Local/)).toBeTruthy()
-    const message = screen.getByRole('textbox', { name: 'Checkpoint Commit Message' })
+    const message = screen.getByRole('textbox', { name: '阶段提交说明' })
     fireEvent.change(message, { target: { value: 'feat(checkpoint): save stage one' } })
     const confirm = screen.getByRole('button', { name: '保存进度并继续' })
     fireEvent.click(confirm)
@@ -378,7 +379,7 @@ describe('Domi-style Worktree Review', () => {
     fireEvent.click(screen.getByLabelText('更多交付操作'))
     fireEvent.click(screen.getByRole('menuitem', { name: '跳过预览并保存' }))
     expect(screen.getByRole('dialog', { name: '跳过预览并直接保存？' })).toBeTruthy()
-    const message = screen.getByRole('textbox', { name: 'Commit Message' }) as HTMLTextAreaElement
+    const message = screen.getByRole('textbox', { name: '提交说明' }) as HTMLTextAreaElement
     fireEvent.change(message, { target: { value: 'feat(review): direct finish' } })
     fireEvent.click(screen.getByRole('checkbox', { name: '提交后暂时保留当前运行环境' }))
     fireEvent.change(screen.getByRole('combobox', { name: '保留时长' }), { target: { value: 'retain_3d' } })
@@ -591,7 +592,7 @@ describe('Domi-style Worktree Review', () => {
     }
     render(<WorktreeReviewPanel review={review()} adapter={fixture.adapter} identity={identity()} target={delivered} />)
 
-    expect(screen.getByText('Delivery Proof')).toBeTruthy()
+    expect(screen.getByText('交付证明')).toBeTruthy()
     expect(screen.getByText(/环境已清理/)).toBeTruthy()
     expect(screen.getByText(/focused tests passed/)).toBeTruthy()
     expect(screen.getByText(/Commit 仍在 Local 历史中/)).toBeTruthy()
@@ -645,5 +646,44 @@ describe('Domi-style Worktree Review', () => {
     expect(screen.getByText('Review summary')).toBeTruthy()
     expect(screen.getByText(/连接后即可执行验收操作/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: '预览修改' })).toBeNull()
+  })
+})
+
+describe('English review dialogs and live locale changes', () => {
+  test('switches an open commit dialog without changing user input or dispatching writes', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.finalize = vi.fn(fixture.adapter.finalize)
+    const view = render(<ClientI18nProvider language="en"><WorktreeReviewPanel
+      review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target}
+    /></ClientI18nProvider>)
+    await screen.findByText('Sync conditions confirmed')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Skip preview and save' }))
+    expect(screen.getByRole('dialog', { name: 'Skip preview and save directly?' })).toBeTruthy()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Commit Message' }), { target: { value: '保留用户 commit {title}' } })
+    view.rerender(<ClientI18nProvider language="zh"><WorktreeReviewPanel
+      review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target}
+    /></ClientI18nProvider>)
+    expect(screen.getByRole('dialog', { name: '跳过预览并直接保存？' })).toBeTruthy()
+    expect((screen.getByRole('textbox', { name: '提交说明' }) as HTMLTextAreaElement).value).toBe('保留用户 commit {title}')
+    expect(fixture.adapter.finalize).not.toHaveBeenCalled()
+    view.rerender(<ClientI18nProvider language="en"><WorktreeReviewPanel
+      review={review()} adapter={fixture.adapter} identity={identity()} target={fixture.target}
+    /></ClientI18nProvider>)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm delivery and clean up' }))
+    await waitFor(() => expect(fixture.adapter.finalize).toHaveBeenCalledWith(expect.objectContaining({ commitMessage: '保留用户 commit {title}', retention: 'cleanup' })))
+  })
+
+  test('translates queued action feedback on switching, without repeating the action', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.checkpoint = vi.fn(fixture.adapter.checkpoint)
+    const props = { review: review(), adapter: fixture.adapter, identity: identity(), target: fixture.target }
+    const view = render(<ClientI18nProvider language="en"><WorktreeReviewPanel {...props} /></ClientI18nProvider>)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Save stage and continue' }))
+    expect(screen.getByRole('dialog', { name: 'Save current progress and continue?' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Save progress and continue' }))
+    await screen.findByText('Saved Worktree stage 1 and resumed editing; the stage has not been published to Local.')
+    view.rerender(<ClientI18nProvider language="zh"><WorktreeReviewPanel {...props} /></ClientI18nProvider>)
+    expect(screen.getByText('已保存第 1 个 Worktree 阶段并继续修改；阶段尚未发布到 Local。')).toBeTruthy()
+    expect(fixture.adapter.checkpoint).toHaveBeenCalledTimes(1)
   })
 })

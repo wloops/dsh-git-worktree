@@ -1,3 +1,4 @@
+import { hostMessage } from '../i18n/host.js'
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import type {
@@ -83,7 +84,7 @@ export interface WorktreeConsoleControlPlane {
 
 function recordOf(registry: SessionCheckoutRegistryPort, checkoutId: string): ManagedCheckoutRecord {
   const record = registry.read().managedCheckouts[checkoutId]
-  if (record === undefined) throw domainError('checkout_missing', 'Worktree 记录不存在')
+  if (record === undefined) throw domainError('checkout_missing', hostMessage('theWorktreeRecordDoesNotExist'))
   return record
 }
 
@@ -103,7 +104,7 @@ function sidebarTaskState(record: ManagedCheckoutRecord): WorktreeSidebarTaskSta
 
 function readyReview(record: ManagedCheckoutRecord) {
   if (record.phase !== 'ready' || record.delivery.state !== 'ready_for_review') {
-    throw domainError('operation_not_allowed', '当前 Worktree 尚未处于可验收状态')
+    throw domainError('operation_not_allowed', hostMessage('theCurrentWorktreeIsNotReadyForReview'))
   }
   return record.delivery.review
 }
@@ -113,7 +114,7 @@ function previewReview(record: ManagedCheckoutRecord) {
     record.phase !== 'ready'
     || (record.delivery.state !== 'preview_active' && record.delivery.state !== 'preview_detached')
   ) {
-    throw domainError('preview_not_active', '当前没有等待验收的 Local Preview')
+    throw domainError('preview_not_active', hostMessage('thereIsNoLocalPreviewAwaitingAcceptance'))
   }
   return record.delivery.review
 }
@@ -135,11 +136,11 @@ function applyConflictContinuation(
   const checkoutId = result.target.checkout.id
   const revision = result.target.revision
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(result.localHeadOid)) {
-    throw domainError('git_error', '冲突恢复缺少有效的 Local HEAD 身份')
+    throw domainError('git_error', hostMessage('conflictRecoveryIsMissingAValidLocalHEADIdentity'))
   }
   const localHeadOid = result.localHeadOid
   if (result.conflictingFiles.length > 500 || !result.conflictingFiles.every(safeConflictFile)) {
-    throw domainError('git_error', '冲突恢复包含不安全或越界的文件身份')
+    throw domainError('git_error', hostMessage('conflictRecoveryContainsUnsafeOrOutOfBoundsFile'))
   }
   const conflictingFiles = [...result.conflictingFiles]
   return {
@@ -154,7 +155,7 @@ function applyConflictContinuation(
 }
 
 function preflightFailure(view: Awaited<ReturnType<NonNullable<SessionCheckoutModule['preflight']>>> | undefined) {
-  if (view === undefined) return failure<never>('git_error', '当前 SessionCheckoutModule 不支持验收预检')
+  if (view === undefined) return failure<never>('git_error', hostMessage('theCurrentSessionCheckoutModuleDoesNotSupportAcceptancePreflight'))
   if (view.status !== 'blocked') return undefined
   const code = view.reason === 'stale_isolated' ? 'stale_isolated'
     : view.reason === 'stale_local' ? 'stale_local'
@@ -172,13 +173,13 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
   async function unboundLocalTarget(sessionId: string): Promise<SessionTargetView> {
     const session = options.lookup.getSession(sessionId)
-    if (session === undefined) throw domainError('session_not_found', '当前 Session 不存在')
-    if (session.projectId === undefined) throw domainError('project_not_found', '当前 Session 尚未关联项目')
+    if (session === undefined) throw domainError('session_not_found', hostMessage('theCurrentSessionDoesNotExist'))
+    if (session.projectId === undefined) throw domainError('project_not_found', hostMessage('theCurrentSessionIsNotAssociatedWithAProject'))
     const project = options.lookup.getProject(session.projectId)
-    if (project === undefined) throw domainError('project_not_found', '当前 Session 项目不存在')
-    if (!options.files.exists(project.root)) throw domainError('project_root_missing', '当前 Session 项目目录不存在')
+    if (project === undefined) throw domainError('project_not_found', hostMessage('theCurrentSessionSProjectDoesNotExist'))
+    if (!options.files.exists(project.root)) throw domainError('project_root_missing', hostMessage('theCurrentSessionSProjectDirectoryDoesNotExist'))
     const snapshot = await options.git.inspect(project.root)
-    if (snapshot === null) throw domainError('not_git_repository', '当前 Session 项目不是可用的 Git Worktree')
+    if (snapshot === null) throw domainError('not_git_repository', hostMessage('theCurrentSessionSProjectIsNotAnAvailable'))
     const status = await options.git.status(project.root)
     return {
       project: { id: project.id, name: project.name },
@@ -210,7 +211,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     const session = options.lookup.getSession(sessionId)
     const project = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
     if (project === undefined) {
-      throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
+      throw domainError('project_mismatch', hostMessage('theCurrentSessionWorkspaceCannotBeProvenToBelong'))
     }
     const cleanedOwnerCwd = record.ownerSessionId === sessionId
       && record.phase === 'discarded'
@@ -219,11 +220,11 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       && sameLocalRoot(resolve(project.root), resolve(expectedRoot))
     if (cleanedOwnerCwd) return
     if (!options.files.exists(project.root)) {
-      throw domainError('project_mismatch', '当前 Session Workspace 无法证明属于该 Worktree 的原始项目')
+      throw domainError('project_mismatch', hostMessage('theCurrentSessionWorkspaceCannotBeProvenToBelong'))
     }
     const workspaceRoot = await options.files.canonicalize(project.root)
     if (!sameLocalRoot(workspaceRoot, expectedRoot)) {
-      throw domainError('project_mismatch', '当前 Session cwd 与 Worktree 授权边界不一致')
+      throw domainError('project_mismatch', hostMessage('theCurrentSessionCwdDoesNotMatchTheWorktree'))
     }
   }
 
@@ -231,17 +232,17 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     const caller = await options.module.inspect(sessionId)
     const record = recordOf(options.registry, checkoutId)
     if (record.ownerSessionId !== sessionId && record.sourceSessionId !== sessionId) {
-      throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+      throw domainError('not_owner', hostMessage('theCurrentSessionIsNotAllowedToAccessThis'))
     }
     if (record.projectId !== caller.project.id) {
-      throw domainError('project_mismatch', 'Worktree 与当前 Session 项目不一致')
+      throw domainError('project_mismatch', hostMessage('worktreeDoesNotMatchTheCurrentSessionSProject'))
     }
     const expectedRoot = record.ownerSessionId === sessionId ? record.managedRoot : record.localRoot
     await verifyCallerRoot(sessionId, record, expectedRoot)
     if (record.phase !== 'discarded') {
       const visible = await options.module.listManagedWorktreesForSession(sessionId, { checkoutId })
       if (!visible.some(item => item.checkoutId === checkoutId)) {
-        throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+        throw domainError('not_owner', hostMessage('theCurrentSessionIsNotAllowedToAccessThis'))
       }
     }
     return record
@@ -261,7 +262,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     }
     const caller = await callerTarget(sessionId)
     if (caller.checkout.kind !== 'isolated') {
-      throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+      throw domainError('not_owner', hostMessage('theCurrentSessionIsNotAllowedToAccessThis'))
     }
     const anchor = await authorize(sessionId, caller.checkout.id)
     const sourceSessionId = anchor.sourceSessionId ?? anchor.ownerSessionId
@@ -278,10 +279,10 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       && requested.projectId === anchor.projectId
       && sameLocalRoot(requested.localRoot, anchor.localRoot)
     if (!sameLinkedGroup && !exactAcceptanceHolder) {
-      throw domainError('not_owner', '当前 Session 无权访问该 Worktree')
+      throw domainError('not_owner', hostMessage('theCurrentSessionIsNotAllowedToAccessThis'))
     }
     if (!ownerSessionAvailable(requested)) {
-      throw domainError('checkout_missing', '关联 Worktree 的 owner Session 不可用')
+      throw domainError('checkout_missing', hostMessage('theAssociatedWorktreeSOwnerSessionIsUnavailable'))
     }
     await verifyCallerRoot(requested.ownerSessionId, requested, requested.managedRoot)
     if (exactAcceptanceHolder) {
@@ -296,7 +297,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         currentHolder?.checkoutId !== currentRequested.checkoutId
         || currentRequested.ownerSessionId !== requested.ownerSessionId
         || !sameLocalRoot(currentRequested.localRoot, currentAnchor.localRoot)
-      ) throw domainError('not_owner', '验收槽位占用者已变化，请重新检查')
+      ) throw domainError('not_owner', hostMessage('theAcceptanceSlotHolderHasChangedCheckAgain'))
       return {
         record: currentRequested,
         linkedRead: true,
@@ -314,7 +315,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     if (record.phase === 'discarded') return { managedRoot: null }
     const managedRoot = await options.module.resolveManagedRoot(record.checkoutId)
     const snapshot = await options.git.inspect(managedRoot)
-    if (snapshot === null) throw domainError('checkout_mismatch', 'Worktree Git 身份无法验证')
+    if (snapshot === null) throw domainError('checkout_mismatch', hostMessage('theWorktreeGitIdentityCannotBeVerified'))
     const status = await options.git.status(managedRoot)
     return { managedRoot, snapshot, dirty: status.dirty }
   }
@@ -392,7 +393,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || !sameLocalRoot(currentRequested.localRoot, currentAnchor.localRoot)
         || observed.managedRoot === null
         || !sameLocalRoot(observed.managedRoot, currentRequested.managedRoot)
-      ) throw domainError('not_owner', '验收槽位占用者已变化，请重新检查')
+      ) throw domainError('not_owner', hostMessage('theAcceptanceSlotHolderHasChangedCheckAgain'))
       projectedRecord = currentRequested
     }
     return projectReviewSlot(projectedRecord, projectDetails(
@@ -489,7 +490,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         const session = options.lookup.getSession(request.sessionId)
         const project = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
         if (project === undefined || project.id !== caller.project.id || !options.files.exists(project.root)) {
-          throw domainError('project_mismatch', '当前 Session Workspace 无法证明关联 Worktree 项目')
+          throw domainError('project_mismatch', hostMessage('theCurrentSessionWorkspaceCannotBeProvenToBe'))
         }
         localRoot = await options.files.canonicalize(project.root)
       }
@@ -529,7 +530,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         record.sourceSessionId !== sourceSessionId
         || record.ownerSessionId !== targetSessionId
         || observed.managedRoot !== launch.managedRoot
-      ) throw domainError('checkout_mismatch', '新建 Worktree 的 Host 身份校验失败')
+      ) throw domainError('checkout_mismatch', hostMessage('hostIdentityVerificationFailedForTheNewlyCreatedWorktree'))
       return {
         target: projectDetails(
           record,
@@ -549,14 +550,14 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     reviewDiff: async request => {
       try {
         const record = await authorize(request.sessionId, request.checkoutId)
-        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', '只有 owner Isolated Session 可以读取验收 Diff')
-        if (record.revision !== request.expectedRevision) return failure('stale_target', 'Session Target 已变化，请刷新')
+        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanReadTheReview'))
+        if (record.revision !== request.expectedRevision) return failure('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
         const review = readyReview(record)
-        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', 'Review 身份已变化，请刷新')
+        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', hostMessage('theReviewIdentityHasChangedRefresh'))
         const before = await options.module.preflight?.(request.sessionId, request.expectedRevision)
         if (before === undefined || before.status === 'blocked') return preflightFailure(before)!
         if (before.reviewId !== review.reviewId || before.isolatedHeadOid !== review.isolatedHeadOid) {
-          return failure('stale_isolated', 'Ready 后 Isolated HEAD 已变化')
+          return failure('stale_isolated', hostMessage('isolatedHEADChangedAfterReady'))
         }
         const observed = await observe(record)
         const diff = await options.reviewDiff.read({
@@ -568,7 +569,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         })
         const after = await options.module.preflight?.(request.sessionId, request.expectedRevision)
         if (after === undefined || after.status === 'blocked') {
-          return failure('stale_isolated', 'Ready 后 Isolated 内容已变化，Diff bytes 已丢弃')
+          return failure('stale_isolated', hostMessage('isolatedContentChangedAfterReadyDiffBytesWereDiscarded'))
         }
         const current = recordOf(options.registry, request.checkoutId)
         if (
@@ -578,7 +579,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
           || current.delivery.state !== 'ready_for_review'
           || current.delivery.review.reviewId !== review.reviewId
           || current.delivery.review.isolatedFingerprint !== review.isolatedFingerprint
-        ) return failure('stale_isolated', 'Ready 后 Isolated 内容已变化，Diff bytes 已丢弃')
+        ) return failure('stale_isolated', hostMessage('isolatedContentChangedAfterReadyDiffBytesWereDiscarded'))
         return { ok: true, value: diff }
       } catch (error) {
         if (error instanceof ReviewDiffStaleError) return failure('stale_isolated', error.message)
@@ -588,32 +589,32 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
     preflight: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以执行同步预检')
-      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanRunSyncPreflight436'))
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
       const review = readyReview(record)
-      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', hostMessage('theReviewIdentityHasChangedRefresh'))
       const preflight = await options.module.preflight?.(request.sessionId, request.expectedRevision)
-      if (preflight === undefined) throw domainError('git_error', '当前 SessionCheckoutModule 不支持验收预检')
+      if (preflight === undefined) throw domainError('git_error', hostMessage('theCurrentSessionCheckoutModuleDoesNotSupportAcceptancePreflight'))
       return { preflight }
     }),
 
     previewRecoveryPreflight: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以检查 Preview 恢复')
-      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanCheckPreviewRecovery440'))
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
       if (
         record.phase !== 'ready'
         || record.delivery.state !== 'preview_detached'
         || record.delivery.review.reviewId !== request.expectedReviewId
         || record.delivery.preview.previewId !== request.expectedPreviewId
-      ) throw domainError('stale_target', 'Detached Preview 身份已变化，请刷新')
+      ) throw domainError('stale_target', hostMessage('theDetachedPreviewIdentityHasChangedRefresh'))
       const preflight = await options.module.preflightPreviewRecovery?.(
         request.sessionId,
         request.expectedRevision,
         request.expectedReviewId,
         request.expectedPreviewId,
       )
-      if (preflight === undefined) throw domainError('git_error', '当前 SessionCheckoutModule 不支持 Preview Recovery 预检')
+      if (preflight === undefined) throw domainError('git_error', hostMessage('theCurrentSessionCheckoutModuleDoesNotSupportPreviewRecoveryPreflight'))
       return { preflight }
     }),
 
@@ -626,7 +627,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || request.recoveryProof.revision !== request.expectedRevision
         || request.recoveryProof.reviewId !== request.expectedReviewId
         || request.recoveryProof.previewId !== request.expectedPreviewId
-      ) throw domainError('stale_target', 'Preview Recovery 分析身份不匹配')
+      ) throw domainError('stale_target', hostMessage('thePreviewRecoveryAnalysisIdentityDoesNotMatch'))
       const prepared = await options.module.preparePreviewRecoveryAnalysis(
         request.sessionId,
         request.recoveryProof,
@@ -656,7 +657,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || request.recoveryProof.revision !== request.expectedRevision
         || request.recoveryProof.reviewId !== request.expectedReviewId
         || request.recoveryProof.previewId !== request.expectedPreviewId
-      ) throw domainError('stale_target', 'Preview Recovery handoff 身份不匹配')
+      ) throw domainError('stale_target', hostMessage('thePreviewRecoveryHandoffIdentityDoesNotMatch'))
       const targetSessionId = createTargetSessionId()
       const launch = await options.module.createPreviewRecoveryHandoff(
         request.sessionId,
@@ -671,7 +672,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || created.recoveryContinuation?.kind !== 'worktree_preview_recovery_handoff'
         || created.recoveryContinuation.requestId !== launch.continuation.requestId
         || observed.managedRoot !== launch.managedRoot
-      ) throw domainError('checkout_mismatch', 'Recovery handoff Worktree 的 Host 身份校验失败')
+      ) throw domainError('checkout_mismatch', hostMessage('hostIdentityVerificationFailedForTheRecoveryHandoffWorktree'))
       return {
         target: projectDetails(
           created,
@@ -698,10 +699,10 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
     checkpoint: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以保存阶段')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanSaveACheckpoint447'))
       const commitMessage = request.commitMessage.trim()
       if (!commitMessage || commitMessage.length > 500 || !safeRecoveryRequestId(request.requestId)) {
-        throw domainError('invalid_input', 'Checkpoint Commit Message 或 requestId 无效')
+        throw domainError('invalid_input', hostMessage('theCheckpointCommitMessageOrRequestIdIsInvalid'))
       }
       const result = await options.module.operate({
         action: 'checkpoint',
@@ -716,20 +717,20 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       if (result.status === 'preview_detached') {
         return { ...(await mutationResponse(request.sessionId, request.checkoutId)), changedFiles: [...result.changedFiles] }
       }
-      if (result.status !== 'checkpointed') throw domainError('operation_not_allowed', 'Checkpoint 返回了非预期状态')
+      if (result.status !== 'checkpointed') throw domainError('operation_not_allowed', hostMessage('checkpointReturnedAnUnexpectedState'))
       const response = await mutationResponse(request.sessionId, request.checkoutId)
       if (response.target.state !== 'working' || response.target.revision !== result.target.revision) {
-        throw domainError('checkout_mismatch', 'Checkpoint 后 Worktree 状态未收敛到 Working')
+        throw domainError('checkout_mismatch', hostMessage('worktreeDidNotReturnToWorkingAfterCheckpoint'))
       }
       return { ...response, checkpoint: result.checkpoint, changedFiles: [...result.changedFiles] }
     }),
 
     preview: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以预览修改')
-      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanPreviewChanges'))
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
       const review = readyReview(record)
-      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', hostMessage('theReviewIdentityHasChangedRefresh'))
       const result = await options.module.operate({
         action: 'preview', sessionId: request.sessionId, expectedRevision: request.expectedRevision,
       })
@@ -737,11 +738,11 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       if (result.status === 'conflict') {
         throw domainError(
           'apply_conflict',
-          'Local Preview 预检发现内容冲突',
+          hostMessage('localPreviewPreflightFoundContentConflicts'),
           applyConflictContinuation(result, review.reviewId),
         )
       }
-      if (result.status !== 'previewed') throw domainError('operation_not_allowed', 'Preview 返回了非预期状态')
+      if (result.status !== 'previewed') throw domainError('operation_not_allowed', hostMessage('previewReturnedAnUnexpectedState'))
       return {
         ...(await mutationResponse(request.sessionId, request.checkoutId)),
         changedFiles: [...result.changedFiles],
@@ -750,10 +751,10 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
     resumeRevision: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以继续修改')
-      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanResumeEditing456'))
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
       const review = readyReview(record)
-      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', hostMessage('theReviewIdentityHasChangedRefresh'))
       const requestedRecovery = request.conflictContinuation
       if (requestedRecovery && (
         requestedRecovery.kind !== 'worktree_apply_conflict'
@@ -764,7 +765,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(requestedRecovery.localHeadOid)
         || requestedRecovery.conflictingFiles.length > 500
         || !requestedRecovery.conflictingFiles.every(safeConflictFile)
-      )) throw domainError('invalid_input', '冲突恢复请求身份无效')
+      )) throw domainError('invalid_input', hostMessage('invalidConflictRecoveryRequestIdentity'))
       const recovery = requestedRecovery ? {
         kind: 'worktree_apply_conflict' as const,
         requestId: `conflict-recovery:${randomUUID()}`,
@@ -786,7 +787,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
             request.expectedReviewId,
           )
       if (target.checkout.id !== request.checkoutId || target.delivery?.state !== 'working') {
-        throw domainError('checkout_mismatch', '恢复编辑后 Worktree 身份或状态不一致')
+        throw domainError('checkout_mismatch', hostMessage('theWorktreeIdentityOrStateDoesNotMatchAfter'))
       }
       const response = await mutationResponse(request.sessionId, request.checkoutId)
       if (!requestedRecovery) return response
@@ -796,7 +797,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || current.kind !== 'worktree_apply_conflict'
         || current.requestId !== recovery!.requestId
         || current.workingRevision !== response.target.revision
-      ) throw domainError('checkout_mismatch', 'Host 未能持久化精确冲突恢复凭证')
+      ) throw domainError('checkout_mismatch', hostMessage('theHostCouldNotPersistTheExactConflictRecovery'))
       return {
         ...response,
         recoveryContinuation: {
@@ -813,10 +814,10 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
     prepareReviewRegeneration: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以请求重新生成验收结果')
-      if (record.revision !== request.expectedRevision) throw domainError('stale_target', 'Session Target 已变化，请刷新')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanRequestReviewRegeneration462'))
+      if (record.revision !== request.expectedRevision) throw domainError('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
       const review = readyReview(record)
-      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', 'Review 身份已变化，请刷新')
+      if (review.reviewId !== request.expectedReviewId) throw domainError('stale_target', hostMessage('theReviewIdentityHasChangedRefresh'))
       const prepared = await options.module.prepareReviewRegeneration(
         request.sessionId,
         request.expectedRevision,
@@ -838,7 +839,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
     rollbackPreview: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
-      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', '只有 owner Isolated Session 可以撤回 Local Preview')
+      if (record.ownerSessionId !== request.sessionId) throw domainError('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanRollBackLocal'))
       const result = await options.module.operate({
         action: 'rollback_preview',
         sessionId: request.sessionId,
@@ -848,7 +849,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       })
       if (result.status === 'error') throw domainError(result.code, result.message)
       if (result.status !== 'preview_rolled_back' && result.status !== 'preview_detached') {
-        throw domainError('operation_not_allowed', 'Rollback Preview 返回了非预期状态')
+        throw domainError('operation_not_allowed', hostMessage('rollbackPreviewReturnedAnUnexpectedState'))
       }
       return {
         ...(await mutationResponse(request.sessionId, request.checkoutId)),
@@ -859,7 +860,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     discard: request => outcome(async () => {
       const record = await authorize(request.sessionId, request.checkoutId)
       if (record.ownerSessionId !== request.sessionId && ownerSessionAvailable(record)) {
-        throw domainError('not_owner', 'Owner Session 已接管该 Worktree，只有 owner 可以 Discard')
+        throw domainError('not_owner', hostMessage('theOwnerSessionHasTakenOverThisWorktreeOnly467'))
       }
       if (record.ownerSessionId === request.sessionId) {
         const result = await options.module.operate({
@@ -873,7 +874,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         if (result.status === 'preview_detached') {
           return { ...(await mutationResponse(request.sessionId, request.checkoutId)), changedFiles: [...result.changedFiles] }
         }
-        if (result.status !== 'discarded') throw domainError('operation_not_allowed', 'Discard 返回了非预期状态')
+        if (result.status !== 'discarded') throw domainError('operation_not_allowed', hostMessage('discardReturnedAnUnexpectedState'))
       } else {
         await options.module.manageManagedWorktreeForSession(request.sessionId, {
           checkoutId: request.checkoutId,
@@ -888,12 +889,12 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     finalize: async request => {
       try {
         const record = await authorize(request.sessionId, request.checkoutId)
-        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', '只有 owner Isolated Session 可以提交验收')
-        if (record.revision !== request.expectedRevision) return failure('stale_target', 'Session Target 已变化，请刷新')
+        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanCommitAcceptance'))
+        if (record.revision !== request.expectedRevision) return failure('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
         const review = readyReview(record)
-        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', 'Review 身份已变化，请刷新')
+        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', hostMessage('theReviewIdentityHasChangedRefresh'))
         const commitMessage = request.commitMessage.trim()
-        if (!commitMessage || commitMessage.length > 500) return failure('invalid_input', 'Commit Message 必须为 1–500 个字符')
+        if (!commitMessage || commitMessage.length > 500) return failure('invalid_input', hostMessage('theCommitMessageMustContain1500Characters'))
         const result = await options.module.operate({
           sessionId: request.sessionId,
           expectedRevision: request.expectedRevision,
@@ -906,12 +907,12 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         if (result.status === 'conflict') {
           return failure(
             'apply_conflict',
-            'Local 应用发生冲突',
+            hostMessage('applyingToLocalCausedConflicts'),
             undefined,
             applyConflictContinuation(result, review.reviewId),
           )
         }
-        if (result.status !== 'finished') return failure('operation_not_allowed', 'Finalize 返回了非预期状态')
+        if (result.status !== 'finished') return failure('operation_not_allowed', hostMessage('finalizeReturnedAnUnexpectedState'))
         return {
           ok: true,
           value: {
@@ -932,12 +933,12 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     finalizePreview: async request => {
       try {
         const record = await authorize(request.sessionId, request.checkoutId)
-        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', '只有 owner Isolated Session 可以完成 Local Preview 验收')
-        if (record.revision !== request.expectedRevision) return failure('stale_target', 'Session Target 已变化，请刷新')
+        if (record.ownerSessionId !== request.sessionId) return failure('not_owner', hostMessage('onlyTheOwnerIsolatedSessionCanFinalizeLocalPreview'))
+        if (record.revision !== request.expectedRevision) return failure('stale_target', hostMessage('theSessionTargetHasChangedRefresh'))
         const review = previewReview(record)
-        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', 'Review 身份已变化，请刷新')
+        if (review.reviewId !== request.expectedReviewId) return failure('stale_target', hostMessage('theReviewIdentityHasChangedRefresh'))
         const commitMessage = request.commitMessage.trim()
-        if (!commitMessage || commitMessage.length > 500) return failure('invalid_input', 'Commit Message 必须为 1–500 个字符')
+        if (!commitMessage || commitMessage.length > 500) return failure('invalid_input', hostMessage('theCommitMessageMustContain1500Characters'))
         const result = await options.module.operate({
           action: 'finalize_preview',
           sessionId: request.sessionId,
@@ -956,7 +957,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
             },
           }
         }
-        if (result.status !== 'finished') return failure('operation_not_allowed', 'Finalize Preview 返回了非预期状态')
+        if (result.status !== 'finished') return failure('operation_not_allowed', hostMessage('finalizePreviewReturnedAnUnexpectedState'))
         return {
           ok: true,
           value: {
@@ -998,23 +999,23 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     beginNextIteration: request => outcome(async () => {
       const predecessor = recordOf(options.registry, request.checkoutId)
       if (predecessor.ownerSessionId !== request.sessionId) {
-        throw domainError('not_owner', '只有 owner Session 可以开始下一轮')
+        throw domainError('not_owner', hostMessage('onlyTheOwnerSessionCanBeginTheNextIteration'))
       }
       if (predecessor.revision !== request.expectedRevision) {
-        throw domainError('stale_target', 'Worktree 状态已变化，请刷新后再开始下一轮')
+        throw domainError('stale_target', hostMessage('theWorktreeStateHasChangedRefreshBeforeBeginningThe'))
       }
       if (predecessor.phase !== 'discarded' || predecessor.delivery.state !== 'delivered') {
-        throw domainError('operation_not_allowed', '只有已成功清理的交付状态可以开始下一轮')
+        throw domainError('operation_not_allowed', hostMessage('onlyADeliveredStateWithSuccessfulCleanupCanBegin'))
       }
       const session = options.lookup.getSession(request.sessionId)
       const workspace = session?.projectId === undefined ? undefined : options.lookup.getProject(session.projectId)
       if (!workspace || !sameLocalRoot(resolve(workspace.root), resolve(predecessor.managedRoot))) {
-        throw domainError('project_mismatch', '当前 Session 的 immutable cwd 与上一轮 Worktree 不一致')
+        throw domainError('project_mismatch', hostMessage('theCurrentSessionSImmutableCwdDoesNotMatch'))
       }
 
       const target = await options.module.beginNextIteration(request.sessionId, request.expectedRevision)
       if (target.checkout.kind !== 'isolated' || target.delivery?.state !== 'working') {
-        throw domainError('checkout_mismatch', '下一轮 Worktree 未进入 working 状态')
+        throw domainError('checkout_mismatch', hostMessage('theNextWorktreeIterationDidNotEnterWorkingState484'))
       }
       const record = recordOf(options.registry, target.checkout.id)
       if (
@@ -1022,7 +1023,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         || record.ownerSessionId !== request.sessionId
         || !sameLocalRoot(record.managedRoot, predecessor.managedRoot)
       ) {
-        throw domainError('checkout_mismatch', '下一轮 Worktree 的 lineage 或 cwd 身份不一致')
+        throw domainError('checkout_mismatch', hostMessage('theNextIterationSWorktreeLineageOrCwdIdentity'))
       }
       const observed = await observe(record)
       return {

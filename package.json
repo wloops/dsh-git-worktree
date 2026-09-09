@@ -33,6 +33,7 @@
     "lib",
     "scripts",
     "CHANGELOG.md",
+    "docs/i18n.md",
     "NOTICE",
     "cordis.patch.yml"
   ],

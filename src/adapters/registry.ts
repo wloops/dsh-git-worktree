@@ -1,3 +1,4 @@
+import { hostMessage } from '../i18n/host.js'
 /**
  * Durable registry adapter: the session-checkout registry (version 2) as one
  * atomic JSON file under the plugin's state directory. Validation gates every
@@ -418,7 +419,7 @@ export class AtomicJsonCheckoutRegistry implements SessionCheckoutRegistryPort {
       return migrated
     }
     if (!existsSync(this.path)) return emptyRegistry()
-    throw new SessionCheckoutError('registry_corrupt', 'managed-checkouts.json 损坏，已停止访问 checkout')
+    throw new SessionCheckoutError('registry_corrupt', hostMessage('managedCheckoutsJsonIsCorruptCheckoutAccessHasStopped'))
   }
 
   write(registry: ManagedCheckoutsRegistry): void {

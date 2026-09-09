@@ -1,3 +1,4 @@
+import { translatorForServices } from './i18n.js'
 /** Browser-side orchestration over Harness Workspace and Session runtime faces. */
 
 import type { WorktreeConsoleAdapter } from '../console-contract.js'
@@ -58,6 +59,7 @@ export interface ClientWorkspaces {
 }
 
 export interface WorktreeClientServices {
+  locale?: unknown
   sessions: ClientSessions
   workspaces: ClientWorkspaces
   /** Optional public composer face used only by manual draft-prefill actions. */
@@ -103,7 +105,7 @@ function samePath(left: string, right: string): boolean {
 
 /** Open a Session only when the Harness list proves both its identity and cwd. */
 export function openExistingSession(
-  services: Pick<WorktreeClientServices, 'sessions'>,
+  services: Pick<WorktreeClientServices, 'sessions' | 'locale'>,
   sessionId: string,
   expectedCwd: string,
 ): boolean {
@@ -114,11 +116,13 @@ export function openExistingSession(
 }
 
 async function waitForProjectedSessionPath(
-  services: Pick<WorktreeClientServices, 'sessions'>,
+  services: Pick<WorktreeClientServices, 'sessions' | 'locale'>,
   sessionId: string,
   expectedCwd: string,
   isActive: () => boolean,
 ): Promise<boolean> {
+  const t = translatorForServices(services)
+
   return new Promise<boolean>((resolvePromise, rejectPromise) => {
     let settled = false
     let unsubscribe: () => void = () => {}
@@ -138,13 +142,13 @@ async function waitForProjectedSessionPath(
       const summary = services.sessions.list.getSnapshot().byId[sessionId]
       if (summary?.cwd === undefined) return
       if (!samePath(summary.cwd, expectedCwd)) {
-        settle(false, new Error(`Harness 新建 Session ${sessionId} 的 cwd 与 Host 记录不一致。`))
+        settle(false, new Error(t("the.cwd.of.new.harness.session.does.not", { p0: sessionId })))
         return
       }
       settle(true)
     }
     const timer = globalThis.setTimeout(() => {
-      settle(false, new Error(`Harness 未投影新建 Session ${sessionId} 的可信 cwd。`))
+      settle(false, new Error(t("harness.has.not.projected.a.trusted.cwd.for", { p0: sessionId })))
     }, 2_000)
     const dispose = services.sessions.list.subscribe(inspect)
     unsubscribe = dispose
@@ -159,26 +163,28 @@ export async function openIsolatedTarget(
   payload: IsolatedTargetLocation,
   isActive: () => boolean = () => true,
 ): Promise<void> {
+  const t = translatorForServices(services)
+
   if (!isActive()) return
   const existing = services.sessions.list.getSnapshot().byId[payload.targetSessionId]
   if (existing !== undefined) {
     if (!isActive()) return
     if (!openExistingSession(services, payload.targetSessionId, payload.managedRoot)) {
-      throw new Error(`Harness 现有 Session ${payload.targetSessionId} 的 cwd 与 Host 记录不一致。`)
+      throw new Error(t("the.cwd.of.existing.harness.session.does.not", { p0: payload.targetSessionId }))
     }
     return
   }
   const workspace = await services.workspaces.create({ path: payload.managedRoot })
   if (!isActive()) return
   if (workspace.path !== payload.managedRoot) {
-    throw new Error(`Harness 注册的工作目录与 Host 记录不一致：${workspace.path}`)
+    throw new Error(t("the.working.directory.registered.by.harness.does.not", { p0: workspace.path }))
   }
   const sessionId = await services.sessions.create({
     workspaceId: workspace.workspaceId,
     sessionId: payload.targetSessionId,
   })
   if (sessionId !== payload.targetSessionId) {
-    throw new Error(`Harness 创建了非预期 Session ${sessionId}；应为 ${payload.targetSessionId}`)
+    throw new Error(t("harness.created.unexpected.session.expected", { p0: sessionId, p1: payload.targetSessionId }))
   }
   if (!await waitForProjectedSessionPath(services, sessionId, payload.managedRoot, isActive)) return
   if (!isActive()) return
@@ -196,19 +202,21 @@ export async function openAuthorizedWorktreeTarget(
   expected: { checkoutId: string; ownerSessionId: string },
   isActive: () => boolean = () => true,
 ): Promise<void> {
+  const t = translatorForServices(services)
+
   const outcome = await adapter.inspect({ sessionId: callerSessionId, checkoutId: expected.checkoutId })
   if (!isActive()) return
   if (!outcome.ok) throw new Error(`${outcome.error.code}: ${outcome.error.message}`)
   const target = outcome.value.target
   if (!target.capabilities.inspect || !target.capabilities.open) {
-    throw new Error('最新 Host 状态已不允许打开该 Worktree。')
+    throw new Error(t("the.latest.host.state.no.longer.permits.opening"))
   }
   if (
     target.checkoutId !== expected.checkoutId
     || target.ownerSessionId !== expected.ownerSessionId
     || target.targetSessionId !== expected.ownerSessionId
-  ) throw new Error('Host 检查结果中的 Worktree 身份不一致。')
-  if (target.managedRoot === null) throw new Error('Host 未提供可验证的 Worktree 路径。')
+  ) throw new Error(t("the.worktree.identity.returned.by.host.inspection.does"))
+  if (target.managedRoot === null) throw new Error(t("host.did.not.provide.a.verifiable.worktree.path"))
   if (!isActive()) return
   await openIsolatedTarget(services, {
     managedRoot: target.managedRoot,
@@ -230,16 +238,18 @@ export function prefillSessionDraft(
 
 /** Submit an exact review-card acceptance as an explicit user command. */
 export async function finalizeCurrentSession(
-  services: Pick<WorktreeClientServices, 'sessions'>,
+  services: Pick<WorktreeClientServices, 'sessions' | 'locale'>,
   reviewId: string,
   revision: number,
   retention: 'cleanup' | 'retain_24h' | 'retain_3d' | 'retain_manual',
 ): Promise<void> {
+  const t = translatorForServices(services)
+
   const sessionId = services.sessions.list.getSnapshot().current
-  if (!sessionId) throw new Error('当前没有选中的 Session。')
+  if (!sessionId) throw new Error(t("no.session.is.currently.selected"))
   const binding = services.sessions.binding(sessionId)
-  if (!binding) throw new Error('当前 Session 尚未就绪。')
+  if (!binding) throw new Error(t("the.current.session.is.not.ready"))
   const result = await binding.session.command(`/worktree finalize ${reviewId} ${revision} ${retention}`)
-  if (!result.ok) throw new Error(`Finalize command failed: ${result.error.code}: ${result.error.message}`)
-  if (!result.value.matched) throw new Error('Host 未识别 /worktree 命令。')
+  if (!result.ok) throw new Error(t("finalize.command.failed", { p0: result.error.code, p1: result.error.message }))
+  if (!result.value.matched) throw new Error(t("host.did.not.recognize.the.worktree.command"))
 }

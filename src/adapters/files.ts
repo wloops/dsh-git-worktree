@@ -1,3 +1,4 @@
+import { hostMessage } from '../i18n/host.js'
 /**
  * Node fs adapter for the session-checkout files port: directory identity
  * (device/inode/birthtime) for quarantine CAS, empty-tree residue collection,
@@ -59,7 +60,7 @@ async function quarantineDirectoryTree(
     ? sourceParent.toLowerCase() === quarantineParent.toLowerCase()
     : sourceParent === quarantineParent
   if (!sameParent || existsSync(quarantinePath)) {
-    throw new SessionCheckoutError('checkout_mismatch', 'Worktree quarantine 路径无效或已被占用')
+    throw new SessionCheckoutError('checkout_mismatch', hostMessage('theWorktreeQuarantinePathIsInvalidOrAlreadyOccupied'))
   }
   await rename(path, quarantinePath)
   const actualIdentity = await inspectDirectoryIdentity(quarantinePath)
@@ -67,14 +68,14 @@ async function quarantineDirectoryTree(
   if (!existsSync(path)) {
     try { await rename(quarantinePath, path) } catch { /* Keep the quarantine; never delete an identity-mismatched object. */ }
   }
-  throw new SessionCheckoutError('checkout_mismatch', 'Worktree 目录对象已被替换，未执行递归清理')
+  throw new SessionCheckoutError('checkout_mismatch', hostMessage('theWorktreeDirectoryObjectWasReplacedRecursiveCleanupWas'))
 }
 
 async function removeDirectoryTree(path: string): Promise<void> {
   if (!existsSync(path)) return
   const stat = await lstat(path)
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw new SessionCheckoutError('checkout_mismatch', '拒绝删除非目录或符号链接形式的 Worktree 残余')
+    throw new SessionCheckoutError('checkout_mismatch', hostMessage('refusingToDeleteWorktreeResidueThatIsNotA'))
   }
   await rm(path, {
     recursive: true,

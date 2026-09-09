@@ -1,3 +1,4 @@
+import { translatorForServices } from '../i18n.js'
 import type {
   WorktreeConsoleAdapter,
   WorktreeConsoleCreateResponse,
@@ -77,15 +78,17 @@ export class PreSessionWorktreeController {
   }
 
   private async run(request: PreparePreSessionWorktreeRequest): Promise<WorktreeConsoleTargetDetails> {
+    const t = translatorForServices(this.services)
+
     if (request.input.phase !== 'plain') {
-      throw new PreSessionWorktreeError('当前草稿正在提交或解析，请等待输入恢复后再创建 Worktree。')
+      throw new PreSessionWorktreeError(t("the.draft.is.being.submitted.or.parsed.wait"))
     }
     if (request.input.occurrences.length > 0) {
-      throw new PreSessionWorktreeError('草稿包含尚未序列化的引用，请先移除引用芯片或发送后再创建 Worktree。')
+      throw new PreSessionWorktreeError(t("the.draft.contains.unserialized.references.remove.the.reference"))
     }
 
     const previousBlock = this.services.conversation.blocks.storeFor(request.sessionId).getSnapshot()
-    this.services.conversation.blocks.set(request.sessionId, { reason: '正在创建隔离 Worktree…' })
+    this.services.conversation.blocks.set(request.sessionId, { reason: t("creating.isolated.worktree") })
 
     let created: WorktreeConsoleCreateResponse | undefined
     let workspaceId: string | undefined
@@ -97,7 +100,7 @@ export class PreSessionWorktreeController {
 
       const workspace = await this.services.workspaces.create({ path: created.managedRoot })
       if (workspace.path !== created.managedRoot) {
-        throw new PreSessionWorktreeError(`Harness 将 managed root 注册到了不同路径：${workspace.path}`)
+        throw new PreSessionWorktreeError(t("harness.registered.the.managed.root.at.a.different", { p0: workspace.path }))
       }
       workspaceId = workspace.workspaceId
 
@@ -107,17 +110,17 @@ export class PreSessionWorktreeController {
       })
       if (actualSessionId !== created.targetSessionId) {
         throw new PreSessionWorktreeError(
-          `Harness 创建了意外的 Session ${actualSessionId}；预期 ${created.targetSessionId}。`,
+          t("harness.created.unexpected.session.expected.2", { p0: actualSessionId, p1: created.targetSessionId }),
         )
       }
 
       const targetBinding = this.services.sessions.binding(created.targetSessionId)
       if (targetBinding?.ctx === undefined) {
-        throw new PreSessionWorktreeError('目标 Session 已创建，但 Harness 尚未提供可迁移草稿的 Session binding。')
+        throw new PreSessionWorktreeError(t("the.target.session.was.created.but.harness.has"))
       }
       const targetInput = this.services.conversation.input.for(targetBinding.ctx)
       if (!sourceStillMatches(request)) {
-        throw new PreSessionWorktreeError('确认后 Local 草稿或附件发生了变化，已取消迁移以避免覆盖新的输入。')
+        throw new PreSessionWorktreeError(t("the.local.draft.or.attachments.changed.after.confirmation"))
       }
       // From the final source CAS through target writes, navigation and source
       // clear there is no await. This ordering matters for image IDs: a failed
@@ -125,7 +128,7 @@ export class PreSessionWorktreeController {
       // that the preserved source still references.
       targetInput.setDraft(request.input.draft)
       if (!targetInput.addImages(request.input.imageIds)) {
-        throw new PreSessionWorktreeError('目标 Session 暂时拒绝接收草稿附件。')
+        throw new PreSessionWorktreeError(t("the.target.session.is.temporarily.refusing.draft.attachments"))
       }
       this.services.sessions.open(created.targetSessionId)
       request.inputActions.setDraft('')
@@ -148,7 +151,7 @@ export class PreSessionWorktreeController {
         )
         if (!cleaned) {
           throw new PreSessionWorktreeError(
-            `${messageOf(error)} Worktree 已持久化但自动回滚失败，请从 Worktree Console 打开 owner Session 继续恢复。`,
+            t("the.worktree.was.persisted.but.automatic.rollback.failed", { p0: messageOf(error) }),
             true,
           )
         }

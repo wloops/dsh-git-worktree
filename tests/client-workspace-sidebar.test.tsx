@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { ClientI18nProvider } from '../src/client/i18n.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceSnapshot as WorkspaceListState } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -206,4 +207,16 @@ describe('Managed Workspace sidebar', () => {
     expect(screen.getByText('demo--uuid--worktree')).toBeTruthy()
     expect(screen.queryByText('修复验收卡 · 待验收')).toBeNull()
   })
+})
+
+test('switches only managed sidebar badges while official labels and session titles remain intact', async () => {
+  const props = browserProps()
+  const remote = adapter()
+  const view = render(<ClientI18nProvider language="en"><ManagedOfficialWorkspaceBrowser {...props} adapter={remote} OfficialBrowser={InspectBrowser as never} /></ClientI18nProvider>)
+  await waitFor(() => expect(screen.getByRole('button', { name: '修复验收卡' }).getAttribute('data-worktree-label')).toBe('Ready for review'))
+  expect(screen.getByText('demo')).toBeTruthy()
+  view.rerender(<ClientI18nProvider language="zh"><ManagedOfficialWorkspaceBrowser {...props} adapter={remote} OfficialBrowser={InspectBrowser as never} /></ClientI18nProvider>)
+  expect(screen.getByRole('button', { name: '修复验收卡' }).getAttribute('data-worktree-label')).toBe('待验收')
+  expect(screen.getByText('demo')).toBeTruthy()
+  expect(remote.sidebarTopology).toHaveBeenCalledTimes(1)
 })

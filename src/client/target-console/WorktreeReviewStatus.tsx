@@ -1,3 +1,4 @@
+import { useClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails, WorktreeConsoleTargetSummary } from '../../console-contract.js'
 import type { WorktreeClientServices } from '../actions.js'
@@ -19,6 +20,8 @@ export interface WorktreeReviewStatusProps {
 
 /** Domi-style compact delivery status above the native Harness composer. */
 export function WorktreeReviewStatus({ session, adapter, services }: WorktreeReviewStatusProps) {
+  const t = useClientTranslator()
+
   const sessionId = session.sessionId
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -82,20 +85,20 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
     : null
   if (standaloneRecovery) {
     return (
-      <section className="dsh-wt-review-dock" aria-label="Worktree 恢复续跑" data-recovery-status={standaloneRecovery.status}>
+      <section className="dsh-wt-review-dock" aria-label={t("worktree.recovery.continuation")} data-recovery-status={standaloneRecovery.status}>
         <span className="dsh-wt-review-dock-icon" aria-hidden>!</span>
         <span className="dsh-wt-review-dock-copy">
-          <strong>{standaloneRecovery.request.kind === 'worktree_apply_conflict' ? 'Worktree 冲突恢复续跑' : '只读验收再生成'}</strong>
+          <strong>{standaloneRecovery.request.kind === 'worktree_apply_conflict' ? t("worktree.conflict.recovery") : t("read.only.review.regeneration")}</strong>
           <span>
-            {standaloneRecovery.status === 'queued' ? '请求已持久排队，等待精确 owner Session 加载完成且停止 streaming。' : null}
-            {standaloneRecovery.status === 'sending' ? '正在通过 Harness 官方 Session API 发送恢复请求…' : null}
-            {standaloneRecovery.status === 'sent' ? '恢复请求已交给 Agent。' : null}
-            {standaloneRecovery.status === 'cancelled' ? 'Session/checkout 已切换，旧恢复请求已取消。' : null}
-            {standaloneRecovery.status === 'failed' ? `恢复请求发送失败：${standaloneRecovery.error}` : null}
+            {standaloneRecovery.status === 'queued' ? t("request.durably.queued.waiting.for.the.exact.owner") : null}
+            {standaloneRecovery.status === 'sending' ? t("sending.the.recovery.request.through.the.official.harness") : null}
+            {standaloneRecovery.status === 'sent' ? t("recovery.request.handed.to.agent") : null}
+            {standaloneRecovery.status === 'cancelled' ? t("session.checkout.changed.the.old.recovery.request.was") : null}
+            {standaloneRecovery.status === 'failed' ? t("recovery.request.failed.2", { p0: standaloneRecovery.error ?? '' }) : null}
           </span>
         </span>
         {standaloneRecovery.status === 'failed' ? (
-          <button type="button" className="dsh-wt-button" onClick={() => retryWorktreeRecovery(sessionId)}>重新发送</button>
+          <button type="button" className="dsh-wt-button" onClick={() => retryWorktreeRecovery(sessionId)}>{t("resend")}</button>
         ) : null}
       </section>
     )
@@ -129,11 +132,11 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
       }
     }
     return (
-      <section className="dsh-wt-review-dock" aria-label="Worktree 下一轮" data-review-state="delivered">
-        <span className="dsh-wt-review-dock-icon" aria-hidden>✓</span>
+      <section className="dsh-wt-review-dock" aria-label={t("next.worktree.iteration")} data-review-state="delivered">
+        <span className="dsh-wt-review-dock-icon" aria-hidden>{t("symbol.4")}</span>
         <span className="dsh-wt-review-dock-copy">
-          <strong>本轮已交付，可在原会话继续下一轮修改</strong>
-          <span>将安全重建已清理的 Worktree 路径，并保留当前对话。</span>
+          <strong>{t("this.iteration.is.delivered.continue.the.next.iteration")}</strong>
+          <span>{t("safely.recreate.the.cleaned.worktree.path.while.preserving")}</span>
           <DeliveryProof target={target} compact />
         </span>
         {error ? <span className="dsh-wt-error">{error}</span> : null}
@@ -143,7 +146,7 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
           disabled={startingIteration}
           onClick={() => { void beginNextIteration() }}
         >
-          {startingIteration ? '正在创建…' : '开始下一轮修改'}
+          {startingIteration ? t("creating") : t("start.next.iteration")}
         </button>
       </section>
     )
@@ -171,24 +174,24 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
   const detachedFromHeadDrift = target.state === 'preview_detached'
     && target.previewRecovery?.reason === 'stale_local'
   const label = target.state === 'ready_for_review'
-    ? target.reviewSlot === 'waiting' ? '另一个任务正在占用 Local 验收槽位' : '修改已完成，等待你预览确认'
+    ? target.reviewSlot === 'waiting' ? t("another.task.is.holding.the.local.review.slot") : t("changes.are.ready.for.your.preview")
     : target.state === 'preview_active'
-      ? '正在预览本次修改，确认后即可保存'
+      ? t("previewing.these.changes.save.after.confirmation")
       : target.state === 'preview_detached'
-        ? detachedFromHeadDrift ? '当前项目已有新变化，预览等待安全恢复' : '预览与 Local 发生冲突，已保留恢复现场'
+        ? detachedFromHeadDrift ? t("the.project.has.new.changes.preview.is.waiting") : t("preview.conflicts.with.local.recovery.state.was.preserved")
         : target.state === 'recovery_required'
-          ? '预览需要恢复，安全记录已保留'
+          ? t("preview.needs.recovery.safety.records.were.preserved")
           : target.state === 'cleanup_pending'
-          ? '修改已保存，Worktree 清理待重试'
-          : '修改已保存，运行环境暂时保留'
+          ? t("changes.saved.worktree.cleanup.needs.a.retry")
+          : t("changes.saved.environment.temporarily.retained")
   const detail = target.state === 'preview_detached'
     ? detachedFromHeadDrift
-      ? '同分支快进可安全重试；切分支或改写历史时不会写入。'
-      : '自动撤回会重新检查冲突；无法证明安全时不会写入。'
-    : `${review.changedFiles.length} 个文件 · ${review.validationStatus === 'passed' ? '自动验证通过' : '请检查验证结果'}`
+      ? t("same.branch.fast.forward.can.be.safely.retried")
+      : t("automatic.rollback.will.recheck.conflicts.no.writes.if")
+    : t("files.5", { p0: review.changedFiles.length, p1: review.validationStatus === 'passed' ? t("automated.validation.passed") : t("please.check.validation.results") })
 
   return (
-    <section className="dsh-wt-review-dock" aria-label="Worktree 待验收" data-review-state={target.state}>
+    <section className="dsh-wt-review-dock" aria-label={t("worktree.ready.for.review")} data-review-state={target.state}>
       <span className="dsh-wt-review-dock-icon" aria-hidden>{target.state === 'preview_detached' || target.state === 'recovery_required' ? '!' : '✓'}</span>
       <span className="dsh-wt-review-dock-copy">
         <strong>{label}</strong>
@@ -202,7 +205,7 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
         identity={identity}
         target={target}
         disabled={false}
-        unavailableMessage="实时 Worktree Console 未连接。"
+        unavailableMessage={t("live.worktree.console.is.disconnected")}
         focusReview={focusReview}
         isActive={() => mounted.current && currentSessionId.current === sessionId && sessionGeneration.current === actionGeneration}
         onStale={() => { void refresh() }}

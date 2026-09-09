@@ -1,6 +1,6 @@
+import { defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import type {
   WorktreeSidebarTask,
-  WorktreeSidebarTaskState,
   WorktreeSidebarTopologyResponse,
 } from '../../console-contract.js'
 
@@ -34,17 +34,17 @@ export interface ManagedWorkspaceSidebarProjection {
   suppressedSessionIds: ReadonlySet<string>
 }
 
-const STATE_LABELS: Record<WorktreeSidebarTaskState, string> = {
-  working: '进行中',
-  ready_for_review: '待验收',
-  preview_active: '预览中',
-  preview_detached: '待恢复',
-  recovery_required: '需要恢复',
-  finalized: '已完成',
-  discarded: '已放弃',
-}
+const STATE_LABELS = (t: ClientTranslator = defaultClientTranslator) => ({
+  working: t("in.progress"),
+  ready_for_review: t("ready.for.review"),
+  preview_active: t("previewing"),
+  preview_detached: t("awaiting.recovery"),
+  recovery_required: t("recovery.required"),
+  finalized: t("completed"),
+  discarded: t("discarded"),
+})
 
-function currentTasks(topology: WorktreeSidebarTopologyResponse): ProjectedManagedTask[] {
+function currentTasks(topology: WorktreeSidebarTopologyResponse, t: ClientTranslator = defaultClientTranslator): ProjectedManagedTask[] {
   const byOwner = new Map<string, ProjectedManagedTask>()
   for (const project of topology.projects) {
     if (!project?.project?.id || !project.project.name || !Array.isArray(project.tasks)) continue
@@ -54,7 +54,7 @@ function currentTasks(topology: WorktreeSidebarTopologyResponse): ProjectedManag
         ...task,
         projectId: project.project.id,
         projectName: project.project.name,
-        label: STATE_LABELS[task.state] ?? '进行中',
+        label: STATE_LABELS(t)[task.state] ?? t("in.progress"),
       }
       const previous = byOwner.get(task.ownerSessionId)
       if (!previous
@@ -76,8 +76,8 @@ export function projectManagedWorkspaceSidebar(input: {
   workspaces: readonly SidebarWorkspaceView[]
   sessions: Readonly<Record<string, SidebarSessionSummary | undefined>>
   topology: WorktreeSidebarTopologyResponse
-}): ManagedWorkspaceSidebarProjection {
-  const tasks = currentTasks(input.topology)
+}, t: ClientTranslator = defaultClientTranslator): ManagedWorkspaceSidebarProjection {
+  const tasks = currentTasks(input.topology, t)
   const protectedSessionIds = new Set(tasks.map(task => task.ownerSessionId))
   const projected = input.workspaces.map(workspace => ({ ...workspace, sessionIds: [...workspace.sessionIds] }))
   const byWorkspace = new Map(projected.map(workspace => [workspace.workspaceId, workspace]))

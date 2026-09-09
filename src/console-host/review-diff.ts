@@ -1,3 +1,4 @@
+import { hostMessage } from '../i18n/host.js'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -56,7 +57,7 @@ async function git(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv,
     child.once('error', reject)
     child.once('close', (code) => {
       if (code === 0) resolveResult({ stdout: Buffer.concat(stdout), truncated })
-      else reject(new Error(`git ${args[0] ?? ''} failed (${String(code)}): ${Buffer.concat(stderr).toString('utf8').trim()}`))
+      else reject(new Error(hostMessage('gitFailed', { p0: args[0] ?? '', p1: String(code), p2: Buffer.concat(stderr).toString('utf8').trim() })))
     })
   })
 }
@@ -119,7 +120,7 @@ export function createGitWorktreeReviewDiffReader(): WorktreeReviewDiffReader {
   return {
     async read(input) {
       const expected = sortedUnique(input.changedFiles)
-      if (expected.some(path => !projectPath(path))) throw new Error('review changedFiles contains an unsafe project-relative path')
+      if (expected.some(path => !projectPath(path))) throw new Error(hostMessage('reviewChangedFilesContainsAnUnsafeProjectRelativePath'))
       const tempRoot = await mkdtemp(join(tmpdir(), 'dsh-worktree-console-diff-'))
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
@@ -145,14 +146,14 @@ export function createGitWorktreeReviewDiffReader(): WorktreeReviewDiffReader {
           env,
           4 * 1024 * 1024,
         )
-        if (names.truncated) throw new Error('review diff path inventory exceeds the safe read budget')
+        if (names.truncated) throw new Error(hostMessage('reviewDiffPathInventoryExceedsTheSafeReadBudget'))
         const entries = parseNameStatus(names.stdout)
         if (entries.some(entry => !projectPath(entry.path) || (entry.previousPath !== undefined && !projectPath(entry.previousPath)))) {
-          throw new Error('git diff returned an unsafe project-relative path')
+          throw new Error(hostMessage('gitDiffReturnedAnUnsafeProjectRelativePath'))
         }
         const actual = changedPathSet(entries)
         if (actual.length !== expected.length || actual.some((path, index) => path !== expected[index])) {
-          throw new ReviewDiffStaleError('review changedFiles no longer matches the isolated snapshot')
+          throw new ReviewDiffStaleError(hostMessage('reviewChangedFilesNoLongerMatchesTheIsolatedSnapshot'))
         }
 
         const files: WorktreeConsoleDiffFile[] = []

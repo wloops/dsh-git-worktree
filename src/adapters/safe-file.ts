@@ -1,3 +1,4 @@
+import { hostMessage } from '../i18n/host.js'
 /**
  * 崩溃安全的 JSON 文件读写工具
  *
@@ -87,7 +88,7 @@ export function readJsonFileSafe<T>(filePath: string): T | null {
         return JSON.parse(raw) as T
       }
     } catch {
-      console.warn(`[数据恢复] 主索引文件损坏: ${filePath}`)
+      console.warn(hostMessage('corruptPrimaryIndex', { p0: filePath }))
     }
   }
 
@@ -99,7 +100,7 @@ export function readJsonFileSafe<T>(filePath: string): T | null {
         const parsed = JSON.parse(raw) as T
         // .tmp 有效 → 提升为主文件
         renameAtomicWithRetry(tmpPath, filePath)
-        console.log(`[数据恢复] 从 .tmp 文件恢复: ${filePath}`)
+        console.log(hostMessage('recoveredFromTmp', { p0: filePath }))
         return parsed
       }
     } catch {
@@ -117,11 +118,11 @@ export function readJsonFileSafe<T>(filePath: string): T | null {
         const parsed = JSON.parse(raw) as T
         // 用 .bak 恢复主文件（跳过备份，避免用损坏的主文件覆盖好的 .bak）
         writeJsonFileAtomic(filePath, parsed as object, true)
-        console.log(`[数据恢复] 从 .bak 文件恢复: ${filePath}`)
+        console.log(hostMessage('recoveredFromBak', { p0: filePath }))
         return parsed
       }
     } catch {
-      console.error(`[数据恢复] .bak 文件也损坏: ${bakPath}`)
+      console.error(hostMessage('corruptBackupIndex', { p0: bakPath }))
     }
   }
 

@@ -46,7 +46,7 @@ export function decorateOfficialWorkspaceClient(source) {
     'Chinese Worktree locale')
   derived = replaceExactlyOnce(derived,
     '\t\tconst en = {',
-    `\t\tconst en = {\n\t\t\t"dshGitWorktree.managed": "Managed Worktree",\n\t\t\t"dshGitWorktree.state.working": "Working",\n\t\t\t"dshGitWorktree.state.ready_for_review": "Ready",\n\t\t\t"dshGitWorktree.state.preview_active": "Preview",\n\t\t\t"dshGitWorktree.state.preview_detached": "Resume preview",\n\t\t\t"dshGitWorktree.state.recovery_required": "Recovery required",\n\t\t\t"dshGitWorktree.state.finalized": "Done",\n\t\t\t"dshGitWorktree.state.discarded": "Discarded",`,
+    `\t\tconst en = {\n\t\t\t"dshGitWorktree.managed": "Managed Worktree",\n\t\t\t"dshGitWorktree.state.working": "In progress",\n\t\t\t"dshGitWorktree.state.ready_for_review": "Ready for review",\n\t\t\t"dshGitWorktree.state.preview_active": "Preview",\n\t\t\t"dshGitWorktree.state.preview_detached": "Resume preview",\n\t\t\t"dshGitWorktree.state.recovery_required": "Recovery required",\n\t\t\t"dshGitWorktree.state.finalized": "Done",\n\t\t\t"dshGitWorktree.state.discarded": "Discarded",`,
     'English Worktree locale')
   derived = replaceExactlyOnce(derived,
     '\t\t\t\tgroups.push(buildGroup(workspace.workspaceId, workspace.workspaceId, workspace.path, Date.parse(workspace.createdAt), workspace.title, members, "account"));',

@@ -1,6 +1,7 @@
 import type { InvocationDescriptor, InvocationParameterDescriptor, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import {
   booleanSchema,
+  optionalLanguageSchema,
   checkoutIdSchema,
   commitMessageSchema,
   createResponseSchema,
@@ -62,7 +63,7 @@ function descriptor(
     namespace: SERVICE,
     method,
     invocation: { kind: 'direct' },
-    parameters: withAgent ? [agentParameter, ...parameters] : parameters,
+    parameters: [...(withAgent ? [agentParameter, ...parameters] : parameters), json('locale', optionalLanguageSchema, 'string | undefined', true)],
     result: { mode: 'strict', typeSymbol: `${PACKAGE}/console-contract#${resultType}`, schema: resultSchema },
   }
 }

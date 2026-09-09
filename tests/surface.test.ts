@@ -114,7 +114,7 @@ describe('public surfaces', () => {
 
     const result = await command.handler({ rawInput: 'continue', agent: { session: { id: 'target-session' } } })
 
-    expect(result).toMatchObject({ kind: 'success', text: expect.stringContaining('Resumed Worktree iteration 1') })
+    expect(result).toMatchObject({ kind: 'success', text: expect.stringContaining('已恢复 Worktree 第 1 轮') })
     expect(module.resumeRevision).toHaveBeenCalledWith('target-session', 7, 'review-1')
   })
 
@@ -141,7 +141,7 @@ describe('public surfaces', () => {
 
     const result = await command.handler({ rawInput: 'next', agent: { session: { id: 'target-session' } } })
 
-    expect(result).toMatchObject({ kind: 'success', text: expect.stringContaining('iteration 2') })
+    expect(result).toMatchObject({ kind: 'success', text: expect.stringContaining('Worktree 第 2 轮') })
     expect(module.beginNextIteration).toHaveBeenCalledWith('target-session', 9)
   })
 

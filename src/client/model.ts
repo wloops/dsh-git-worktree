@@ -1,3 +1,4 @@
+import { defaultClientTranslator, type ClientTranslator } from './i18n.js'
 /** Pure replay-stable ToolView models derived only from logged call/result slices. */
 
 export interface ToolContentBlock {
@@ -92,12 +93,12 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   return typeof record[key] === 'string' && record[key] !== '' ? record[key] : null
 }
 
-export function parseCreateTool(block: ToolCallBlockLike): ParsedTool<WorktreeCreatePayload> {
+export function parseCreateTool(block: ToolCallBlockLike, t: ClientTranslator = defaultClientTranslator): ParsedTool<WorktreeCreatePayload> {
   const state = lifecycle(block)
   const raw = textContent(block)
   const parsed = parseJson(raw ?? undefined)
   if (state === 'running') return { lifecycle: state, payload: null, args: null, error: null }
-  if (state !== 'ok') return { lifecycle: state, payload: null, args: null, error: raw ?? 'Worktree creation failed.' }
+  if (state !== 'ok') return { lifecycle: state, payload: null, args: null, error: raw ?? t("worktree.creation.failed") }
   if (!isRecord(parsed)
     || parsed.kind !== 'worktree_target_created'
     || !stringField(parsed, 'checkoutId')
@@ -106,7 +107,7 @@ export function parseCreateTool(block: ToolCallBlockLike): ParsedTool<WorktreeCr
     || !stringField(parsed, 'phase')
     || !stringField(parsed, 'currentOid')
     || !stringField(parsed, 'sourceSessionId')) {
-    return { lifecycle: 'error', payload: null, args: null, error: 'Malformed Worktree create result.' }
+    return { lifecycle: 'error', payload: null, args: null, error: t("malformed.worktree.create.result") }
   }
   return { lifecycle: state, payload: parsed as unknown as WorktreeCreatePayload, args: null, error: null }
 }
@@ -144,14 +145,14 @@ function reviewArgs(value: unknown): ReviewArgs | null {
   }
 }
 
-export function parseReviewTool(block: ToolCallBlockLike): ParsedTool<WorktreeReviewPayload, ReviewArgs> {
+export function parseReviewTool(block: ToolCallBlockLike, t: ClientTranslator = defaultClientTranslator): ParsedTool<WorktreeReviewPayload, ReviewArgs> {
   const state = lifecycle(block)
   const raw = textContent(block)
   const parsed = parseJson(raw ?? undefined)
   const argsRaw = block.kind ? block.call?.argsRaw : block.argsRaw
   const parsedArgs = reviewArgs(parseJson(argsRaw))
   if (state === 'running') return { lifecycle: state, payload: null, args: parsedArgs, error: null }
-  if (state !== 'ok') return { lifecycle: state, payload: null, args: parsedArgs, error: raw ?? 'Ready for Review failed.' }
+  if (state !== 'ok') return { lifecycle: state, payload: null, args: parsedArgs, error: raw ?? t("ready.for.review.failed") }
   if (!isRecord(parsed)
     || parsed.kind !== 'worktree_ready_for_review'
     || parsed.state !== 'ready_for_review'
@@ -159,10 +160,10 @@ export function parseReviewTool(block: ToolCallBlockLike): ParsedTool<WorktreeRe
     || typeof parsed.revision !== 'number'
     || !Array.isArray(parsed.changedFiles)
     || parsed.changedFiles.some((item) => typeof item !== 'string')) {
-    return { lifecycle: 'error', payload: null, args: null, error: 'Malformed Ready for Review result.' }
+    return { lifecycle: 'error', payload: null, args: null, error: t("malformed.ready.for.review.result") }
   }
   if (!parsedArgs) {
-    return { lifecycle: 'error', payload: null, args: null, error: 'Malformed Ready for Review arguments.' }
+    return { lifecycle: 'error', payload: null, args: null, error: t("malformed.ready.for.review.arguments") }
   }
   return {
     lifecycle: state,

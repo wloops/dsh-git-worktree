@@ -160,3 +160,7 @@ See the [full usage guide](docs/USAGE.en.md#local-development) for more developm
 ## License
 
 [MIT](LICENSE)
+
+## Language
+
+The plugin follows DSH’s language selection without a separate switch. Explicitly select English in DSH to use English in the UI, tools, and `/worktree` messages. If automatic browser detection has not produced a saved DSH preference, tools and commands fall back to Chinese. See [language transport and translation contributions](docs/i18n.md).

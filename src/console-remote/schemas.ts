@@ -31,6 +31,7 @@ export const previewIdSchema = z.string().min(1).max(200).refine(value => !/[\\/
 export const generationSchema = z.string().regex(/^[0-9a-f]{64}$/u)
 export const requestIdSchema = z.string().min(1).max(200).refine(value => !/[\0\r\n]/u.test(value), 'unsafe request id')
 export const booleanSchema = z.boolean()
+export const optionalLanguageSchema = z.enum(['zh', 'en']).optional()
 export const optionalBooleanSchema = z.union([booleanSchema, z.undefined()])
 export const retentionSchema = z.enum(['cleanup', 'retain_24h', 'retain_3d', 'retain_manual'])
 export const retainedModeSchema = z.enum(['retain_24h', 'retain_3d', 'retain_manual'])

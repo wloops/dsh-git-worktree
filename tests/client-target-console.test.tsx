@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { ClientI18nProvider } from '../src/client/i18n.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentType } from 'react'
@@ -1067,4 +1068,16 @@ describe('Worktree Console guarded mutations', () => {
       expectedRevision: 7,
     }))
   })
+})
+
+test('manager switches plugin labels while preserving target data and actions', async () => {
+  const fixture = createWorktreeConsoleAdapterFixture()
+  const services = clientServices()
+  const view = render(<ClientI18nProvider language="en"><WorktreeConsoleView sessionId="source-session" adapter={fixture.adapter} services={services} /></ClientI18nProvider>)
+  await screen.findByText('Linked Worktrees')
+  expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
+  view.rerender(<ClientI18nProvider language="zh"><WorktreeConsoleView sessionId="source-session" adapter={fixture.adapter} services={services} /></ClientI18nProvider>)
+  expect(screen.getByText('关联 Worktrees')).toBeTruthy()
+  expect(services.workspaces.openPath).not.toHaveBeenCalled()
+  expect(services.sessions.create).not.toHaveBeenCalled()
 })

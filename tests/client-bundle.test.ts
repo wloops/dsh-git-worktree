@@ -142,7 +142,7 @@ describe('built Client ModuleLoader artifact', () => {
     expect(descriptors.filter(descriptor => descriptor.name === 'sidebar.workspaces')).toHaveLength(1)
     expect(descriptors.filter(descriptor => descriptor.name === 'conversation.hero.workspace')).toHaveLength(1)
     await expect(ctx.worktreeConsole.current({ sessionId: 'agent-1' })).resolves.toEqual(expected)
-    expect(call).toHaveBeenCalledWith('/api', 'gitWorktree/current', { args: { agentId: 'agent-1' } }, expect.any(AbortSignal))
+    expect(call).toHaveBeenCalledWith('/api', 'gitWorktree/current', { args: { agentId: 'agent-1', locale: 'zh' } }, expect.any(AbortSignal))
     expect((ctx.remote as unknown as Record<string, unknown>).gitWorktree).toBeDefined()
 
     await fiber.dispose()

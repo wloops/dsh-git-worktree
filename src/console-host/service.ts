@@ -1,3 +1,5 @@
+import { withHostLanguage, languageFromSettings } from '../i18n/host.js'
+import type { Language } from '../i18n/core.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -20,43 +22,43 @@ import type { WorktreeConsoleControlPlane } from './control-plane.js'
 
 /** Official Typert Remote service; the Gateway resolves `agentId` before business code runs. */
 export class WorktreeConsoleService extends TypertRemoteService {
-  constructor(ctx: Context, private readonly controlPlane: WorktreeConsoleControlPlane) {
-    super(ctx, 'gitWorktree')
+  constructor(private readonly hostContext: Context, private readonly controlPlane: WorktreeConsoleControlPlane) {
+    super(hostContext, 'gitWorktree')
   }
 
   @Remote
-  sidebarTopology(): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>> {
-    return this.controlPlane.sidebarTopology()
+  sidebarTopology(locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(this.hostContext), () => this.controlPlane.sidebarTopology())
   }
 
   @Remote
-  current(agent: Agent): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>> {
-    return this.controlPlane.current(agent.id)
+  current(agent: Agent, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.current(agent.id))
   }
 
   @Remote
-  list(agent: Agent, needsAttention?: boolean, includeDelivered?: boolean): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>> {
-    return this.controlPlane.list({ sessionId: agent.id, needsAttention, includeDelivered })
+  list(agent: Agent, needsAttention?: boolean, includeDelivered?: boolean, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.list({ sessionId: agent.id, needsAttention, includeDelivered }))
   }
 
   @Remote
-  create(agent: Agent): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>> {
-    return this.controlPlane.create(agent.id)
+  create(agent: Agent, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.create(agent.id))
   }
 
   @Remote
-  inspect(agent: Agent, checkoutId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>> {
-    return this.controlPlane.inspect(agent.id, checkoutId)
+  inspect(agent: Agent, checkoutId: string, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.inspect(agent.id, checkoutId))
   }
 
   @Remote
-  reviewDiff(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>> {
-    return this.controlPlane.reviewDiff({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  reviewDiff(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.reviewDiff({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId }))
   }
 
   @Remote
-  preflight(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>> {
-    return this.controlPlane.preflight({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  preflight(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsolePreflightResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.preflight({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId }))
   }
 
   @Remote
@@ -66,10 +68,11 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedRevision: number,
     expectedReviewId: string,
     expectedPreviewId: string,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsolePreviewRecoveryPreflightResponse>> {
-    return this.controlPlane.previewRecoveryPreflight({
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.previewRecoveryPreflight({
       sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedPreviewId,
-    })
+    }))
   }
 
   @Remote
@@ -80,10 +83,11 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedReviewId: string,
     expectedPreviewId: string,
     recoveryProof: WorktreePreviewRecoveryProof,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.preparePreviewRecoveryAnalysis({
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.preparePreviewRecoveryAnalysis({
       sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedPreviewId, recoveryProof,
-    })
+    }))
   }
 
   @Remote
@@ -94,15 +98,16 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedReviewId: string,
     expectedPreviewId: string,
     recoveryProof: WorktreePreviewRecoveryProof,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreviewRecoveryHandoffResponse>> {
-    return this.controlPlane.createPreviewRecoveryHandoff({
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.createPreviewRecoveryHandoff({
       sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedPreviewId, recoveryProof,
-    })
+    }))
   }
 
   @Remote
-  preview(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.preview({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+  preview(agent: Agent, checkoutId: string, expectedRevision: number, expectedReviewId: string, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.preview({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId }))
   }
 
   @Remote
@@ -114,10 +119,11 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedGeneration: string,
     requestId: string,
     commitMessage: string,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.checkpoint({
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.checkpoint({
       sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, expectedGeneration, requestId, commitMessage,
-    })
+    }))
   }
 
   @Remote
@@ -126,8 +132,9 @@ export class WorktreeConsoleService extends TypertRemoteService {
     checkoutId: string,
     expectedRevision: number,
     expectedReviewId: string,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.prepareReviewRegeneration({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId })
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.prepareReviewRegeneration({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId }))
   }
 
   @Remote
@@ -137,10 +144,11 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedRevision: number,
     expectedReviewId: string,
     conflictContinuation?: WorktreeApplyConflictContinuation,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.resumeRevision({
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.resumeRevision({
       sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, conflictContinuation,
-    })
+    }))
   }
 
   @Remote
@@ -150,13 +158,14 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedRevision: number,
     resumeRevision?: boolean,
     recoveryProof?: WorktreePreviewRecoveryProof,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.rollbackPreview({ sessionId: agent.id, checkoutId, expectedRevision, resumeRevision, recoveryProof })
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.rollbackPreview({ sessionId: agent.id, checkoutId, expectedRevision, resumeRevision, recoveryProof }))
   }
 
   @Remote
-  discard(agent: Agent, checkoutId: string, expectedRevision: number, confirmDirty: boolean, rollbackPreview?: boolean): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.discard({ sessionId: agent.id, checkoutId, expectedRevision, confirmDirty, rollbackPreview })
+  discard(agent: Agent, checkoutId: string, expectedRevision: number, confirmDirty: boolean, rollbackPreview?: boolean, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.discard({ sessionId: agent.id, checkoutId, expectedRevision, confirmDirty, rollbackPreview }))
   }
 
   @Remote
@@ -167,8 +176,9 @@ export class WorktreeConsoleService extends TypertRemoteService {
     expectedReviewId: string,
     commitMessage: string,
     retention: WorktreeRetentionMode,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.finalize({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, commitMessage, retention })
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.finalize({ sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, commitMessage, retention }))
   }
 
   @Remote
@@ -180,10 +190,11 @@ export class WorktreeConsoleService extends TypertRemoteService {
     commitMessage: string,
     retention: WorktreeRetentionMode,
     recoveryProof?: WorktreePreviewRecoveryProof,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.finalizePreview({
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.finalizePreview({
       sessionId: agent.id, checkoutId, expectedRevision, expectedReviewId, commitMessage, retention, recoveryProof,
-    })
+    }))
   }
 
   @Remote
@@ -192,17 +203,18 @@ export class WorktreeConsoleService extends TypertRemoteService {
     checkoutId: string,
     expectedRevision: number,
     retention: Exclude<WorktreeRetentionMode, 'cleanup'>,
+    locale?: Language,
   ): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.setRetention({ sessionId: agent.id, checkoutId, expectedRevision, retention })
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.setRetention({ sessionId: agent.id, checkoutId, expectedRevision, retention }))
   }
 
   @Remote
-  retryCleanup(agent: Agent, checkoutId: string, expectedRevision: number): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.retryCleanup({ sessionId: agent.id, checkoutId, expectedRevision })
+  retryCleanup(agent: Agent, checkoutId: string, expectedRevision: number, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.retryCleanup({ sessionId: agent.id, checkoutId, expectedRevision }))
   }
 
   @Remote
-  beginNextIteration(agent: Agent, checkoutId: string, expectedRevision: number): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
-    return this.controlPlane.beginNextIteration({ sessionId: agent.id, checkoutId, expectedRevision })
+  beginNextIteration(agent: Agent, checkoutId: string, expectedRevision: number, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.beginNextIteration({ sessionId: agent.id, checkoutId, expectedRevision }))
   }
 }

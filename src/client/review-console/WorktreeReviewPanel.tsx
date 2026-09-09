@@ -1,3 +1,4 @@
+import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type {
   WorktreeConsoleAdapter,
@@ -30,17 +31,17 @@ export interface WorktreeReviewPanelProps {
   unavailableMessage?: string
 }
 
-function validationLabel(status: WorktreeReviewEvidence['validationStatus']): string {
-  if (status === 'passed') return '自动验证通过'
-  if (status === 'failed') return '自动验证失败，仍可继续验收'
-  if (status === 'partial') return '部分验证通过'
-  return '未运行自动验证'
+function validationLabel(status: WorktreeReviewEvidence['validationStatus'], t: ClientTranslator = defaultClientTranslator): string {
+  if (status === 'passed') return t("automated.validation.passed")
+  if (status === 'failed') return t("automated.validation.failed.review.can.continue")
+  if (status === 'partial') return t("validation.partially.passed")
+  return t("automated.validation.not.run")
 }
 
-function testStatusLabel(status: WorktreeReviewEvidence['tests'][number]['status']): string {
-  if (status === 'passed') return '通过'
-  if (status === 'failed') return '失败'
-  return '未运行'
+function testStatusLabel(status: WorktreeReviewEvidence['tests'][number]['status'], t: ClientTranslator = defaultClientTranslator): string {
+  if (status === 'passed') return t("passed")
+  if (status === 'failed') return t("failed")
+  return t("not.run")
 }
 
 function reviewIsStale(
@@ -65,8 +66,11 @@ export function WorktreeReviewPanel({
   target,
   onRefresh,
   onTargetChange,
-  unavailableMessage = '实时 Worktree Console 未连接；连接后即可执行验收操作。',
+  unavailableMessage: unavailableMessageOverride,
 }: WorktreeReviewPanelProps) {
+  const t = useClientTranslator()
+  const unavailableMessage = unavailableMessageOverride ?? t("live.worktree.console.is.disconnected.review.actions.will")
+
   const panelId = useId()
   const mounted = useRef(true)
   const actionScope = identity
@@ -108,7 +112,7 @@ export function WorktreeReviewPanel({
   const [currentTarget, setCurrentTarget] = useState(target)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [invalidReason, setInvalidReason] = useState<string | null>(
-    reviewIsStale(target, identity, review) ? '验收结果已过期，请刷新。' : null,
+    reviewIsStale(target, identity, review) ? t("review.is.stale.please.refresh") : null,
   )
   const refreshRequested = useRef(false)
 
@@ -120,11 +124,11 @@ export function WorktreeReviewPanel({
   useLayoutEffect(() => {
     setCurrentTarget(target)
     refreshRequested.current = false
-    setInvalidReason(reviewIsStale(target, identity, review) ? '验收结果已过期，请刷新。' : null)
+    setInvalidReason(reviewIsStale(target, identity, review) ? t("review.is.stale.please.refresh") : null)
   }, [identity?.expectedReviewId, identity?.expectedRevision, review.reviewId, review.revision, targetKey])
 
   const handleStale = useCallback((_error: WorktreeConsoleError) => {
-    setInvalidReason('验收结果已过期，请刷新。')
+    setInvalidReason(t("review.is.stale.please.refresh"))
     if (!refreshRequested.current) {
       refreshRequested.current = true
       void onRefresh?.()
@@ -148,25 +152,25 @@ export function WorktreeReviewPanel({
   return (
     <section
       className="dsh-wt-review-panel"
-      aria-label="Worktree 验收"
+      aria-label={t("worktree.review")}
       data-worktree-review-id={review.reviewId}
     >
       <header className="dsh-wt-review-compact-head">
-        <span className="dsh-wt-review-status-icon" data-validation={review.validationStatus} aria-hidden>✓</span>
+        <span className="dsh-wt-review-status-icon" data-validation={review.validationStatus} aria-hidden>{t("symbol.4")}</span>
         <div className="dsh-wt-review-compact-copy">
-          <h2 className="dsh-wt-review-title">第 {review.iteration} 轮修改已准备验收</h2>
+          <h2 className="dsh-wt-review-title">{t("review.iteration.ready", { iteration: review.iteration })}</h2>
           <p className="dsh-wt-review-summary">{review.summary}</p>
         </div>
-        <span className="dsh-wt-review-identity dsh-wt-code" title={`Review ${review.reviewId} · r${review.revision}`}>
+        <span className="dsh-wt-review-identity dsh-wt-code" title={t("review.identity", { reviewId: review.reviewId, revision: review.revision })}>
           {review.reviewId.slice(0, 8)} · r{review.revision}
         </span>
       </header>
 
       <div className="dsh-wt-review-meta">
-        <span data-validation={review.validationStatus}>{validationLabel(review.validationStatus)}</span>
-        <span>{review.changedFiles.length} 个文件</span>
+        <span data-validation={review.validationStatus}>{validationLabel(review.validationStatus, t)}</span>
+        <span>{t("count.files", { count: review.changedFiles.length })}</span>
         {(currentTarget?.checkpoints?.length ?? 0) > 0 ? (
-          <span className="dsh-wt-checkpoint-summary">已保存 {currentTarget!.checkpoints!.length} 个阶段 · 尚未发布到 Local</span>
+          <span className="dsh-wt-checkpoint-summary">{t("count.saved.stages", { count: currentTarget!.checkpoints!.length })}</span>
         ) : null}
         {hasValidationDetails ? (
           <button
@@ -177,8 +181,8 @@ export function WorktreeReviewPanel({
             onClick={() => setDetailsExpanded(value => !value)}
           >
             {detailsExpanded
-              ? '收起验证详情'
-              : `查看验证详情${review.tests.length > 0 ? `（${review.tests.length} 项测试）` : ''}`}
+              ? t("hide.validation.details")
+              : t("view.validation.details", { p0: review.tests.length > 0 ? t("tests", { p0: review.tests.length }) : '' })}
           </button>
         ) : null}
       </div>
@@ -187,10 +191,10 @@ export function WorktreeReviewPanel({
         <div id={`${panelId}-validation`} className="dsh-wt-review-validation-details">
           {review.validationSummary ? <p>{review.validationSummary}</p> : null}
           {review.tests.length > 0 ? (
-            <ul className="dsh-wt-test-list" aria-label="验证命令">
+            <ul className="dsh-wt-test-list" aria-label={t("validation.commands")}>
               {review.tests.map((item, index) => (
                 <li className="dsh-wt-test" key={`${item.command}-${index}`}>
-                  <span className="dsh-wt-test-state" data-test-status={item.status}>{testStatusLabel(item.status)}</span>
+                  <span className="dsh-wt-test-state" data-test-status={item.status}>{testStatusLabel(item.status, t)}</span>
                   <span className="dsh-wt-test-command">
                     <code className="dsh-wt-code">{item.command}</code>
                     {item.summary ? <span className="dsh-wt-test-summary">{item.summary}</span> : null}

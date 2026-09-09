@@ -1,3 +1,4 @@
+import { hostMessage } from './i18n/host.js'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -335,7 +336,7 @@ class GitCommandFailure extends Error {
     readonly args: string[],
     readonly result: GitResult,
   ) {
-    super(result.stderr || `git 命令退出码为 ${result.exitCode}`)
+    super(result.stderr || hostMessage('gitExitedWithCode', { p0: result.exitCode }))
   }
 }
 
@@ -384,7 +385,7 @@ async function runGit(
 
     const timeout = setTimeout(() => {
       child.kill('SIGTERM')
-      finish(new Error(`git 命令超时：${args[0] ?? 'unknown'}`))
+      finish(new Error(hostMessage('gitCommandTimedOut', { p0: args[0] ?? 'unknown' })))
     }, GIT_TIMEOUT_MS)
 
     if (options.input !== undefined) child.stdin.end(options.input)
@@ -855,10 +856,10 @@ async function prepareRollbackAssessment(
   receipt: PreviewReceipt,
 ): Promise<PreviewRecoverySafeRollback | PreviewRecoveryBlockedAction> {
   if (current.headRef !== receipt.localHeadRef) {
-    return { status: 'blocked', code: 'stale_local', message: 'Local branch 已变化，不能自动撤回 Preview' }
+    return { status: 'blocked', code: 'stale_local', message: hostMessage('theLocalBranchHasChangedPreviewCannotBeRolled') }
   }
   if (current.headOid !== receipt.localHeadOid && !await isAncestor(localGitRoot, receipt.localHeadOid, current.headOid)) {
-    return { status: 'blocked', code: 'stale_local', message: 'Local HEAD 不是 Preview 基线的安全快进，不能自动撤回' }
+    return { status: 'blocked', code: 'stale_local', message: hostMessage('localHEADIsNotASafeFastForwardFrom') }
   }
 
   let rollbackBaselineTreeOid = receipt.localWorkingTreeOid
@@ -872,7 +873,7 @@ async function prepareRollbackAssessment(
     if (advancedBaseline.status === 'conflict') {
       return {
         status: 'blocked', code: 'preview_modified',
-        message: `Local 新提交与 Preview 前的本地修改冲突，无法安全撤回：${advancedBaseline.conflictingFiles.join('、')}`,
+        message: hostMessage('newLocalCommitsConflictWithPrePreviewLocalChanges', { p0: advancedBaseline.conflictingFiles.join('、') }),
         conflictingFiles: [...advancedBaseline.conflictingFiles],
       }
     }
@@ -883,14 +884,14 @@ async function prepareRollbackAssessment(
     if (previewAbsence.status === 'conflict') {
       return {
         status: 'blocked', code: 'preview_modified',
-        message: `Local 新提交与 Preview 任务增量冲突，无法安全撤回：${previewAbsence.conflictingFiles.join('、')}`,
+        message: hostMessage('newLocalCommitsConflictWithThePreviewTaskChanges', { p0: previewAbsence.conflictingFiles.join('、') }),
         conflictingFiles: [...previewAbsence.conflictingFiles],
       }
     }
     if (previewAbsence.treeOid !== advancedBaseline.treeOid) {
       return {
         status: 'blocked', code: 'preview_modified',
-        message: 'Local 新提交已经包含部分或全部 Preview 增量，不能通过撤回工作区改动来改写已提交历史',
+        message: hostMessage('newLocalCommitsAlreadyContainSomeOrAllPreview'),
       }
     }
     const advancedPreview = await computeTreeMerge(
@@ -900,7 +901,7 @@ async function prepareRollbackAssessment(
     if (advancedPreview.status === 'conflict') {
       return {
         status: 'blocked', code: 'preview_modified',
-        message: `Local 新提交与 Preview 任务增量冲突，无法安全撤回：${advancedPreview.conflictingFiles.join('、')}`,
+        message: hostMessage('newLocalCommitsConflictWithThePreviewTaskChanges', { p0: advancedPreview.conflictingFiles.join('、') }),
         conflictingFiles: [...advancedPreview.conflictingFiles],
       }
     }
@@ -914,7 +915,7 @@ async function prepareRollbackAssessment(
   if (rollbackTree.status === 'conflict') {
     return {
       status: 'blocked', code: 'preview_modified',
-      message: `Local 在 Preview 区域出现额外修改，无法安全撤回：${rollbackTree.conflictingFiles.join('、')}`,
+      message: hostMessage('localHasAdditionalChangesInThePreviewAreaSafe', { p0: rollbackTree.conflictingFiles.join('、') }),
       conflictingFiles: [...rollbackTree.conflictingFiles],
     }
   }
@@ -930,13 +931,13 @@ async function prepareFinalizeAssessment(
   receipt: PreviewReceipt,
 ): Promise<PreviewRecoverySafeFinalize | PreviewRecoveryBlockedAction> {
   if (!receipt.localHeadRef?.startsWith('refs/heads/')) {
-    return { status: 'blocked', code: 'operation_not_allowed', message: 'Local 当前不是普通分支，不能自动创建任务提交' }
+    return { status: 'blocked', code: 'operation_not_allowed', message: hostMessage('localIsNotOnANormalBranchATask') }
   }
   if (current.headRef !== receipt.localHeadRef) {
-    return { status: 'blocked', code: 'stale_local', message: 'Local branch 已变化，不能完成 Preview 提交' }
+    return { status: 'blocked', code: 'stale_local', message: hostMessage('theLocalBranchHasChangedThePreviewCommitCannot') }
   }
   if (current.headOid !== receipt.localHeadOid && !await isAncestor(localGitRoot, receipt.localHeadOid, current.headOid)) {
-    return { status: 'blocked', code: 'stale_local', message: 'Local HEAD 不是 Preview 基线的安全快进，不能完成 Preview 提交' }
+    return { status: 'blocked', code: 'stale_local', message: hostMessage('localHEADIsNotASafeFastForwardFrom281') }
   }
   const previewRemoval = await computeTreeMerge(
     tempRoot, sourceObjects, objectDirectory, localGitRoot,
@@ -945,7 +946,7 @@ async function prepareFinalizeAssessment(
   if (previewRemoval.status === 'conflict') {
     return {
       status: 'blocked', code: 'preview_modified',
-      message: `Local 在 Preview 区域出现额外修改，无法可靠提交：${previewRemoval.conflictingFiles.join('、')}`,
+      message: hostMessage('localHasAdditionalChangesInThePreviewAreaA', { p0: previewRemoval.conflictingFiles.join('、') }),
       conflictingFiles: [...previewRemoval.conflictingFiles],
     }
   }
@@ -956,14 +957,14 @@ async function prepareFinalizeAssessment(
   if (taskTree.status === 'conflict') {
     return {
       status: 'blocked', code: 'commit_isolation_conflict',
-      message: `Preview 任务增量无法与最新 Local HEAD 可靠拆分：${taskTree.conflictingFiles.join('、')}`,
+      message: hostMessage('previewTaskChangesCannotBeReliablySeparatedFromThe', { p0: taskTree.conflictingFiles.join('、') }),
       conflictingFiles: [...taskTree.conflictingFiles],
     }
   }
   if (taskTree.treeOid === current.headTreeOid && receipt.changedFiles.length > 0) {
     return {
       status: 'blocked', code: 'preview_modified',
-      message: 'Preview 任务增量已经进入 Local HEAD；不会创建重复或空提交',
+      message: hostMessage('previewTaskChangesAreAlreadyInLocalHEADNo'),
     }
   }
   const finalIndexTree = await computeTreeMerge(
@@ -973,7 +974,7 @@ async function prepareFinalizeAssessment(
   if (finalIndexTree.status === 'conflict') {
     return {
       status: 'blocked', code: 'commit_isolation_conflict',
-      message: `Preview 提交与 Local staged 修改无法可靠分离：${finalIndexTree.conflictingFiles.join('、')}`,
+      message: hostMessage('thePreviewCommitCannotBeReliablySeparatedFromLocal', { p0: finalIndexTree.conflictingFiles.join('、') }),
       conflictingFiles: [...finalIndexTree.conflictingFiles],
     }
   }
@@ -1060,7 +1061,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
   async checkpoint(input: CheckpointInput): Promise<CheckpointResult> {
     const commitMessage = input.commitMessage.trim()
     if (!commitMessage || commitMessage.length > 500 || !OID_PATTERN.test(input.expectedHeadOid) || !input.expectedFingerprint.trim()) {
-      return { status: 'error', error: { code: 'invalid_input', message: 'Checkpoint 输入无效' } }
+      return { status: 'error', error: { code: 'invalid_input', message: hostMessage('invalidCheckpointInput') } }
     }
 
     let tempRoot: string | null = null
@@ -1072,22 +1073,22 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const isolatedGitRoot = await resolveGitRoot(input.isolatedPath)
       const projectPathPrefix = projectPrefix(isolatedGitRoot, input.isolatedPath)
       if (projectPathPrefix === null) {
-        return { status: 'error', error: { code: 'invalid_input', message: 'Checkpoint 项目目录不属于当前 Worktree' } }
+        return { status: 'error', error: { code: 'invalid_input', message: hostMessage('theCheckpointProjectDirectoryDoesNotBelongToThe') } }
       }
       const snapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'checkpoint.index'), null, null)
       if (snapshot.headRef !== null) {
-        return { status: 'error', error: { code: 'operation_not_allowed', message: 'Checkpoint 只允许写入 detached managed Worktree' } }
+        return { status: 'error', error: { code: 'operation_not_allowed', message: hostMessage('checkpointCanOnlyWriteToADetachedManagedWorktree') } }
       }
       if (snapshot.headOid !== input.expectedHeadOid || snapshot.fingerprint !== input.expectedFingerprint) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 在准备验收后发生变化，不能保存阶段' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeChangedAfterPreparingTheReviewTheCheckpointCannot') } }
       }
       const changedPaths = await changedTreePaths(isolatedGitRoot, snapshot.headOid, snapshot.treeOid, null, null)
       if (changedPaths.some((path) => !isProjectPath(path, projectPathPrefix))) {
-        return { status: 'error', error: { code: 'invalid_input', message: 'Worktree 包含项目根目录外的变更，不能保存阶段' } }
+        return { status: 'error', error: { code: 'invalid_input', message: hostMessage('worktreeContainsChangesOutsideTheProjectRootTheCheckpoint') } }
       }
       const changedFiles = changedPaths.map((path) => toProjectPath(path, projectPathPrefix)).sort()
       if (changedFiles.length === 0) {
-        return { status: 'error', error: { code: 'operation_not_allowed', message: '当前阶段没有可保存的新修改' } }
+        return { status: 'error', error: { code: 'operation_not_allowed', message: hostMessage('theCurrentCheckpointHasNoNewChangesToSave') } }
       }
 
       const commitOid = await createUserCommit(isolatedGitRoot, snapshot.treeOid, snapshot.headOid, commitMessage)
@@ -1107,7 +1108,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       await this.options.beforeFinalIsolatedValidation?.()
       const finalSnapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'final-checkpoint.index'), null, null)
       if (finalSnapshot.headOid !== snapshot.headOid || finalSnapshot.fingerprint !== snapshot.fingerprint) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 在保存阶段前发生变化，请重新准备验收' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeChangedBeforeSavingTheCheckpointPrepareTheReview') } }
       }
 
       let headUpdated = false
@@ -1128,7 +1129,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
               status: 'error',
               error: {
                 code: 'git_error',
-                message: `Checkpoint index 写入失败且 HEAD 无法回滚：${this.errorMessage(error)}；${this.errorMessage(rollbackError)}`,
+                message: hostMessage('checkpointIndexWriteFailedAndHEADCouldNotBe', { p0: this.errorMessage(error), p1: this.errorMessage(rollbackError) }),
                 recoveryState: 'uncertain',
               },
             }
@@ -1138,7 +1139,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           status: 'error',
           error: {
             code: 'git_error',
-            message: `Checkpoint 写入失败，已回滚：${this.errorMessage(error)}`,
+            message: hostMessage('checkpointWriteFailedAndWasRolledBack', { p0: this.errorMessage(error) }),
             recoveryState: 'unchanged',
           },
         }
@@ -1156,7 +1157,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         ) {
           return {
             status: 'error',
-            error: { code: 'git_error', message: 'Checkpoint 已写入，但 Worktree 未收敛到 clean 状态', recoveryState: 'uncertain' },
+            error: { code: 'git_error', message: hostMessage('checkpointWasWrittenButWorktreeDidNotReachA'), recoveryState: 'uncertain' },
           }
         }
         return {
@@ -1171,7 +1172,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           status: 'error',
           error: {
             code: 'git_error',
-            message: `Checkpoint 写后无法完成验证，需要保留现场确认：${this.errorMessage(error)}`,
+            message: hostMessage('cannotVerifyTheCheckpointAfterWritingTheEnvironmentMust', { p0: this.errorMessage(error) }),
             recoveryState: 'uncertain',
           },
         }
@@ -1181,7 +1182,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       return {
         status: 'error',
         error: stale
-          ? { code: 'stale_isolated', message: 'Worktree index 正在被其他 Git 操作更新，请重试' }
+          ? { code: 'stale_isolated', message: hostMessage('anotherGitOperationIsUpdatingTheWorktreeIndexRetry') }
           : { code: 'git_error', message: this.errorMessage(error) },
       }
     } finally {
@@ -1195,7 +1196,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
   async recoverCheckpoint(input: { isolatedPath: string; commitOid: string; parentOid: string; expectedIndexTreeOid: string }): Promise<CheckpointRecoveryResult> {
     if (!OID_PATTERN.test(input.commitOid) || !OID_PATTERN.test(input.parentOid) || !OID_PATTERN.test(input.expectedIndexTreeOid)) {
-      return { status: 'error', error: { code: 'invalid_input', message: 'Checkpoint 恢复 OID 无效' } }
+      return { status: 'error', error: { code: 'invalid_input', message: hostMessage('invalidCheckpointRecoveryOID') } }
     }
     let tempRoot: string | null = null
     let ownedIndexLock: string | null = null
@@ -1211,13 +1212,13 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const markerOwned = await checkpointLockMarkerOwned(indexLockMarker, input.commitOid)
       const snapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'current.index'), null, null)
       if (snapshot.headRef !== null) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 已不再是 detached HEAD' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeNoLongerHasADetachedHEAD') } }
       }
 
       if (snapshot.headOid === input.parentOid) {
         if (existingLock.exists) {
           if (!markerOwned || (existingLock.treeOid !== null && existingLock.treeOid !== targetTreeOid)) {
-            return { status: 'error', error: { code: 'stale_isolated', message: '遗留 index.lock 无法证明属于当前 Checkpoint，已保留现场' } }
+            return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('cannotProveTheRemainingIndexLockBelongsToThe') } }
           }
           await unlink(indexLockPath)
         }
@@ -1225,20 +1226,20 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         return { status: 'checkpoint_aborted', isolatedFingerprint: snapshot.fingerprint }
       }
       if (snapshot.headOid !== input.commitOid) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree HEAD 与待恢复 Checkpoint 不一致' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeHEADDoesNotMatchTheCheckpointBeingRecovered') } }
       }
       if (snapshot.treeOid !== snapshot.headTreeOid) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Worktree 在 Checkpoint 中断后出现新修改，不能自动恢复 index' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeHasNewChangesAfterCheckpointInterruptionTheIndex') } }
       }
       if (snapshot.indexTreeOid !== input.expectedIndexTreeOid && snapshot.indexTreeOid !== snapshot.headTreeOid) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Checkpoint 中断后 index 出现新 staged 修改，不能自动覆盖' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('theIndexHasNewStagedChangesAfterCheckpointInterruption') } }
       }
 
       const cleanIndexPath = join(tempRoot, 'clean.index')
       await prepareIndexFromPatch(isolatedGitRoot, cleanIndexPath, input.commitOid, Buffer.alloc(0))
       if (existingLock.exists) {
         if (!markerOwned || (existingLock.treeOid !== null && existingLock.treeOid !== targetTreeOid)) {
-          return { status: 'error', error: { code: 'stale_isolated', message: '遗留 index.lock 与 Checkpoint 目标不一致，已保留现场' } }
+          return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('theRemainingIndexLockDoesNotMatchTheCheckpoint') } }
         }
         if (existingLock.treeOid === null) await copyFile(cleanIndexPath, indexLockPath)
       } else {
@@ -1259,7 +1260,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         || lockedSnapshot.fingerprint !== snapshot.fingerprint
         || (lockedSnapshot.indexTreeOid !== input.expectedIndexTreeOid && lockedSnapshot.indexTreeOid !== lockedSnapshot.headTreeOid)
       ) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Checkpoint 恢复加锁前 Worktree 或 index 已变化' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeOrItsIndexChangedBeforeAcquiringTheCheckpoint') } }
       }
       await rename(indexLockPath, realIndexPath)
       ownedIndexLock = null
@@ -1272,7 +1273,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         || completed.indexTreeOid !== completed.headTreeOid
         || completed.treeOid !== completed.headTreeOid
       ) {
-        return { status: 'error', error: { code: 'git_error', message: 'Checkpoint index 恢复后仍未收敛到 clean 状态', recoveryState: 'uncertain' } }
+        return { status: 'error', error: { code: 'git_error', message: hostMessage('worktreeIsStillNotCleanAfterCheckpointIndexRecovery'), recoveryState: 'uncertain' } }
       }
       return { status: 'checkpoint_recovered', isolatedFingerprint: completed.fingerprint }
     } catch (error) {
@@ -1286,7 +1287,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
   async inspectReview(input: ApplyPlanInput): Promise<InspectReviewResult> {
     if (!OID_PATTERN.test(input.baseOid)) {
-      return { status: 'error', error: { code: 'invalid_input', message: 'Session Base OID 格式无效' } }
+      return { status: 'error', error: { code: 'invalid_input', message: hostMessage('invalidSessionBaseOIDFormat') } }
     }
     let tempRoot: string | null = null
     try {
@@ -1298,12 +1299,12 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const localObjects = await sourceObjectDirectory(localGitRoot)
       const isolatedObjects = await sourceObjectDirectory(isolatedGitRoot)
       if (!pathsMatch(localObjects, isolatedObjects)) {
-        return { status: 'error', error: { code: 'invalid_input', message: 'Local 与 Isolated 不属于同一 Git 仓库' } }
+        return { status: 'error', error: { code: 'invalid_input', message: hostMessage('localAndIsolatedDoNotBelongToTheSame') } }
       }
       const localPrefix = projectPrefix(localGitRoot, input.localPath)
       const isolatedPrefix = projectPrefix(isolatedGitRoot, input.isolatedPath)
       if (localPrefix === null || isolatedPrefix === null || localPrefix !== isolatedPrefix) {
-        return { status: 'error', error: { code: 'invalid_input', message: 'Local 与 Isolated 的项目子目录不一致' } }
+        return { status: 'error', error: { code: 'invalid_input', message: hostMessage('theLocalAndIsolatedProjectSubdirectoriesDoNotMatch') } }
       }
       await runGit(localGitRoot, ['cat-file', '-e', `${input.baseOid}^{commit}`])
       const isolated = await captureSnapshot(
@@ -1320,7 +1321,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         localObjects,
       )
       if (changedFiles.some((path) => !isProjectPath(path, localPrefix))) {
-        return { status: 'error', error: { code: 'invalid_input', message: 'Isolated 包含项目根目录外的变更，不能准备验收' } }
+        return { status: 'error', error: { code: 'invalid_input', message: hostMessage('isolatedContainsChangesOutsideTheProjectRootAReview') } }
       }
       return {
         status: 'ready',
@@ -1345,7 +1346,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
   private async calculatePlan(input: ApplyPlanInput, persistPlan: boolean): Promise<ApplyPlanResult> {
     if (!OID_PATTERN.test(input.baseOid)) {
-      return { status: 'error', error: { code: 'invalid_input', message: 'Session Base OID 格式无效' } }
+      return { status: 'error', error: { code: 'invalid_input', message: hostMessage('invalidSessionBaseOIDFormat') } }
     }
 
     let tempRoot: string | null = null
@@ -1358,12 +1359,12 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const localObjects = await sourceObjectDirectory(localGitRoot)
       const isolatedObjects = await sourceObjectDirectory(isolatedGitRoot)
       if (!pathsMatch(localObjects, isolatedObjects)) {
-        return { status: 'error', error: { code: 'invalid_input', message: 'Local 与 Isolated 不属于同一 Git 仓库' } }
+        return { status: 'error', error: { code: 'invalid_input', message: hostMessage('localAndIsolatedDoNotBelongToTheSame') } }
       }
       const localPrefix = projectPrefix(localGitRoot, input.localPath)
       const isolatedPrefix = projectPrefix(isolatedGitRoot, input.isolatedPath)
       if (localPrefix === null || isolatedPrefix === null || localPrefix !== isolatedPrefix) {
-        return { status: 'error', error: { code: 'invalid_input', message: 'Local 与 Isolated 的项目子目录不一致' } }
+        return { status: 'error', error: { code: 'invalid_input', message: hostMessage('theLocalAndIsolatedProjectSubdirectoriesDoNotMatch') } }
       }
       await runGit(localGitRoot, ['cat-file', '-e', `${input.baseOid}^{commit}`])
 
@@ -1395,7 +1396,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (isolatedChangedPaths.some((path) => !isProjectPath(path, localPrefix))) {
         return {
           status: 'error',
-          error: { code: 'invalid_input', message: 'Isolated 包含项目根目录外的变更，已拒绝 Apply' },
+          error: { code: 'invalid_input', message: hostMessage('isolatedContainsChangesOutsideTheProjectRootApplyWas') },
         }
       }
       const merge = await computeMerge(
@@ -1458,7 +1459,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
   async apply(plan: ApplyPlan): Promise<ApplyResult> {
     const stored = this.plans.get(plan.revision)
     if (!stored || !planMatches(stored.plan, plan)) {
-      return { status: 'error', error: { code: 'invalid_plan', message: 'Apply plan 不存在、已使用或已被修改' } }
+      return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theApplyPlanIsMissingAlreadyUsedOrModified') } }
     }
 
     let tempRoot: string | null = null
@@ -1468,7 +1469,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(stored.scope.localGitRoot)
       if (!pathsMatch(sourceObjects, stored.scope.sourceObjects)) {
-        return { status: 'error', error: { code: 'invalid_plan', message: 'Apply plan 的 Git 仓库身份已变化' } }
+        return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theApplyPlanSGitRepositoryIdentityHasChanged') } }
       }
       const local = await captureSnapshot(
         stored.scope.localGitRoot,
@@ -1477,7 +1478,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         sourceObjects,
       )
       if (local.headOid !== stored.plan.localHeadOid || local.fingerprint !== stored.plan.localFingerprint) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedAfterPlanningRecalculateThePlan') } }
       }
 
       const isolated = await captureSnapshot(
@@ -1487,7 +1488,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         sourceObjects,
       )
       if (isolated.headOid !== stored.plan.isolatedHeadOid || isolated.fingerprint !== stored.plan.isolatedFingerprint) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Isolated 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('isolatedChangedAfterPlanningRecalculateThePlan') } }
       }
 
       // 将已审核的 Isolated 最终状态写成无 ref 的内部 commit，供同一 checkout 后续 Apply 去重。
@@ -1499,7 +1500,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         null,
       )
       if (persistentIsolated.fingerprint !== stored.plan.isolatedFingerprint) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Isolated 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('isolatedChangedAfterPlanningRecalculateThePlan') } }
       }
       const nextBaseOid = await createSnapshotCommit(
         stored.scope.isolatedGitRoot,
@@ -1520,7 +1521,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (finalLocal.headOid !== stored.plan.localHeadOid || finalLocal.fingerprint !== stored.plan.localFingerprint) {
         return {
           status: 'error',
-          error: { code: 'stale_local', message: 'Local 在 Apply 写入前发生变化，请重新计算' },
+          error: { code: 'stale_local', message: hostMessage('localChangedBeforeApplyWroteItsChangesRecalculateThe') },
         }
       }
 
@@ -1547,10 +1548,10 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
   ): Promise<PreviewResult> {
     const stored = this.plans.get(plan.revision)
     if (!stored || !planMatches(stored.plan, plan)) {
-      return { status: 'error', error: { code: 'invalid_plan', message: 'Preview plan 不存在、已使用或已被修改' } }
+      return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('thePreviewPlanIsMissingAlreadyUsedOrModified') } }
     }
     if (!options.previewId.trim() || !options.reviewId.trim() || !Number.isSafeInteger(options.iteration) || options.iteration < 1) {
-      return { status: 'error', error: { code: 'invalid_input', message: 'Preview identity 无效' } }
+      return { status: 'error', error: { code: 'invalid_input', message: hostMessage('invalidPreviewIdentity') } }
     }
 
     let tempRoot: string | null = null
@@ -1560,7 +1561,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(stored.scope.localGitRoot)
       if (!pathsMatch(sourceObjects, stored.scope.sourceObjects)) {
-        return { status: 'error', error: { code: 'invalid_plan', message: 'Preview plan 的 Git 仓库身份已变化' } }
+        return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('thePreviewPlanSGitRepositoryIdentityHasChanged') } }
       }
       const local = await captureSnapshot(
         stored.scope.localGitRoot,
@@ -1573,7 +1574,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         || local.headRef !== stored.plan.localHeadRef
         || local.fingerprint !== stored.plan.localFingerprint
       ) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedAfterPlanningRecalculateThePlan') } }
       }
       const isolated = await captureSnapshot(
         stored.scope.isolatedGitRoot,
@@ -1582,7 +1583,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         sourceObjects,
       )
       if (isolated.headOid !== stored.plan.isolatedHeadOid || isolated.fingerprint !== stored.plan.isolatedFingerprint) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Isolated 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('isolatedChangedAfterPlanningRecalculateThePlan') } }
       }
 
       const persistentLocal = await captureSnapshot(
@@ -1601,7 +1602,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         persistentLocal.fingerprint !== stored.plan.localFingerprint
         || persistentIsolated.fingerprint !== stored.plan.isolatedFingerprint
       ) {
-        return { status: 'error', error: { code: 'invalid_plan', message: 'Preview 持久快照与审核 plan 不一致' } }
+        return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('thePersistentPreviewSnapshotDoesNotMatchTheReviewed') } }
       }
       const previewWorkingTreeOid = await prepareIndexFromPatch(
         stored.scope.localGitRoot,
@@ -1646,7 +1647,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         sourceObjects,
       )
       if (finalLocal.headOid !== stored.plan.localHeadOid || finalLocal.fingerprint !== stored.plan.localFingerprint) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 Preview 写入前发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedBeforePreviewWroteItsChangesRecalculateThe') } }
       }
       await options.beforeWrite?.(preparedReceipt)
       if (stored.patch.length > 0) {
@@ -1661,7 +1662,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (previewedLocal.treeOid !== previewWorkingTreeOid) {
         return {
           status: 'error',
-          error: { code: 'git_error', message: 'Preview 写入后的 Local snapshot 与准备结果不一致，需要恢复确认' },
+          error: { code: 'git_error', message: hostMessage('theLocalSnapshotAfterPreviewDoesNotMatchThe') },
         }
       }
 
@@ -1757,7 +1758,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         || finalLocal.headOid !== current.headOid
         || finalLocal.headRef !== current.headRef
       ) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local 在撤回 Preview 前发生变化，请重试' } }
+        return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedBeforePreviewRollbackRetry') } }
       }
       if (rollbackPatch.length > 0) {
         await runGit(localGitRoot, ['apply', '--binary', '--whitespace=nowarn'], { input: rollbackPatch })
@@ -1776,7 +1777,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           status: 'error',
           error: {
             code: 'git_error',
-            message: `Preview 撤回写后无法完成验证，需要保留现场确认：${this.errorMessage(error)}`,
+            message: hostMessage('cannotVerifyAfterWritingPreviewRollbackTheEnvironmentMust', { p0: this.errorMessage(error) }),
             recoveryState: 'uncertain',
           },
         }
@@ -1798,7 +1799,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           status: 'error',
           error: {
             code: 'git_error',
-            message: 'Preview 撤回后的 Local snapshot 与安全恢复结果不一致，需要保留现场确认',
+            message: hostMessage('theLocalSnapshotAfterPreviewRollbackDoesNotMatch'),
             recoveryState: 'uncertain',
           },
         }
@@ -1819,7 +1820,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
   }): Promise<FinishResult> {
     const commitMessage = input.commitMessage.trim()
     if (!commitMessage) {
-      return { status: 'error', error: { code: 'invalid_input', message: '提交信息不能为空' } }
+      return { status: 'error', error: { code: 'invalid_input', message: hostMessage('theCommitMessageMustNotBeEmpty') } }
     }
 
     let tempRoot: string | null = null
@@ -1865,7 +1866,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           || finalLocal.headRef !== current.headRef
           || finalLocal.fingerprint !== current.fingerprint
         ) {
-          return { status: 'error', error: { code: 'stale_local', message: 'Local 在完成 Preview 前发生变化，请重试' } }
+          return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedBeforeFinalizingPreviewRetry') } }
         }
         return {
           status: 'finished',
@@ -1896,7 +1897,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         taskPatch,
       )
       if (actualTaskTreeOid !== assessment.taskTreeOid) {
-        return { status: 'error', error: { code: 'git_error', message: 'Preview 任务提交 tree 与恢复评估不一致' } }
+        return { status: 'error', error: { code: 'git_error', message: hostMessage('thePreviewTaskCommitTreeDoesNotMatchThe') } }
       }
       const commitOid = await createUserCommit(localGitRoot, actualTaskTreeOid, current.headOid, commitMessage)
       const finalIndexPath = join(tempRoot, 'final.index')
@@ -1907,7 +1908,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         finalIndexPatch,
       )
       if (actualFinalIndexTreeOid !== assessment.finalIndexTreeOid) {
-        return { status: 'error', error: { code: 'git_error', message: 'Preview 最终 index tree 与恢复评估不一致' } }
+        return { status: 'error', error: { code: 'git_error', message: hostMessage('thePreviewFinalIndexTreeDoesNotMatchThe') } }
       }
       const expectedIndexEntries = (
         await runGit(localGitRoot, ['ls-files', '--stage', '-z'], { env: { GIT_INDEX_FILE: finalIndexPath } })
@@ -1923,7 +1924,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
       const branchRef = current.headRef
       if (!branchRef?.startsWith('refs/heads/')) {
-        return { status: 'error', error: { code: 'operation_not_allowed', message: 'Local 当前不是普通分支，不能自动创建任务提交' } }
+        return { status: 'error', error: { code: 'operation_not_allowed', message: hostMessage('localIsNotOnANormalBranchATask') } }
       }
       backupIndex = `${realIndexPath}.domi-backup-${randomUUID()}`
       await copyFile(realIndexPath, backupIndex)
@@ -1934,7 +1935,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         ownedIndexLock = await writeIndexLock(realIndexPath, intendedIndexBytes)
       } catch (error) {
         if (isIndexLockContention(error)) {
-          return { status: 'error', error: { code: 'stale_local', message: 'Local index 正在被其他 Git 操作更新，请重试' } }
+          return { status: 'error', error: { code: 'stale_local', message: hostMessage('anotherGitOperationIsUpdatingTheLocalIndexRetry') } }
         }
         throw error
       }
@@ -1951,7 +1952,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         || finalLocal.fingerprint !== current.fingerprint
         || !finalIndexBytes.equals(originalIndexBytes)
       ) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 Preview 提交写入前发生变化，请重试' } }
+        return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedBeforeThePreviewCommitWasWrittenRetry') } }
       }
 
       let refUpdated = false
@@ -1994,7 +1995,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
               nextBaseOid: input.receipt.isolatedSnapshotOid,
             }
           }
-          writeError = new Error('Preview 提交写后验证失败')
+          writeError = new Error(hostMessage('previewCommitVerificationFailedAfterWriting'))
         } catch (error) {
           writeError = error
         }
@@ -2020,7 +2021,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           ownedIndexLock = await writeIndexLock(realIndexPath, backupBytes)
           const currentIndexBytes = await readFile(realIndexPath)
           if (!currentIndexBytes.equals(intendedIndexBytes)) {
-            rollbackErrors.push('index: Local index 在 Preview 写入后发生变化，拒绝覆盖并发 staged 状态')
+            rollbackErrors.push(hostMessage('indexLocalIndexChangedAfterPreviewWroteItsChanges'))
           } else {
             await runGit(localGitRoot, ['update-ref', branchRef, current.headOid, commitOid])
             refUpdated = false
@@ -2032,7 +2033,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           rollbackErrors.push(`compensation: ${this.errorMessage(error)}`)
         }
       } else if (refUpdated) {
-        rollbackErrors.push('ref: 缺少可验证的 index 补偿证据，拒绝部分回滚')
+        rollbackErrors.push(hostMessage('refVerifiableIndexCompensationEvidenceIsMissingPartialRollback'))
       }
 
       let restored = false
@@ -2062,7 +2063,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           status: 'error',
           error: {
             code: 'git_error',
-            message: `Preview 提交写入未能验证，已完整回滚：${this.errorMessage(writeError)}`,
+            message: hostMessage('thePreviewCommitWriteCouldNotBeVerifiedAnd', { p0: this.errorMessage(writeError) }),
             recoveryState: 'unchanged',
           },
         }
@@ -2074,7 +2075,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         status: 'error',
         error: {
           code: 'git_error',
-          message: `Preview 提交写入后无法证明成功或完整回滚，需要保留现场确认：${this.errorMessage(writeError)}${rollbackDetail}`,
+          message: hostMessage('cannotProveSuccessOrCompleteRollbackAfterWritingThe', { p0: this.errorMessage(writeError), p1: rollbackDetail }),
           recoveryState: 'uncertain',
         },
       }
@@ -2090,16 +2091,16 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
   async finish(plan: ApplyPlan, options: { commitMessage: string }): Promise<FinishResult> {
     const stored = this.plans.get(plan.revision)
     if (!stored || !planMatches(stored.plan, plan)) {
-      return { status: 'error', error: { code: 'invalid_plan', message: 'Finish plan 不存在、已使用或已被修改' } }
+      return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theFinishPlanIsMissingAlreadyUsedOrModified') } }
     }
     const commitMessage = options.commitMessage.trim()
     if (!commitMessage) {
-      return { status: 'error', error: { code: 'invalid_input', message: '提交信息不能为空' } }
+      return { status: 'error', error: { code: 'invalid_input', message: hostMessage('theCommitMessageMustNotBeEmpty') } }
     }
     if (!stored.plan.localHeadRef?.startsWith('refs/heads/')) {
       return {
         status: 'error',
-        error: { code: 'operation_not_allowed', message: 'Local 当前不是普通分支，不能自动创建任务提交' },
+        error: { code: 'operation_not_allowed', message: hostMessage('localIsNotOnANormalBranchATask') },
       }
     }
 
@@ -2111,7 +2112,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(stored.scope.localGitRoot)
       if (!pathsMatch(sourceObjects, stored.scope.sourceObjects)) {
-        return { status: 'error', error: { code: 'invalid_plan', message: 'Finish plan 的 Git 仓库身份已变化' } }
+        return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theFinishPlanSGitRepositoryIdentityHasChanged') } }
       }
 
       const local = await captureSnapshot(
@@ -2125,7 +2126,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         || local.headRef !== stored.plan.localHeadRef
         || local.fingerprint !== stored.plan.localFingerprint
       ) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedAfterPlanningRecalculateThePlan') } }
       }
       const isolated = await captureSnapshot(
         stored.scope.isolatedGitRoot,
@@ -2134,7 +2135,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         sourceObjects,
       )
       if (isolated.headOid !== stored.plan.isolatedHeadOid || isolated.fingerprint !== stored.plan.isolatedFingerprint) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Isolated 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('isolatedChangedAfterPlanningRecalculateThePlan') } }
       }
 
       const merge = await computeMerge(
@@ -2150,14 +2151,14 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (merge.status === 'conflict') {
         return {
           status: 'error',
-          error: { code: 'invalid_plan', message: 'Finish 复验得到与已审核 plan 不一致的冲突' },
+          error: { code: 'invalid_plan', message: hostMessage('finishRevalidationFoundConflictsInconsistentWithTheReviewedPlan') },
         }
       }
       if (
         merge.changedFiles.length !== stored.plan.changedFiles.length
         || merge.changedFiles.some((path, index) => path !== stored.plan.changedFiles[index])
       ) {
-        return { status: 'error', error: { code: 'invalid_plan', message: 'Finish 复验的文件集合已变化' } }
+        return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theFileSetChangedDuringFinishRevalidation') } }
       }
 
       const persistentIsolated = await captureSnapshot(
@@ -2167,7 +2168,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         null,
       )
       if (persistentIsolated.fingerprint !== stored.plan.isolatedFingerprint) {
-        return { status: 'error', error: { code: 'stale_isolated', message: 'Isolated 在 plan 后发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('isolatedChangedAfterPlanningRecalculateThePlan') } }
       }
       const nextBaseOid = await createSnapshotCommit(
         stored.scope.isolatedGitRoot,
@@ -2187,7 +2188,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           sourceObjects,
         )
         if (finalLocal.fingerprint !== stored.plan.localFingerprint) {
-          return { status: 'error', error: { code: 'stale_local', message: 'Local 在 Finish 前发生变化，请重新计算' } }
+          return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedBeforeFinishRecalculateThePlan') } }
         }
         this.plans.delete(plan.revision)
         return { status: 'finished', changedFiles: [], commitOid: null, nextBaseOid }
@@ -2209,7 +2210,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           status: 'error',
           error: {
             code: 'commit_isolation_conflict',
-            message: `任务增量无法与 Local 原有修改可靠拆分：${taskTree.conflictingFiles.join('、')}`,
+            message: hostMessage('taskChangesCannotBeReliablySeparatedFromExistingLocal', { p0: taskTree.conflictingFiles.join('、') }),
           },
         }
       }
@@ -2230,7 +2231,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
           status: 'error',
           error: {
             code: 'commit_isolation_conflict',
-            message: `任务提交与 Local 原有 staged 修改无法可靠分离：${finalIndexTree.conflictingFiles.join('、')}`,
+            message: hostMessage('theTaskCommitCannotBeReliablySeparatedFromExisting', { p0: finalIndexTree.conflictingFiles.join('、') }),
           },
         }
       }
@@ -2282,7 +2283,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         || finalLocal.headRef !== stored.plan.localHeadRef
         || finalLocal.fingerprint !== stored.plan.localFingerprint
       ) {
-        return { status: 'error', error: { code: 'stale_local', message: 'Local 在 Finish 写入前发生变化，请重新计算' } }
+        return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedBeforeFinishWroteItsChangesRecalculateThe') } }
       }
 
       const realIndexPath = await resolveIndexPath(stored.scope.localGitRoot)
@@ -2332,11 +2333,11 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
             status: 'error',
             error: {
               code: 'git_error',
-              message: `Finish 写入失败且无法证明完整回滚：${detail}；${rollbackErrors.join('；')}`,
+              message: hostMessage('finishWriteFailedAndCompleteRollbackCouldNotBe', { p0: detail, p1: rollbackErrors.join('；') }),
             },
           }
         }
-        return { status: 'error', error: { code: 'git_error', message: `Finish 写入失败，已回滚：${detail}` } }
+        return { status: 'error', error: { code: 'git_error', message: hostMessage('finishWriteFailedAndWasRolledBack', { p0: detail }) } }
       }
 
       this.plans.delete(plan.revision)
@@ -2356,9 +2357,9 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
   private errorMessage(error: unknown): string {
     if (error instanceof GitCommandFailure) {
-      return `Git 操作失败（${error.args[0] ?? 'unknown'}）：${error.message}`
+      return hostMessage('gitOperationFailed', { p0: error.args[0] ?? 'unknown', p1: error.message })
     }
-    return error instanceof Error ? error.message : '未知 Git 错误'
+    return error instanceof Error ? error.message : hostMessage('unknownGitError')
   }
 
   private async cleanup(path: string): Promise<void> {
@@ -2366,7 +2367,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       await rm(path, { recursive: true, force: true, maxRetries: 2 })
     } catch (error) {
       // 清理失败不能掩盖 plan/apply 的主结果。
-      console.warn('[session-checkout-apply] 临时目录清理失败：', error)
+      console.warn(hostMessage('tempDirectoryCleanupFailed'), error)
     }
   }
 }
