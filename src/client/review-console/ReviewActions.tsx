@@ -1,3 +1,4 @@
+import { ReviewIcon } from './ReviewIcon.js'
 import type { ReactNode } from 'react'
 import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -911,7 +912,7 @@ export function ReviewActions({
 
   const primary = ready ? (
     <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.preview || !safeReadyPreflight} onClick={() => { void previewLocal() }}>
-      {submitting === 'preview'
+      <ReviewIcon name="preview" />{submitting === 'preview'
         ? t("syncing")
         : autoPreflightEnabled && (preflightSnapshot.status === 'idle' || preflightSnapshot.status === 'loading')
           ? t("checking")
@@ -919,11 +920,11 @@ export function ReviewActions({
     </button>
   ) : previewActive ? (
     <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => setCommitMode('finalize_preview')}>
-      {t("confirm.and.save")} </button>
+      <ReviewIcon name="confirm" />{t("confirm.and.save")} </button>
   ) : previewRecovery ? (
     rollbackRecoverySafe ? (
       <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview() }}>
-        {submitting === 'rollback' ? t("processing") : t("recover.and.roll.back.preview")}
+        <ReviewIcon name="rollback" />{submitting === 'rollback' ? t("processing") : t("recover.and.roll.back.preview")}
       </button>
     ) : (
       <button type="button" className="dsh-wt-button" disabled={allDisabled || target?.state !== 'preview_detached'} onClick={() => { void refreshRecoveryPreflight() }}>
@@ -951,20 +952,20 @@ export function ReviewActions({
         <div className="dsh-wt-actions">
           {primary}
           <details ref={moreMenuRef} className="dsh-wt-more-menu">
-            <summary className="dsh-wt-more-trigger" aria-label={t("more.delivery.actions")}>{t("symbol")}</summary>
+            <summary className="dsh-wt-more-trigger" aria-label={t("more.delivery.actions")}><ReviewIcon name="more" /></summary>
             <div className="dsh-wt-more-content" role="menu">
-              {focusReview ? (
+              {focusReview && !renderStatus ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" onClick={() => {
                   focusReview()
                   closeMoreMenu()
-                }}>{t("view.review")}</button>
+                }}><ReviewIcon name="list" />{t("view.review")}</button>
               ) : null}
               {ready ? (
                 <>
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.checkpoint || !target.checkpointGeneration} onClick={() => {
                     openCheckpoint()
                     closeMoreMenu()
-                  }}>{t("save.stage.and.continue")}</button>
+                  }}><ReviewIcon name="save" />{t("save.stage.and.continue")}</button>
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.resumeRevision} onClick={() => {
                     void resumeRevision()
                     closeMoreMenu()
@@ -979,13 +980,13 @@ export function ReviewActions({
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled} onClick={() => {
                   openCheckpoint()
                   closeMoreMenu()
-                }}>{t("save.stage.and.continue")}</button>
+                }}><ReviewIcon name="save" />{t("save.stage.and.continue")}</button>
               ) : null}
               {previewActive ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
                   void rollbackPreview(true)
                   closeMoreMenu()
-                }}>{t("continue.editing")}</button>
+                }}><ReviewIcon name="edit" />{t("continue.editing")}</button>
               ) : null}
               {previewActive || rollbackRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
@@ -1151,7 +1152,7 @@ export function ReviewActions({
       {runtimeConflict ? (
         <div className="dsh-wt-recovery-actions">
           <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={recoverRuntimeConflict}>
-            {t("ask.agent.to.resolve.conflicts")} </button>
+            <ReviewIcon name="warning" />{t("ask.agent.to.resolve.conflicts")} </button>
         </div>
       ) : null}
       {activeRecovery ? (

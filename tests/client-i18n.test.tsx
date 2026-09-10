@@ -96,13 +96,13 @@ describe('Client instance locale', () => {
     expect(screen.getByRole('region', { name: 'Worktree review' })).toBeTruthy()
     expect(screen.getByText('Iteration 3 is ready for review')).toBeTruthy()
     expect(screen.getByText('用户摘要 user summary')).toBeTruthy()
-    expect(screen.getByTitle('Review review-原始 · r2')).toBeTruthy()
+    expect(screen.queryByTitle('Review review-原始 · r2')).toBeNull()
     expect(screen.getByText('Automated validation passed')).toBeTruthy()
-    expect(screen.getByText('Live Worktree Console is disconnected; review actions will be available after connection.')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'View validation details' }))
+    expect(screen.queryByRole('button', { name: 'Preview changes' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'View validation and version details' }))
     expect(screen.getByText('用户验证结果')).toBeTruthy()
     act(() => locale.change('zh'))
-    expect(screen.getByRole('button', { name: '收起验证详情' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: '收起验证与版本详情' }).getAttribute('aria-expanded')).toBe('true')
   })
 
   test('imperative actions read the locale at each invocation', async () => {

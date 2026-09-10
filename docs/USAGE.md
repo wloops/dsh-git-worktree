@@ -243,9 +243,11 @@ dsh plugin --profile web remove dsh-git-worktree
 
    ![Ready for Review](screenshots/02-ready-for-review.png)
 
+可从输入框上方的验收条查看摘要、文件数和验证状态；点击“查看详情”打开只读弹窗，查看文件列表、验证记录和版本信息，不需要展开聊天工具记录。弹窗内不提供交付操作，关闭后仍从底部验收条操作。
+
 4. Local Preview 中确认实际效果；可以“确认并保存”，也可以从更多菜单“撤回本次预览”。
 5. 保存时选择立即 cleanup，或按需保留运行环境。
-6. cleanup 完成后，可在同一 owner Session 中“开始下一轮修改”。
+6. cleanup 完成后，底部操作条收起；可从同一 owner Session 顶部的 Worktree 菜单选择“开始下一轮修改”。
 
 > 界面文案以当前安装版本为准。本指南不再展示旧版“同步到 Local 验收 / 验收通过并提交”截图。
 

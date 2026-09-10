@@ -82,6 +82,7 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.2",
+    "lucide-react": "1.43.0",
     "zod": "4.4.3"
   },
   "peerDependencies": {

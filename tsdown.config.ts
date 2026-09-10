@@ -13,6 +13,7 @@ export default defineConfig({
   outDir: 'lib',
   format: 'cjs',
   platform: 'neutral',
+  inputOptions: { resolve: { mainFields: ['module', 'main'] } },
   target: 'es2022',
   clean: false,
   sourcemap: false,
@@ -25,7 +26,7 @@ export default defineConfig({
     '@deepseek-ai/dsh-client-store',
     '@deepseek-ai/dsh-client-ui-primitives',
   ],
-  noExternal: ['zod'],
+  noExternal: ['zod', 'lucide-react'],
   plugins: [{
     name: 'official-workspace-client-source',
     resolveId(id) {

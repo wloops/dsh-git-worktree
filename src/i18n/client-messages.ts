@@ -2,6 +2,32 @@ import type { MessageCatalog } from './core.js'
 
 /** Plugin-owned Client copy; parameters are opaque user/Host data. */
 export const clientMessages = {
+  "detail.title": {"zh": "验收详情", "en": "Review details"},
+  "detail.close": {"zh": "关闭验收详情", "en": "Close review details"},
+  "detail.passed": {"zh": "验证通过", "en": "Passed"},
+  "detail.failed": {"zh": "验证失败", "en": "Failed"},
+  "detail.partial": {"zh": "部分验证完成", "en": "Partially validated"},
+  "detail.notRun": {"zh": "未运行自动验证", "en": "Not run"},
+  "detail.recovery": {"zh": "需要恢复", "en": "Recovery required"},
+  "detail.blocked": {"zh": "预览受阻", "en": "Preview blocked"},
+  "detail.preview": {"zh": "预览中", "en": "Preview active"},
+  "detail.saved": {"zh": "已保存", "en": "Saved"},
+  "detail.ready": {"zh": "待验收", "en": "Ready for review"},
+  "detail.recoveryNote": {"zh": "预览状态需要确认，暂不可直接保存。", "en": "The preview state needs verification before saving."},
+  "detail.conflictNote": {"zh": "本地修改与本轮变更冲突，本次预览尚未写入本地。", "en": "Local changes conflict with this review. This preview has not been applied."},
+  "detail.previewNote": {"zh": "正在本地预览，尚未保存。", "en": "Previewing locally; not yet saved."},
+  "detail.iteration": {"zh": "第 {count} 轮修改", "en": "Iteration {count}"},
+  "detail.files": {"zh": "修改文件", "en": "Changed files"},
+  "detail.conflict": {"zh": "冲突", "en": "Conflict"},
+  "detail.validation": {"zh": "验证记录", "en": "Validation records"},
+  "detail.noTests": {"zh": "未提供验证记录。", "en": "No validation records provided."},
+  "detail.version": {"zh": "版本信息", "en": "Version information"},
+  "detail.reviewId": {"zh": "验收标识", "en": "Review ID"},
+  "detail.revision": {"zh": "当前版本", "en": "Current revision"},
+  "detail.commit": {"zh": "Worktree 提交", "en": "Worktree commit"},
+  "detail.view": {"zh": "查看详情", "en": "View details"},
+  "detail.processing": {"zh": "正在处理，请稍候…", "en": "Processing, please wait…"},
+
   "pre.session.initial.title": {
     "zh": "需要创建初始版本",
     "en": "An initial version is required"
@@ -954,12 +980,12 @@ export const clientMessages = {
     "en": " stages · Not published to Local"
   },
   "hide.validation.details": {
-    "zh": "收起验证详情",
-    "en": "Hide validation details"
+    "zh": "收起验证与版本详情",
+    "en": "Hide validation and version details"
   },
   "view.validation.details": {
-    "zh": "查看验证详情{p0}",
-    "en": "View validation details{p0}"
+    "zh": "查看验证与版本详情{p0}",
+    "en": "View validation and version details{p0}"
   },
   "tests": {
     "zh": "（{p0} 项测试）",

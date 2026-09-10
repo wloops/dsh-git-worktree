@@ -150,3 +150,13 @@ describe('built Client ModuleLoader artifact', () => {
     expect(document.querySelector('style[data-dsh-git-worktree]')).toBeNull()
   })
 })
+
+test('Lucide is bundled as selected ESM icons while React stays a host dependency', () => {
+  const source = readFileSync(resolve('lib/client.js'), 'utf8')
+  expect(source).not.toMatch(/require\(["']lucide-react["']\)/)
+  expect(source).not.toContain('dist/cjs/lucide-react.js')
+  expect(source).not.toContain('react.development.js')
+  expect(source).not.toContain('react.production.min.js')
+  expect(source).toContain('lucide-')
+  expect(source).toMatch(/require\(["']react["']\)/)
+})

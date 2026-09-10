@@ -23,7 +23,7 @@ function isLocalTargetUnselected(error: string | null, t: ClientTranslator = def
     || error.includes(t("no.session.target.has.been.selected"))
 }
 
-export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props) {
+export function WorktreeReviewRow({ block, sessionId, adapter }: Props) {
   const t = useClientTranslator()
 
   const model = parseReviewTool(block, t)
@@ -109,15 +109,10 @@ export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props
     <section className="dsh-wt-card" data-tool="worktree_ready_for_review" data-state={state} aria-label={t("worktree.ready.for.review")}>
       {review ? (
         <WorktreeReviewPanel
-          showActions={false}
           review={review}
-          adapter={adapter}
-          services={services}
           identity={identity}
           target={liveTarget}
-          unavailableMessage={unavailableMessage}
-          onRefresh={() => setRefreshNonce(value => value + 1)}
-          onTargetChange={setLiveTarget}
+          unavailableMessage={liveError ?? undefined}
         />
       ) : (
         <header className="dsh-wt-head">

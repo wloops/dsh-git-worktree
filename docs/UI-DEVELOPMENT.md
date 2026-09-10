@@ -68,6 +68,15 @@ Remote mount 的 disposer 由 Client effect 管理。Workspace Sidebar 先注册
 
 不要照搬旧原型的 bundle 配置或凭猜测增减平台依赖；以当前配置、上游契约和 `scripts/check-publish.mjs` 门禁为准。
 
+### Review 信息与操作分工
+
+- ToolView 中的 `WorktreeReviewPanel` 仅展示验收摘要、验证状态与文件数量；测试及版本标识通过详情展开，不挂载 `ReviewActions`。
+- `conversation.input.dock` 是当前验收的唯一交付操作区；显示摘要、文件数与真实验证状态，保留冲突文件、恢复说明、操作反馈与交付凭证，不因紧凑样式隐藏必要信息。
+- “查看详情”直接打开只读 `ReviewDetailsModal`，不依赖工具记录展开。复用宿主 headless Modal 的遮罩与 Esc 行为，自有标题/关闭区和滚动内容均使用 border-box，并补充焦点循环与关闭后焦点返回；文件列表、验证记录与折叠版本信息不包含 diff 或交付按钮。`ReviewIcon` 统一封装 `lucide-react` 图标；客户端构建优先解析 ESM 并将所需图标打入产物，React 仍由宿主提供。
+- 正常预览成功使用底部当前状态，不重复追加成功提示；处理中由动作组件报告 busy 状态，错误及恢复反馈仍保留。
+- 开发中与清理完成的 delivered 状态不显示常驻验收条。已交付任务的“开始下一轮修改”位于顶部 Worktree 菜单，仍受 `beginNextIteration` capability 约束。
+- `tests/support/review-actions-harness.tsx` 仅为原有交付动作测试提供受控 target 更新，不属于产品界面。
+
 ## 5. 聚焦验证
 
 根据改动选择对应测试，不要求每次执行所有命令。以下命令在已安装项目依赖后运行：

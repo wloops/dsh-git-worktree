@@ -332,12 +332,20 @@ describe('Harness-native Session Target slots', () => {
       sessionId: 'session-a', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
     }))
 
-    await waitFor(() => expect(screen.queryByText('正在本地预览，尚未保存')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('正在本地预览，尚未保存。')).toBeNull())
     expect(screen.queryByText('已同步为可撤回的 Local Preview；请在 Local 中验收。')).toBeNull()
   })
 
   test('在 input dock 注册 Domi 式待验收状态条，并只显示一个主操作与更多菜单', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
+    let current = fixture.target
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: current } }))
+    const originalPreview = fixture.adapter.preview
+    fixture.adapter.preview = async request => {
+      const outcome = await originalPreview(request)
+      if (outcome.ok) current = { ...current, ...outcome.value.target }
+      return outcome
+    }
     const slots = new SlotsDouble()
 
     registerTargetConsole({ slots }, fixture.adapter, clientServices())
@@ -350,14 +358,14 @@ describe('Harness-native Session Target slots', () => {
     const Dock = entry!.component
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
-    await waitFor(() => expect(screen.getByText('修改已完成，等待你预览确认')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Fixture review')).toBeTruthy())
     expect(screen.getByRole('button', { name: '预览修改' })).toBeTruthy()
     expect(screen.getByLabelText('更多交付操作')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Inspect' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
-    await waitFor(() => expect(screen.getByText('正在本地预览，尚未保存')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('正在本地预览，尚未保存。')).toBeTruthy())
     expect(fixture.calls).toContainEqual({ method: 'preflight', request: {
       sessionId: 'target-session', checkoutId: 'checkout-1', expectedRevision: 7, expectedReviewId: 'review-1',
     } })
@@ -368,6 +376,14 @@ describe('Harness-native Session Target slots', () => {
 
   test('Host revision 在 Preview 操作外部变化时清除旧操作提示，避免 recovery 状态继续显示过期 preflight 文案', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
+    let current = fixture.target
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: current } }))
+    const originalPreview = fixture.adapter.preview
+    fixture.adapter.preview = async request => {
+      const outcome = await originalPreview(request)
+      if (outcome.ok) current = { ...current, ...outcome.value.target }
+      return outcome
+    }
     const slots = new SlotsDouble()
     registerTargetConsole({ slots }, fixture.adapter, clientServices())
     const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
@@ -375,7 +391,7 @@ describe('Harness-native Session Target slots', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: '预览修改' })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
-    await waitFor(() => expect(screen.getByText('正在本地预览，尚未保存')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('正在本地预览，尚未保存。')).toBeTruthy())
     const detached = {
       ...fixture.target,
       state: 'preview_detached' as const,
@@ -444,7 +460,23 @@ describe('Harness-native Session Target slots', () => {
     expect(conclusions.textContent).toContain('提交：可证明安全')
   })
 
-  test('已清理 delivered Session 隐藏 dock，仅顶部菜单开始下一轮并保持同一 Session', async () => {
+  test('进行中和已完成但不可继续的任务不显示底部条或下一轮入口', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    for (const state of ['working', 'delivered'] as const) {
+      const target = { ...fixture.target, state, capabilities: { ...fixture.target.capabilities, beginNextIteration: false } }
+      fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target } }))
+      const slots = new SlotsDouble()
+      registerTargetConsole({ slots }, fixture.adapter, clientServices())
+      const Dock = slots.entries.find(candidate => candidate.descriptor.id === 'worktree-review-status')!.component
+      const view = render(<><Dock session={{ sessionId: 'target-session' }} input={{}} /><TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} /></>)
+      fireEvent.click(await screen.findByRole('button', { name: /Session Target.*Worktree/ }))
+      expect(view.container.querySelector('.dsh-wt-review-dock')).toBeNull()
+      expect(screen.queryByRole('button', { name: '开始下一轮修改' })).toBeNull()
+      view.unmount()
+    }
+  })
+
+  test('已清理 delivered Session 隐藏 dock，通过顶部菜单开始下一轮', async () => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const { review: _review, reviewSlot: _slot, ...withoutReview } = fixture.target
     const delivered = {
@@ -478,9 +510,9 @@ describe('Harness-native Session Target slots', () => {
     render(<Dock session={{ sessionId: 'target-session' }} input={{}} />)
 
     await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalled())
-    expect(document.querySelector('.dsh-wt-review-dock')).toBeNull()
+    expect(screen.queryByRole('region', { name: '下一轮 Worktree 修改' })).toBeNull()
     render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Session Target：Worktree · 已交付' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Session Target.*Worktree/ }))
     fireEvent.click(screen.getByRole('button', { name: '开始下一轮修改' }))
     await waitFor(() => expect(fixture.calls).toContainEqual({
       method: 'beginNextIteration',
@@ -1105,8 +1137,8 @@ test('same review survives withdrawal, refresh and repeated preview with current
 
 
 test.each([
-  ['passed', '自动验证通过'], ['failed', '自动验证失败，仍可继续验收'],
-  ['partial', '部分验证通过'], ['not_run', '未运行自动验证'],
+  ['passed', '验证通过'], ['failed', '验证失败'],
+  ['partial', '部分验证完成'], ['not_run', '未运行自动验证'],
 ] as const)('dock exposes file count and truthful %s validation', async (validationStatus, label) => {
   const fixture = createWorktreeConsoleAdapterFixture()
   fixture.target.review!.validationStatus = validationStatus
@@ -1127,7 +1159,7 @@ test('pending preview shares the operation status and successful preview has no 
   expect(screen.getByRole('button', { name: '同步中…' }).hasAttribute('disabled')).toBe(true)
   expect(screen.queryByText('修改已完成，等待你预览确认')).toBeNull()
   complete()
-  expect(await screen.findByText('正在本地预览，尚未保存')).toBeTruthy()
+  expect(await screen.findByText('正在本地预览，尚未保存。')).toBeTruthy()
   expect(document.querySelector('.dsh-wt-action-status')?.textContent).toBe('')
 })
 

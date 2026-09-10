@@ -7,7 +7,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { WorktreeReviewRow } from '../src/client/WorktreeReviewRow.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
 import { WORKTREE_STYLES } from '../src/client/styles.js'
-import { WorktreeReviewPanel, type WorktreeReviewEvidence } from '../src/client/review-console/WorktreeReviewPanel.js'
+import { ReviewActionsHarness as WorktreeReviewPanel, type WorktreeReviewEvidence } from './support/review-actions-harness.js'
+import { WorktreeReviewPanel as EvidencePanel } from '../src/client/review-console/WorktreeReviewPanel.js'
+import { WorktreeReviewStatus } from '../src/client/target-console/WorktreeReviewStatus.js'
 import { WORKTREE_REVIEW_REFRESH_EVENT } from '../src/client/review-console/status-events.js'
 import { clearWorktreeRecovery } from '../src/client/review-console/recovery-continuation.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
@@ -100,6 +102,18 @@ function loggedReviewRow(adapter?: ReturnType<typeof createWorktreeConsoleAdapte
 }
 
 describe('Domi-style Worktree Review', () => {
+  test('验收卡只有结果与可折叠版本详情，操作只存在于 dock', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const view = render(<EvidencePanel review={review()} identity={identity()} target={fixture.target} />)
+    expect(screen.queryByRole('button', { name: '预览修改' })).toBeNull()
+    expect(screen.queryByLabelText('更多交付操作')).toBeNull()
+    expect(screen.queryByText(/review-1 · r7/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /查看验证与版本详情/ }))
+    expect(screen.getByText(/review-1 · r7/)).toBeTruthy()
+    view.rerender(<><EvidencePanel review={review()} target={fixture.target} /><WorktreeReviewStatus session={{ sessionId: 'target-session' }} adapter={fixture.adapter} services={clientServices()} /></>)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: '预览修改' })).toHaveLength(1))
+  })
+
   test('验收卡菜单不被卡片裁剪，卡片向下展开而 composer dock 向上展开', () => {
     const style = document.createElement('style')
     style.textContent = WORKTREE_STYLES
@@ -152,15 +166,15 @@ describe('Domi-style Worktree Review', () => {
     expect(screen.getByText('Review summary')).toBeTruthy()
     expect(screen.getByText('自动验证通过')).toBeTruthy()
     expect(screen.getByText('1 个文件')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '查看验证详情（2 项测试）' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '查看验证与版本详情（2 项测试）' })).toBeTruthy()
     expect(screen.queryByText('Focused validation passed')).toBeNull()
     expect(screen.queryByText('src/client/review-console/WorktreeReviewPanel.tsx')).toBeNull()
     expect(container.querySelector('img')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '查看验证详情（2 项测试）' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看验证与版本详情（2 项测试）' }))
     expect(screen.getByText('Focused validation passed')).toBeTruthy()
     expect(screen.getByText('pnpm test')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '收起验证详情' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '收起验证与版本详情' })).toBeTruthy()
   })
 
   test('只显示文件数量，不恢复 Diff、Inspect 或平铺 Retention', () => {
@@ -616,16 +630,38 @@ describe('Domi-style Worktree Review', () => {
     }
     let current = fixture.target
     fixture.adapter.current = vi.fn(async () => ({ ok: true as const, value: { target: current } }))
-    render(loggedReviewRow(fixture.adapter))
+    render(<>{loggedReviewRow(fixture.adapter)}<WorktreeReviewStatus session={{ sessionId: 'target-session' }} adapter={fixture.adapter} services={clientServices()} /></>)
 
-    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledTimes(1))
-    expect(screen.queryByRole('button', { name: '预览修改' })).toBeNull()
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledTimes(2))
+    expect(screen.getAllByRole('button', { name: '预览修改' })).toHaveLength(1)
     current = preview
     window.dispatchEvent(new CustomEvent(WORKTREE_REVIEW_REFRESH_EVENT, { detail: { sessionId: 'target-session' } }))
 
-    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledTimes(2))
-    expect(screen.queryByText('验收结果已过期，请刷新')).toBeNull()
-    expect(screen.queryByRole('button', { name: '确认并保存' })).toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认并保存' })).toBeTruthy())
+    expect(fixture.adapter.current).toHaveBeenCalledTimes(4)
+  })
+
+  test('logged ToolView 在 Remote 可用时可连续 Preview 再按最新 revision 提交', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    let current = fixture.target
+    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: current } }))
+    const preview = fixture.adapter.preview
+    fixture.adapter.preview = async request => {
+      const outcome = await preview(request)
+      if (outcome.ok) current = { ...current, ...outcome.value.target }
+      return outcome
+    }
+    fixture.adapter.finalizePreview = vi.fn(fixture.adapter.finalizePreview)
+    render(<>{loggedReviewRow(fixture.adapter)}<WorktreeReviewStatus session={{ sessionId: 'target-session' }} adapter={fixture.adapter} services={clientServices()} /></>)
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'target-session' }))
+    expect((screen.getByRole('button', { name: '预览修改' }) as HTMLButtonElement).disabled).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认并保存' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '确认并保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认交付并清理' }))
+    await waitFor(() => expect(fixture.adapter.finalizePreview).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 8 })))
+    expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
   })
 
   test('logged ToolView 在 live Console 不可用时仍可回放紧凑证据', () => {

@@ -44,6 +44,7 @@ export function Modal({
   description,
   children,
   footer,
+  headless,
 }: {
   open: boolean
   onClose(): void
@@ -52,6 +53,7 @@ export function Modal({
   description?: string
   children?: ReactNode
   footer?: ReactNode
+  headless?: boolean
 }) {
   useEffect(() => {
     if (!open) return
@@ -64,7 +66,7 @@ export function Modal({
   if (!open) return null
   return (
     <div role="dialog" aria-modal="true" aria-label={title}>
-      <button type="button" aria-label={closeLabel} onClick={onClose}>×</button>
+      {!headless ? <button type="button" aria-label={closeLabel} onClick={onClose}>×</button> : null}
       {description ? <p>{description}</p> : null}
       {children}
       {footer}
