@@ -5,6 +5,7 @@ import {
   checkoutIdSchema,
   commitMessageSchema,
   createResponseSchema,
+  createPreflightResponseSchema,
   currentResponseSchema,
   generationSchema,
   requestIdSchema,
@@ -75,6 +76,8 @@ export const WORKTREE_CONSOLE_DESCRIPTORS: readonly InvocationDescriptor[] = Obj
     json('needsAttention', optionalBooleanSchema, 'boolean | undefined', true),
     json('includeDelivered', optionalBooleanSchema, 'boolean | undefined', true),
   ], outcomeSchema(listResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleListResponse>'),
+  descriptor('preflightCreate', [], outcomeSchema(createPreflightResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleCreatePreflightResponse>'),
+  descriptor('createWithInitialCommit', [json('confirmationToken', requestIdSchema, 'string')], outcomeSchema(createResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>'),
   descriptor('create', [], outcomeSchema(createResponseSchema), 'WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>'),
   descriptor('inspect', [
     json('checkoutId', checkoutIdSchema, `${PACKAGE}/console-contract#WorktreeConsoleInspectRequest.checkoutId`),

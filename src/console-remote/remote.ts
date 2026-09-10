@@ -3,6 +3,7 @@ import type { RemoteResult, TypertRemoteNamespace } from '@deepseek-ai/dsh-typer
 import type {
   WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateResponse,
+  WorktreeConsoleCreatePreflightResponse,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleInspectResponse,
   WorktreeConsoleListResponse,
@@ -27,6 +28,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'gitWorktree/sidebarTopology': (locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>>
     'gitWorktree/current': (agentId: string, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>>
     'gitWorktree/list': (agentId: string, needsAttention?: boolean, includeDelivered?: boolean, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>>
+    'gitWorktree/preflightCreate': (agentId: string, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleCreatePreflightResponse>>>
+    'gitWorktree/createWithInitialCommit': (agentId: string, confirmationToken: string, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>>
     'gitWorktree/create': (agentId: string, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>>
     'gitWorktree/inspect': (agentId: string, checkoutId: string, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>>>
     'gitWorktree/reviewDiff': (agentId: string, checkoutId: string, expectedRevision: number, expectedReviewId: string, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>>

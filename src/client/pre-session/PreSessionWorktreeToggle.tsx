@@ -1,15 +1,8 @@
 import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type {
-  WorktreeConsoleAdapter,
-  WorktreeConsoleTargetDetails,
-} from '../../console-contract.js'
-import type {
-  PreSessionDraftActions,
-  PreSessionDraftState,
-  PreparePreSessionWorktreeRequest,
-} from './controller.js'
+import { useEffect, useRef, useState } from 'react'
+import { Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails } from '../../console-contract.js'
+import type { PreSessionDraftActions, PreSessionDraftState, PreparePreSessionWorktreeRequest } from './controller.js'
 
 export interface PreSessionWorktreeToggleProps {
   sessionId: string
@@ -27,186 +20,181 @@ function errorMessage(value: unknown): string {
 }
 
 function snapshotInput(input: PreSessionDraftState): PreSessionDraftState {
-  return {
-    ...input,
-    imageIds: [...input.imageIds],
-    occurrences: [...input.occurrences],
-  }
+  return { ...input, imageIds: [...input.imageIds], occurrences: [...input.occurrences] }
 }
 
 function confirmationDescription(input: PreSessionDraftState, t: ClientTranslator = defaultClientTranslator): string {
-  const attachmentText = input.imageIds.length === 1
-    ? t("1.attachment")
-    : t("attachments", { p0: input.imageIds.length })
-  if (input.draft.trim() !== '' && input.imageIds.length > 0) {
-    return t("the.current.input.and.will.move.to.the", { p0: attachmentText })
-  }
-  if (input.imageIds.length > 0) return t("will.move.to.the.new.worktree.session", { p0: attachmentText })
-  if (input.draft.trim() !== '') return t("the.current.input.will.move.to.the.new")
-  return t("a.new.worktree.session.will.be.created.the")
+  const attachmentText = input.imageIds.length === 1 ? t('1.attachment') : t('attachments', { p0: input.imageIds.length })
+  if (input.draft.trim() !== '' && input.imageIds.length > 0) return t('the.current.input.and.will.move.to.the', { p0: attachmentText })
+  if (input.imageIds.length > 0) return t('will.move.to.the.new.worktree.session', { p0: attachmentText })
+  if (input.draft.trim() !== '') return t('the.current.input.will.move.to.the.new')
+  return t('a.new.worktree.session.will.be.created.the')
 }
 
-/** Blank-session Worktree switch mounted in Harness's public composer tool row. */
-export function PreSessionWorktreeToggle({
-  sessionId,
-  session,
-  input,
-  inputActions,
-  adapter,
-  controller,
-}: PreSessionWorktreeToggleProps) {
+/** Blank-session directory menu mounted in Harness's public composer tool row. */
+export function PreSessionWorktreeToggle({ sessionId, session, input, inputActions, adapter, controller }: PreSessionWorktreeToggleProps) {
   const t = useClientTranslator()
-
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [state, setState] = useState<LoadState>('loading')
   const [error, setError] = useState<string | null>(null)
-  const [pendingInput, setPendingInput] = useState<PreSessionDraftState | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [pending, setPending] = useState<{ input: PreSessionDraftState; kind: 'ready' | 'empty' | 'files'; token?: string } | null>(null)
   const latestInput = useRef(input)
   latestInput.current = input
   const blank = session.composerPhase === 'blank'
+  // Invalidate at render: an old continuation must never navigate or clear
+  // the newly selected Session's draft, even before effect cleanup runs.
+  const scopeRef = useRef({ sessionId, adapter, blank, alive: true, busy: false })
+  if (scopeRef.current.sessionId !== sessionId || scopeRef.current.adapter !== adapter || scopeRef.current.blank !== blank) {
+    scopeRef.current.alive = false
+    scopeRef.current = { sessionId, adapter, blank, alive: true, busy: false }
+  }
+  const scope = scopeRef.current
+  const isCurrent = (): boolean => scope.alive && scopeRef.current === scope
 
-  const refreshCurrent = useCallback(async (): Promise<void> => {
+  const refreshCurrent = async (): Promise<void> => {
+    if (scope.busy) return
+    scope.busy = true
     setState('loading')
     setError(null)
-    const outcome = await adapter.current({ sessionId })
-    if (!outcome.ok) {
-      setTarget(null)
-      if (outcome.error.code === 'not_git_repository') {
-        setState('unsupported')
-        setError(null)
-      } else {
-        setState('error')
-        setError(`${outcome.error.code}: ${outcome.error.message}`)
-      }
-      return
-    }
-    setTarget(outcome.value.target)
-    setState('idle')
-  }, [adapter, sessionId])
-
-  useEffect(() => {
-    if (!blank) return
-    let active = true
-    setTarget(null)
-    setPendingInput(null)
-    setState('loading')
-    setError(null)
-    void adapter.current({ sessionId }).then((outcome) => {
-      if (!active) return
+    try {
+      const outcome = await adapter.current({ sessionId })
+      if (!isCurrent()) return
       if (!outcome.ok) {
         setTarget(null)
-        if (outcome.error.code === 'not_git_repository') {
-          setState('unsupported')
-          setError(null)
-        } else {
-          setState('error')
-          setError(`${outcome.error.code}: ${outcome.error.message}`)
-        }
+        setState(outcome.error.code === 'not_git_repository' ? 'unsupported' : 'error')
+        setError(outcome.error.code === 'not_git_repository' ? null : `${outcome.error.code}: ${outcome.error.message}`)
         return
       }
       setTarget(outcome.value.target)
       setState('idle')
-      setError(null)
-    })
-    return () => { active = false }
-  }, [adapter, blank, sessionId])
+    } catch (cause) {
+      if (!isCurrent()) return
+      setTarget(null)
+      setState('error')
+      setError(errorMessage(cause))
+    } finally { scope.busy = false }
+  }
+
+  useEffect(() => {
+    scope.alive = true
+    setTarget(null)
+    setPending(null)
+    setMenuOpen(false)
+    if (blank) void refreshCurrent()
+    return () => { scope.alive = false }
+  }, [scope])
 
   if (!blank || state === 'loading' || state === 'unsupported') return null
   if (target?.state === 'local' && !target.capabilities.create) return null
 
-  const selected = target?.state !== undefined && target.state !== 'local'
+  const selected = target !== null && target.state !== 'local'
   const canCreate = target?.state === 'local' && target.capabilities.create
   const busy = state === 'preparing'
   const retryingLookup = state === 'error' && target === null
   const disabled = busy || selected || (!canCreate && !retryingLookup) || input.phase !== 'plain'
-  const checked = selected || pendingInput !== null || state === 'preparing'
-  const status = state === 'preparing'
-    ? t("creating")
-    : selected
-      ? t("created")
-      : pendingInput !== null
-        ? t("awaiting.confirmation")
-        : state === 'error'
-          ? t("retry")
-          : 'Local'
+  const label = selected ? t('pre.session.directory.worktree') : t('pre.session.directory.local')
 
   const beginConfirmation = async (): Promise<void> => {
-    if (disabled) return
-    if (retryingLookup) {
-      await refreshCurrent()
-      return
-    }
+    if (disabled || scope.busy || !isCurrent()) return
+    setMenuOpen(false)
+    if (retryingLookup) { await refreshCurrent(); return }
+    scope.busy = true
+    setState('preparing')
     setError(null)
-    setPendingInput(snapshotInput(input))
+    const captured = snapshotInput(latestInput.current)
+    try {
+      const outcome = adapter.preflightCreate ? await adapter.preflightCreate({ sourceSessionId: sessionId }) : null
+      if (!isCurrent()) return
+      if (outcome && !outcome.ok) throw new Error(`${outcome.error.code}: ${outcome.error.message}`)
+      const result = outcome?.ok ? outcome.value : { kind: 'ready' as const }
+      setPending({ input: captured, kind: result.kind, token: result.kind === 'empty' ? result.confirmationToken : undefined })
+      setState('idle')
+    } catch (cause) {
+      if (!isCurrent()) return
+      setPending(null)
+      setState('error')
+      setError(errorMessage(cause))
+    } finally { scope.busy = false }
   }
 
   const cancelConfirmation = (): void => {
-    if (state === 'preparing') return
-    setPendingInput(null)
+    if (scope.busy) return
+    setPending(null)
     setError(null)
     setState('idle')
   }
 
   const confirm = async (): Promise<void> => {
-    const captured = pendingInput
-    if (captured === null || state === 'preparing') return
+    if (pending === null || pending.kind === 'files' || scope.busy || !isCurrent()) return
+    scope.busy = true
     setState('preparing')
     setError(null)
+    const captured = pending
     try {
       const prepared = await controller.prepare({
-        sessionId,
-        input: captured,
-        currentInput: () => latestInput.current,
-        inputActions,
+        sessionId, input: captured.input, currentInput: () => latestInput.current,
+        isCurrentSession: isCurrent, inputActions, initialCommitConfirmationToken: captured.token,
       })
+      if (!isCurrent()) return
       setTarget(prepared)
-      setPendingInput(null)
+      setPending(null)
       setState('idle')
     } catch (cause) {
+      if (!isCurrent()) return
+      // Tokens are single-use, including when only the client handoff failed.
+      setPending(null)
       setState('error')
       setError(errorMessage(cause))
-    }
+    } finally { scope.busy = false }
   }
 
   return (
     <span className="dsh-wt-pre-session" data-state={state}>
-      <button
-        type="button"
-        role="switch"
-        aria-label="Worktree"
-        aria-checked={checked}
-        aria-describedby={error && pendingInput === null ? `dsh-wt-pre-session-error-${sessionId}` : undefined}
-        className="dsh-wt-pre-session-switch"
-        disabled={disabled}
-        onClick={() => { void beginConfirmation() }}
-      >
-        <span className="dsh-wt-pre-session-check" aria-hidden>{checked ? '✓' : ''}</span>
-        <span>{t("worktree")}</span>
-        <span className="dsh-wt-pre-session-state" aria-live="polite">{status}</span>
-      </button>
-      {error && pendingInput === null ? (
+      <Menu open={menuOpen} compact portal align="start" side="top"
+        onClose={() => setMenuOpen(false)}
+        items={[
+          { id: 'local', label: t('pre.session.option.local'), disabled: busy || selected },
+          { id: 'worktree', label: t('pre.session.option.worktree'), disabled },
+        ]}
+        onSelect={(id) => {
+          if (id === 'local') { setMenuOpen(false); cancelConfirmation() }
+          if (id === 'worktree') void beginConfirmation()
+        }}
+        anchor={(
+          <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={label}
+            aria-describedby={error ? `dsh-wt-pre-session-error-${sessionId}` : undefined}
+            className="dsh-wt-pre-session-menu" disabled={disabled}
+            onClick={() => setMenuOpen(current => !current)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault()
+                setMenuOpen(true)
+              }
+            }}>
+            <span>{label}</span><span className="dsh-wt-pre-session-chevron" aria-hidden>⌄</span>
+          </button>
+        )}
+      />
+      {error ? (
         <span id={`dsh-wt-pre-session-error-${sessionId}`} className="dsh-wt-pre-session-error" role="alert">
-          {error}
+          {error} <button type="button" className="dsh-wt-button" disabled={busy} onClick={() => { void beginConfirmation() }}>{t('retry')}</button>
         </span>
       ) : null}
-      <Modal
-        open={pendingInput !== null}
-        onClose={cancelConfirmation}
-        title={t("start.in.a.worktree")}
-        closeLabel={t("close")}
-        description={pendingInput === null ? '' : confirmationDescription(pendingInput, t)}
+      <Modal open={pending !== null} onClose={cancelConfirmation}
+        title={pending?.kind === 'empty' ? t('pre.session.initial.title') : t('start.in.a.worktree')}
+        closeLabel={t('close')}
+        description={pending === null ? '' : pending.kind === 'empty' ? t('pre.session.initial.description') : pending.kind === 'files' ? t('pre.session.files.description') : confirmationDescription(pending.input, t)}
         footer={(
           <>
-            <button type="button" className="dsh-wt-button" disabled={state === 'preparing'} onClick={cancelConfirmation}>
-              {t("cancel")} </button>
-            <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={state === 'preparing'} onClick={() => { void confirm() }}>
-              {state === 'preparing' ? t("creating") : t("create.and.switch")}
-            </button>
+            <button type="button" className="dsh-wt-button" disabled={busy} onClick={cancelConfirmation}>{t('cancel')}</button>
+            {pending?.kind !== 'files' ? <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={busy} onClick={() => { void confirm() }}>
+              {busy ? t('creating') : pending?.kind === 'empty' ? t('pre.session.initial.confirm') : t('create.and.switch')}
+            </button> : null}
           </>
-        )}
-      >
-        <p className="dsh-wt-pre-session-note">{t("the.local.session.will.not.receive.this.message")}</p>
-        {error ? <p className="dsh-wt-error" role="alert">{error}</p> : null}
+        )}>
+        {pending?.kind === 'empty' ? <p className="dsh-wt-pre-session-note">{confirmationDescription(pending.input, t)}</p> : null}
+        {pending?.kind !== 'files' ? <p className="dsh-wt-pre-session-note">{t('the.local.session.will.not.receive.this.message')}</p> : null}
       </Modal>
     </span>
   )

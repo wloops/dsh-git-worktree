@@ -28,6 +28,9 @@ export interface PreparePreSessionWorktreeRequest {
   /** Live source state used for the final compare-and-clear boundary. */
   currentInput?: () => PreSessionDraftState
   inputActions: PreSessionDraftActions
+  initialCommitConfirmationToken?: string
+  /** Invalidated when the composer leaves its source Session. */
+  isCurrentSession?: () => boolean
 }
 
 export class PreSessionWorktreeError extends Error {
@@ -47,7 +50,8 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 
 function sourceStillMatches(request: PreparePreSessionWorktreeRequest): boolean {
   const current = request.currentInput?.() ?? request.input
-  return current.phase === 'plain'
+  return request.isCurrentSession?.() !== false
+    && current.phase === 'plain'
     && current.draft === request.input.draft
     && sameStrings(current.imageIds, request.input.imageIds)
     && current.occurrences.length === request.input.occurrences.length
@@ -80,6 +84,7 @@ export class PreSessionWorktreeController {
   private async run(request: PreparePreSessionWorktreeRequest): Promise<WorktreeConsoleTargetDetails> {
     const t = translatorForServices(this.services)
 
+    if (request.isCurrentSession?.() === false) throw new PreSessionWorktreeError(t("pre.session.changed"))
     if (request.input.phase !== 'plain') {
       throw new PreSessionWorktreeError(t("the.draft.is.being.submitted.or.parsed.wait"))
     }
@@ -94,7 +99,12 @@ export class PreSessionWorktreeController {
     let workspaceId: string | undefined
     let actualSessionId: string | undefined
     try {
-      const outcome = await this.adapter.create({ sourceSessionId: request.sessionId })
+      if (request.initialCommitConfirmationToken !== undefined && !this.adapter.createWithInitialCommit) {
+        throw new PreSessionWorktreeError(t("pre.session.initial.unavailable"))
+      }
+      const outcome = request.initialCommitConfirmationToken !== undefined
+        ? await this.adapter.createWithInitialCommit!({ sourceSessionId: request.sessionId, confirmationToken: request.initialCommitConfirmationToken })
+        : await this.adapter.create({ sourceSessionId: request.sessionId })
       if (!outcome.ok) throw new PreSessionWorktreeError(`${outcome.error.code}: ${outcome.error.message}`)
       created = outcome.value
 
@@ -141,6 +151,9 @@ export class PreSessionWorktreeController {
       try { await this.services.workspaces.archiveSession(request.sessionId) } catch { /* target handoff remains authoritative */ }
       return created.target
     } catch (error) {
+      if (created !== undefined && request.initialCommitConfirmationToken !== undefined) {
+        error = new PreSessionWorktreeError(t("pre.session.initial.created.failure", { p0: messageOf(error) }))
+      }
       if (created !== undefined) {
         const cleaned = await this.rollback(
           request.sessionId,
@@ -148,7 +161,7 @@ export class PreSessionWorktreeController {
           created.target,
           workspaceId,
           actualSessionId,
-        )
+        ).catch(() => false)
         if (!cleaned) {
           throw new PreSessionWorktreeError(
             t("the.worktree.was.persisted.but.automatic.rollback.failed", { p0: messageOf(error) }),

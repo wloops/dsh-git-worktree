@@ -2,6 +2,18 @@ import type { MessageCatalog, Translator } from './core.js'
 
 /** Host-owned prose. Keys are stable; user data is passed only as interpolation values. */
 export const hostMessages = {
+  "initialStateChanged": {"zh": "仓库状态已变化，请重新选择独立 Worktree 并确认。没有沿用旧确认创建提交。", "en": "The repository changed. Select Independent Worktree again and confirm the new state. The old confirmation was not used."},
+  "initialCommitFailed": {"zh": "无法创建初始版本。请检查 Git 仓库权限和配置后重试。", "en": "Cannot create the initial version. Check Git repository permissions and configuration, then retry."},
+  "initialIdentityMissing": {"zh": "Git 提交身份未配置。请在该仓库中设置 git config user.name \"你的名字\" 和 git config user.email \"你的邮箱\" 后重试。插件不会修改身份。", "en": "Git commit identity is not configured. In this repository, set git config user.name \"Your Name\" and git config user.email \"you@example.com\", then retry. The plugin will not change your identity."},
+  "initialRepositoryBusy": {"zh": "仓库正在被其他操作使用。请等待操作完成后重试。", "en": "The repository is busy. Wait for the other operation to finish, then retry."},
+  "initialConfirmationRequired": {"zh": "当前仓库尚无提交。请通过工作目录菜单确认创建初始版本，或使用本地目录。", "en": "This repository has no commits. Confirm an initial version through the working directory menu, or use the local directory."},
+  "initialHasFiles": {"zh": "当前未提交的文件不会带入独立工作目录。可以先提交需要的文件，或使用本地目录开始任务。", "en": "Uncommitted files will not be included in the independent working directory. Commit the files you need first, or start in the local directory."},
+  "initialCreatedWorktreeFailed": {"zh": "初始版本已创建，但独立 Worktree 创建失败。提交已保留，请重新选择独立 Worktree 重试。", "en": "The initial version was created, but Worktree creation failed. The commit is retained. Select Independent Worktree again to retry."},
+
+  "repositoryInspectionFailed": {
+    "zh": "无法读取 Git 仓库状态。请检查目录权限、HEAD 和 Git 元数据是否完整，然后重试。",
+    "en": "Cannot read the Git repository state. Check directory permissions, HEAD and Git metadata, then retry."
+  },
   "sessionNotFound": {
     "zh": "会话不存在: {p0}",
     "en": "Session not found: {p0}"

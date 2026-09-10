@@ -6,6 +6,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateResponse,
+  WorktreeConsoleCreatePreflightResponse,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleInspectResponse,
   WorktreeConsoleListResponse,
@@ -39,6 +40,16 @@ export class WorktreeConsoleService extends TypertRemoteService {
   @Remote
   list(agent: Agent, needsAttention?: boolean, includeDelivered?: boolean, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>> {
     return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.list({ sessionId: agent.id, needsAttention, includeDelivered }))
+  }
+
+  @Remote
+  preflightCreate(agent: Agent, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreflightResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.preflightCreate(agent.id))
+  }
+
+  @Remote
+  createWithInitialCommit(agent: Agent, confirmationToken: string, locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => this.controlPlane.createWithInitialCommit(agent.id, confirmationToken))
   }
 
   @Remote

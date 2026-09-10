@@ -1031,3 +1031,84 @@ describe('Worktree Console Host control plane', () => {
     }
   }, 120_000)
 })
+
+
+describe('initial version confirmation on the host', () => {
+  function setup() {
+    const record = readyRecord()
+    record.ownerSessionId = 'host-target'
+    const git = gitDouble()
+    const state = { kind: 'empty' as 'empty' | 'files' | 'ready', fingerprint: 'snapshot-1',
+      snapshot: { root: '/local', commonDir: '/local/.git', gitDir: '/local/.git', headOid: 'unborn', headRef: 'refs/heads/main', branch: 'main' } }
+    git.preflightInitialCommit = vi.fn(async () => ({ ...state }))
+    git.initializeEmptyRepository = vi.fn(async (_root, fingerprint, authorize) => {
+      await authorize?.()
+      if (state.kind !== 'empty' || fingerprint !== state.fingerprint) throw Object.assign(new Error('changed'), { code: 'stale_local' })
+      state.kind = 'ready'
+      return A
+    })
+    const fixture = plane(record, { git })
+    return { ...fixture, git, state }
+  }
+  async function token(control: ReturnType<typeof setup>['control']) {
+    const result = await control.preflightCreate('source-session')
+    if (!result.ok || result.value.kind !== 'empty') throw new Error('expected confirmation')
+    return result.value.confirmationToken
+  }
+  it('preflight and cancellation have no writes; confirmation is bound to the source session', async () => {
+    const { control, module, git } = setup()
+    const proof = await token(control)
+    expect(git.initializeEmptyRepository).not.toHaveBeenCalled()
+    expect(module.createIsolatedTarget).not.toHaveBeenCalled()
+    expect(await control.createWithInitialCommit('intruder-session', proof)).toMatchObject({ ok: false })
+    expect(git.initializeEmptyRepository).not.toHaveBeenCalled()
+    expect(await control.createWithInitialCommit('source-session', proof)).toMatchObject({ ok: true })
+    expect(git.initializeEmptyRepository).toHaveBeenCalledTimes(1)
+    expect(module.createIsolatedTarget).toHaveBeenCalledWith('source-session', 'host-target')
+    expect(await control.createWithInitialCommit('source-session', proof)).toMatchObject({ ok: false })
+    expect(git.initializeEmptyRepository).toHaveBeenCalledTimes(1)
+  })
+  it('does not offer initialization for files and rejects state changed after confirmation', async () => {
+    const { control, module, git, state } = setup()
+    const proof = await token(control)
+    state.kind = 'files'
+    expect(await control.preflightCreate('source-session')).toEqual({ ok: true, value: { kind: 'files' } })
+    expect(await control.createWithInitialCommit('source-session', proof)).toMatchObject({ ok: false })
+    expect(git.initializeEmptyRepository).not.toHaveBeenCalled()
+    state.kind = 'empty'
+    const next = await token(control)
+    state.fingerprint = 'snapshot-2'
+    expect(await control.createWithInitialCommit('source-session', next)).toMatchObject({ ok: false, error: { code: 'stale_local' } })
+    expect(module.createIsolatedTarget).not.toHaveBeenCalled()
+  })
+  it('consumes expired confirmation without writing', async () => {
+    const { control, git } = setup()
+    const proof = await token(control)
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 301_000)
+    try { expect(await control.createWithInitialCommit('source-session', proof)).toMatchObject({ ok: false, error: { code: 'stale_local' } }) }
+    finally { clock.mockRestore() }
+    expect(git.initializeEmptyRepository).not.toHaveBeenCalled()
+  })
+  it('reports partial success, retains the commit and retries only worktree creation', async () => {
+    const { control, module, git } = setup()
+    const proof = await token(control)
+    vi.mocked(module.createIsolatedTarget).mockRejectedValueOnce(new Error('creation failed'))
+    expect(await control.createWithInitialCommit('source-session', proof)).toMatchObject({ ok: false, error: { message: expect.stringContaining('初始版本已创建') } })
+    expect(await control.preflightCreate('source-session')).toEqual({ ok: true, value: { kind: 'ready' } })
+    expect(await control.create('source-session')).toMatchObject({ ok: true })
+    expect(git.initializeEmptyRepository).toHaveBeenCalledTimes(1)
+  })
+  it('rejects duplicate pending operations instead of creating a second target', async () => {
+    const { control, module, git } = setup()
+    const proof = await token(control)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    vi.mocked(git.initializeEmptyRepository!).mockImplementationOnce(async () => { await gate; return A })
+    const first = control.createWithInitialCommit('source-session', proof)
+    expect(await control.createWithInitialCommit('source-session', proof)).toMatchObject({ ok: false, error: { code: 'operation_not_allowed' } })
+    release()
+    expect(await first).toMatchObject({ ok: true })
+    expect(module.createIsolatedTarget).toHaveBeenCalledTimes(1)
+  })
+})

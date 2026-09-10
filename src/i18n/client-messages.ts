@@ -2,6 +2,50 @@ import type { MessageCatalog } from './core.js'
 
 /** Plugin-owned Client copy; parameters are opaque user/Host data. */
 export const clientMessages = {
+  "pre.session.directory.local": {
+    "zh": "工作目录：本地",
+    "en": "Working directory: Local"
+  },
+  "pre.session.directory.worktree": {
+    "zh": "工作目录：Worktree",
+    "en": "Working directory: Worktree"
+  },
+  "pre.session.option.local": {
+    "zh": "本地目录",
+    "en": "Local directory"
+  },
+  "pre.session.option.worktree": {
+    "zh": "独立 Worktree",
+    "en": "Isolated Worktree"
+  },
+  "pre.session.initial.title": {
+    "zh": "需要创建初始版本",
+    "en": "An initial version is required"
+  },
+  "pre.session.initial.description": {
+    "zh": "当前仓库尚无提交。插件可以创建一个空的初始提交，作为独立工作目录的起点。不会提交你现有的文件。",
+    "en": "This repository has no commits yet. The plugin can create an empty initial commit as the starting point for an isolated working directory. Your existing files will not be committed."
+  },
+  "pre.session.files.description": {
+    "zh": "当前未提交的文件不会带入独立工作目录。可以先提交需要的文件，或使用本地目录开始任务。",
+    "en": "Uncommitted files will not be included in the isolated working directory. Commit the files you need first, or start the task in the local directory."
+  },
+  "pre.session.initial.confirm": {
+    "zh": "创建并继续",
+    "en": "Create and continue"
+  },
+  "pre.session.initial.unavailable": {
+    "zh": "当前连接不支持创建初始提交。请重试或使用本地目录。",
+    "en": "This connection does not support creating an initial commit. Retry or use the local directory."
+  },
+  "pre.session.initial.created.failure": {
+    "zh": "初始提交已创建并保留在本地仓库，但独立会话准备失败：{p0}",
+    "en": "The initial commit was created and remains in the local repository, but isolated session preparation failed: {p0}"
+  },
+  "pre.session.changed": {
+    "zh": "当前会话已切换，已停止准备独立工作目录。",
+    "en": "The current session changed. Isolated working directory preparation stopped."
+  },
   "500": {
     "zh": "/500",
     "en": "/500"

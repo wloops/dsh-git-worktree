@@ -3894,6 +3894,7 @@ export function createSessionCheckoutModule(
       if (!snapshot) {
         throw new SessionCheckoutError('not_git_repository', hostMessage('aNonGitProjectCannotCreateAnIsolatedCheckout'))
       }
+      if (snapshot.headOid === 'unborn') throw new SessionCheckoutError('operation_not_allowed', hostMessage('initialConfirmationRequired'))
       // managed Worktree 不再使用全局数量硬上限；生命周期通过交付后清理收口。
       const checkoutId = dependencies.createCheckoutId()
       const localRoot = await dependencies.files.canonicalize(project.root)

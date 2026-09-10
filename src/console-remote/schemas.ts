@@ -25,6 +25,7 @@ export const revisionSchema = z.number().int().nonnegative()
 const gitOidSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu)
 export const oidSchema = z.union([
   z.literal('unversioned'),
+  z.literal('unborn'),
   gitOidSchema,
 ])
 export const previewIdSchema = z.string().min(1).max(200).refine(value => !/[\\/\0\r\n]/u.test(value), 'unsafe preview id')
@@ -205,6 +206,11 @@ export function outcomeSchema<T>(value: z.ZodType<T>): z.ZodType<WorktreeConsole
 }
 
 export const currentResponseSchema: z.ZodType<WorktreeConsoleCurrentResponse> = strict({ target: targetDetailsSchema })
+export const createPreflightResponseSchema = z.discriminatedUnion('kind', [
+  strict({ kind: z.literal('ready') }),
+  strict({ kind: z.literal('files') }),
+  strict({ kind: z.literal('empty'), confirmationToken: z.string().uuid() }),
+])
 export const createResponseSchema: z.ZodType<WorktreeConsoleCreateResponse> = strict({
   target: targetDetailsSchema,
   targetSessionId: sessionIdSchema,

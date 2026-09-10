@@ -38,6 +38,8 @@ const METHODS = [
   'sidebarTopology',
   'current',
   'list',
+  'preflightCreate',
+  'createWithInitialCommit',
   'create',
   'inspect',
   'reviewDiff',
@@ -447,5 +449,28 @@ describe('manual strict Worktree Console Remote contribution', () => {
       ok: false,
       error: { code: 'malformed_response', message: 'Remote inspect 返回了不符合 strict contract 的 payload' },
     })
+  })
+})
+
+
+describe('initial version Remote boundary', () => {
+  it('exposes read-only preflight and a distinct confirmation method, rejecting paths and malformed tokens', async () => {
+    const preflight = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'preflightCreate')!
+    const confirm = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'createWithInitialCommit')!
+    expect(preflight.parameters.map(parameter => parameter.name)).toEqual(['agent', 'locale'])
+    expect(confirm.parameters.map(parameter => parameter.name)).toEqual(['agent', 'confirmationToken', 'locale'])
+    const proof = 'a328ea90-c7d2-4b30-aea2-d1b3ae2c5d85'
+    if (preflight.result.mode !== 'strict') throw new Error('strict')
+    expect(preflight.result.schema.parse({ ok: true, value: { kind: 'empty', confirmationToken: proof } })).toMatchObject({ ok: true })
+    expect(() => preflight.result.schema.parse({ ok: true, value: { kind: 'empty', confirmationToken: proof, root: '/arbitrary' } })).toThrow()
+    expect(() => preflight.result.schema.parse({ ok: true, value: { kind: 'empty' } })).toThrow()
+    const preflightCreate = vi.fn(async () => ({ data: { ok: true, value: { kind: 'empty', confirmationToken: proof } } }))
+    const createWithInitialCommit = vi.fn(async () => ({ data: { ok: false, error: { code: 'stale_local', message: 'changed' } } }))
+    const adapter = createWorktreeConsoleRemoteAdapter({ preflightCreate, createWithInitialCommit } as never, () => 'en')
+    await adapter.preflightCreate!({ sourceSessionId: 'source' })
+    expect(preflightCreate).toHaveBeenCalledWith('source', 'en')
+    expect(createWithInitialCommit).not.toHaveBeenCalled()
+    expect(await adapter.createWithInitialCommit!({ sourceSessionId: 'source', confirmationToken: proof })).toMatchObject({ ok: false })
+    expect(createWithInitialCommit).toHaveBeenCalledWith('source', proof, 'en')
   })
 })

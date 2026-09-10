@@ -6,6 +6,7 @@ import type {
   WorktreeConsoleCreatePreviewRecoveryHandoffRequest,
   WorktreeConsoleCreatePreviewRecoveryHandoffResponse,
   WorktreeConsoleCreateResponse,
+  WorktreeConsoleCreatePreflightResponse,
   WorktreeConsoleCheckpointRequest,
   WorktreeConsoleCurrentResponse,
   WorktreeConsoleDiscardRequest,
@@ -62,6 +63,8 @@ export interface WorktreeConsoleControlPlane {
   sidebarTopology(): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>
   current(sessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>
   list(request: WorktreeConsoleListRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>
+  preflightCreate(sourceSessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreflightResponse>>
+  createWithInitialCommit(sourceSessionId: string, confirmationToken: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
   create(sourceSessionId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
   inspect(sessionId: string, checkoutId: string): Promise<WorktreeConsoleOutcome<WorktreeConsoleInspectResponse>>
   reviewDiff(request: WorktreeConsoleReviewDiffRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleReviewDiffResponse>>
@@ -432,6 +435,59 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     }
   }
 
+  const confirmations = new Map<string, { token: string; root: string; projectId: string; fingerprint: string; expires: number }>()
+  const creating = new Set<string>()
+  async function localProject(sessionId: string) {
+    const target = await callerTarget(sessionId)
+    const session = options.lookup.getSession(sessionId)
+    const project = session?.projectId ? options.lookup.getProject(session.projectId) : undefined
+    if (target.checkout.kind !== 'local' || !project || project.id !== target.project.id || !options.files.exists(project.root)) {
+      throw domainError('operation_not_allowed', hostMessage('initialStateChanged'))
+    }
+    return project
+  }
+  async function withCreation<T>(sessionId: string, action: (project: Awaited<ReturnType<typeof localProject>>) => Promise<T>): Promise<T> {
+    const sessionKey = `session:${sessionId}`
+    if (creating.has(sessionKey)) throw domainError('operation_not_allowed', hostMessage('initialRepositoryBusy'))
+    creating.add(sessionKey)
+    let rootKey: string | undefined
+    try {
+      const project = await localProject(sessionId)
+      const canonical = await options.files.canonicalize(project.root)
+      const key = `root:${process.platform === 'win32' ? canonical.toLowerCase() : canonical}`
+      if (creating.has(key)) throw domainError('operation_not_allowed', hostMessage('initialRepositoryBusy'))
+      rootKey = key
+      creating.add(key)
+      return await action(project)
+    } finally {
+      creating.delete(sessionKey)
+      if (rootKey) creating.delete(rootKey)
+    }
+  }
+  async function createTarget(sourceSessionId: string): Promise<WorktreeConsoleCreateResponse> {
+    const targetSessionId = createTargetSessionId()
+    const launch = await options.module.createIsolatedTarget(sourceSessionId, targetSessionId)
+    const record = recordOf(options.registry, launch.target.checkout.id)
+    const observed = await observe(record)
+    if (
+      record.sourceSessionId !== sourceSessionId
+      || record.ownerSessionId !== targetSessionId
+      || observed.managedRoot !== launch.managedRoot
+    ) throw domainError('checkout_mismatch', hostMessage('hostIdentityVerificationFailedForTheNewlyCreatedWorktree'))
+    return {
+      target: projectDetails(
+        record,
+        sourceSessionId,
+        observed.managedRoot,
+        observed.snapshot,
+        observed.dirty,
+        ownerSessionAvailable(record),
+      ),
+      targetSessionId,
+      managedRoot: launch.managedRoot,
+    }
+  }
+
   return {
     sidebarTopology: () => outcome(async () => {
       const projects = new Map<string, {
@@ -521,29 +577,37 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       return { project: { ...caller.project }, worktrees }
     }),
 
-    create: sourceSessionId => outcome(async () => {
-      const targetSessionId = createTargetSessionId()
-      const launch = await options.module.createIsolatedTarget(sourceSessionId, targetSessionId)
-      const record = recordOf(options.registry, launch.target.checkout.id)
-      const observed = await observe(record)
-      if (
-        record.sourceSessionId !== sourceSessionId
-        || record.ownerSessionId !== targetSessionId
-        || observed.managedRoot !== launch.managedRoot
-      ) throw domainError('checkout_mismatch', hostMessage('hostIdentityVerificationFailedForTheNewlyCreatedWorktree'))
-      return {
-        target: projectDetails(
-          record,
-          sourceSessionId,
-          observed.managedRoot,
-          observed.snapshot,
-          observed.dirty,
-          ownerSessionAvailable(record),
-        ),
-        targetSessionId,
-        managedRoot: launch.managedRoot,
+    preflightCreate: sourceSessionId => outcome(async () => {
+      const project = await localProject(sourceSessionId)
+      const check = await options.git.preflightInitialCommit?.(project.root)
+      if (!check || check.kind === 'ready') return { kind: 'ready' }
+      if (check.kind === 'files') {
+        confirmations.delete(sourceSessionId)
+        return { kind: 'files' }
       }
+      for (const [id, value] of confirmations) if (value.expires <= Date.now()) confirmations.delete(id)
+      if (confirmations.size >= 500) confirmations.delete(confirmations.keys().next().value!)
+      const token = randomUUID()
+      confirmations.set(sourceSessionId, { token, root: project.root, projectId: project.id, fingerprint: check.fingerprint, expires: Date.now() + 300_000 })
+      return { kind: 'empty', confirmationToken: token }
     }),
+    createWithInitialCommit: (sourceSessionId, confirmationToken) => outcome(() => withCreation(sourceSessionId, async project => {
+      const confirmation = confirmations.get(sourceSessionId)
+      confirmations.delete(sourceSessionId)
+      if (!confirmation || confirmation.token !== confirmationToken || confirmation.expires <= Date.now()
+        || confirmation.root !== project.root || confirmation.projectId !== project.id || !options.git.initializeEmptyRepository) {
+        throw domainError('stale_local', hostMessage('initialStateChanged'))
+      }
+      await options.git.initializeEmptyRepository(project.root, confirmation.fingerprint, async () => {
+        const current = await localProject(sourceSessionId)
+        if (current.id !== confirmation.projectId || current.root !== confirmation.root) {
+          throw domainError('stale_local', hostMessage('initialStateChanged'))
+        }
+      })
+      try { return await createTarget(sourceSessionId) }
+      catch { throw domainError('git_operation_failed', hostMessage('initialCreatedWorktreeFailed')) }
+    })),
+    create: sourceSessionId => outcome(() => withCreation(sourceSessionId, () => createTarget(sourceSessionId))),
 
     inspect: (sessionId, checkoutId) => outcome(async () => ({ target: await details(sessionId, checkoutId) })),
 

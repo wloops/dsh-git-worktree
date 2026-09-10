@@ -1,3 +1,4 @@
+import { initialCommitActions, type GitCommitProtocol } from './initial-commit.js'
 import { hostMessage } from '../i18n/host.js'
 /**
  * DSH adapter for the session-checkout git port: runs git through
@@ -11,8 +12,8 @@ import { hostMessage } from '../i18n/host.js'
  */
 
 import { createHash } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { realpath, lstat } from 'node:fs/promises'
+import { resolve, dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
 import type { GitCheckoutSnapshot, SessionCheckoutGitPort } from '../ports.js'
@@ -46,7 +47,7 @@ interface GitCommandResult {
  * the caller decides whether a non-zero exit is an error. Never
  * shell-interpreted; argv passes verbatim.
  */
-async function runGit(ctx: Context, cwd: string, args: string[], options: GitPortOptions): Promise<GitCommandResult> {
+async function runGit(ctx: Context, cwd: string, args: string[], options: GitPortOptions, input?: string | GitCommitProtocol): Promise<GitCommandResult> {
   const graceMs = gitTimeoutMs(args)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), graceMs)
@@ -64,27 +65,60 @@ async function runGit(ctx: Context, cwd: string, args: string[], options: GitPor
       ],
       cwd,
       stdio: {
-        stdin: 'ignore',
+        stdin: input === undefined ? 'ignore' : 'pipe',
         stdout: { maxBytes: GIT_COLLECT_BYTES },
         stderr: { maxBytes: GIT_COLLECT_BYTES },
       },
       graceMs: GIT_COMMAND_TIMEOUT_MS,
       signal: controller.signal,
       env: {
+        // Repository routing must come from the authorized cwd, never ambient Git
+        // overrides. Preserve identity variables and normal user configuration.
+        ...Object.fromEntries(Object.keys(process.env).filter(key =>
+          /^(GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_.*|CONFIG_VALUE_.*))$/i.test(key),
+        ).map(key => [key, undefined])),
         GIT_OPTIONAL_LOCKS: '0',
         GIT_TERMINAL_PROMPT: '0',
         LC_ALL: 'C',
         LANG: 'C',
       },
     })
+    if (input !== undefined) {
+      handle.stdin?.on('error', () => { /* Exit status reports a closed Git protocol pipe. */ })
+      if (typeof input === 'string') handle.stdin?.end(input)
+      else {
+        handle.stdin?.write(input.prepare)
+        let exited = false
+        void handle.done.then(() => { exited = true })
+        while (!exited && !controller.signal.aborted && !handle.collected.stdout?.readFrom(0).text.includes('prepare: ok')) {
+          await new Promise(resolve => setTimeout(resolve, 5))
+        }
+        if (!exited && !controller.signal.aborted) {
+          try {
+            await input.beforeCommit()
+            handle.stdin?.end('commit\n')
+          } catch (error) {
+            handle.stdin?.end('abort\n')
+            await handle.done
+            throw error
+          }
+        } else handle.stdin?.end()
+      }
+    }
     const outcome = await handle.done
-    const stdout = handle.collected.stdout?.readFrom(0).text ?? ''
-    const stderr = handle.collected.stderr?.readFrom(0).text ?? ''
+    const stdoutRead = handle.collected.stdout?.readFrom(0)
+    const stderrRead = handle.collected.stderr?.readFrom(0)
+    const stdout = stdoutRead?.text ?? ''
+    const stderr = stderrRead?.text ?? ''
+    if (stdoutRead?.lossy || stderrRead?.lossy) {
+      return { code: -1, stdout: '', stderr: hostMessage('repositoryInspectionFailed') }
+    }
     if (outcome.signal === 'SIGTERM' || outcome.signal === 'SIGKILL' || controller.signal.aborted) {
       return { code: -1, stdout, stderr: hostMessage('gitTimedOutMsAndWasTerminated', { p0: args.join(' '), p1: graceMs }) }
     }
     return { code: outcome.exitCode ?? -1, stdout: stdout.trim(), stderr: stderr.trim() }
   } catch (error) {
+    if (error instanceof SessionCheckoutError) throw error
     // Synchronous spawn failure (git missing from PATH): report as a failed command.
     return { code: -1, stdout: '', stderr: error instanceof Error ? error.message : String(error) }
   } finally {
@@ -127,18 +161,46 @@ function applyBaseRef(checkoutId: string): string {
   return internalArtifactRef(checkoutId, 'apply-base')
 }
 
+async function hasGitMetadata(root: string): Promise<boolean> {
+  let directory = resolve(root)
+  for (;;) {
+    try { await lstat(join(directory, '.git')); return true }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true
+    }
+    const parent = dirname(directory)
+    if (parent === directory) return false
+    directory = parent
+  }
+}
+
 /** Build the `ctx.subprocess`-backed git port. */
 export function createDshGitPort(ctx: Context, options: GitPortOptions): SessionCheckoutGitPort {
-  const runSessionGit = (cwd: string, args: string[]) => runGit(ctx, cwd, args, options)
+  const runSessionGit = (cwd: string, args: string[], input?: string | GitCommitProtocol) => runGit(ctx, cwd, args, options, input)
   const runSessionGitChecked = (cwd: string, args: string[]) => runGitChecked(ctx, cwd, args, options)
 
-  return {
+  const port: SessionCheckoutGitPort = {
     inspect: async (root): Promise<GitCheckoutSnapshot | null> => {
       const topLevel = await runSessionGit(root, ['rev-parse', '--show-toplevel'])
-      if (topLevel.code !== 0 || !topLevel.stdout) return null
+      if (topLevel.code !== 0 || !topLevel.stdout) {
+        if (topLevel.code === 128 && /^fatal: not a git repository/.test(topLevel.stderr) && !await hasGitMetadata(root)) return null
+        throw new SessionCheckoutError('git_operation_failed', hostMessage('repositoryInspectionFailed'))
+      }
       const commonDir = await runSessionGitChecked(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
       const gitDir = await runSessionGitChecked(root, ['rev-parse', '--path-format=absolute', '--absolute-git-dir'])
-      const headOid = await runSessionGitChecked(root, ['rev-parse', 'HEAD'])
+      const head = await runSessionGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+      let headOid = head.stdout
+      if (head.code !== 0) {
+        const symbolicHead = await runSessionGit(root, ['symbolic-ref', '--quiet', 'HEAD'])
+        const refs = await runSessionGit(root, ['show-ref'])
+        // A missing commit is unborn only with a valid symbolic HEAD and no refs.
+        // Broken refs, unreadable metadata, and missing objects remain Git errors.
+        if (head.code !== 1 || symbolicHead.code !== 0 || !symbolicHead.stdout.startsWith('refs/heads/')
+          || refs.code !== 1 || refs.stdout || refs.stderr) {
+          throw new SessionCheckoutError('git_operation_failed', hostMessage('repositoryInspectionFailed'))
+        }
+        headOid = 'unborn'
+      }
       const symbolic = await runSessionGit(root, ['symbolic-ref', '--quiet', 'HEAD'])
       const headRef = symbolic.code === 0 && symbolic.stdout ? symbolic.stdout : 'HEAD'
       const branch = headRef.startsWith('refs/heads/') ? headRef.slice('refs/heads/'.length) : null
@@ -153,7 +215,10 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
     },
     findContainingWorktreeRoot: async (root) => {
       const topLevel = await runSessionGit(root, ['rev-parse', '--show-toplevel'])
-      if (topLevel.code !== 0 || !topLevel.stdout) return null
+      if (topLevel.code !== 0 || !topLevel.stdout) {
+        if (topLevel.code === 128 && /^fatal: not a git repository/.test(topLevel.stderr) && !await hasGitMetadata(root)) return null
+        throw new SessionCheckoutError('git_operation_failed', hostMessage('repositoryInspectionFailed'))
+      }
       return realpath(resolve(topLevel.stdout))
     },
     status: async (root) => {
@@ -198,4 +263,5 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
       throw new Error(result.stderr || hostMessage('cannotProveGitCommitAncestry'))
     },
   }
+  return Object.assign(port, initialCommitActions(port.inspect, runSessionGit))
 }

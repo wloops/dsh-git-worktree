@@ -205,6 +205,11 @@ export interface WorktreeSidebarTopologyResponse {
 }
 
 /** targetSessionId is allocated on the Host; the browser never chooses ownership identity. */
+export type WorktreeConsoleCreatePreflightResponse =
+  | { kind: 'ready' }
+  | { kind: 'empty'; confirmationToken: string }
+  | { kind: 'files' }
+
 export interface WorktreeConsoleCreateRequest {
   sourceSessionId: string
 }
@@ -515,6 +520,8 @@ export function worktreeConsoleErrorMeta(code: WorktreeConsoleErrorCode): Worktr
 
 /** Normalized Client seam; Remote transport details stay behind one adapter. */
 export interface WorktreeConsoleAdapter {
+  preflightCreate?(request: { sourceSessionId: string }): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreflightResponse>>
+  createWithInitialCommit?(request: { sourceSessionId: string; confirmationToken: string }): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
   sidebarTopology(): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>
   current(request: WorktreeConsoleCurrentRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>
   list(request: WorktreeConsoleListRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>

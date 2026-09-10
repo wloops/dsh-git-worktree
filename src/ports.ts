@@ -44,7 +44,16 @@ export interface GitCheckoutSnapshot {
   headRef: string
 }
 
+export interface InitialCommitPreflight {
+  kind: 'ready' | 'empty' | 'files'
+  fingerprint: string
+  snapshot: GitCheckoutSnapshot
+}
+
 export interface SessionCheckoutGitPort {
+  /** Optional for third-party ports; unsupported ports must not initialize. */
+  preflightInitialCommit?(root: string): Promise<InitialCommitPreflight>
+  initializeEmptyRepository?(root: string, fingerprint: string, assertAuthorized?: () => Promise<void>): Promise<string>
   inspect(root: string): Promise<GitCheckoutSnapshot | null>
   /** Top-level of the Git checkout containing the directory; does not require a HEAD. */
   findContainingWorktreeRoot(root: string): Promise<string | null>
