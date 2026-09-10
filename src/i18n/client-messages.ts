@@ -2,22 +2,6 @@ import type { MessageCatalog } from './core.js'
 
 /** Plugin-owned Client copy; parameters are opaque user/Host data. */
 export const clientMessages = {
-  "pre.session.directory.local": {
-    "zh": "工作目录：本地",
-    "en": "Working directory: Local"
-  },
-  "pre.session.directory.worktree": {
-    "zh": "工作目录：Worktree",
-    "en": "Working directory: Worktree"
-  },
-  "pre.session.option.local": {
-    "zh": "本地目录",
-    "en": "Local directory"
-  },
-  "pre.session.option.worktree": {
-    "zh": "独立 Worktree",
-    "en": "Isolated Worktree"
-  },
   "pre.session.initial.title": {
     "zh": "需要创建初始版本",
     "en": "An initial version is required"

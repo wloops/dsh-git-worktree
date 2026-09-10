@@ -1,6 +1,6 @@
 import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useEffect, useRef, useState } from 'react'
-import { Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails } from '../../console-contract.js'
 import type { PreSessionDraftActions, PreSessionDraftState, PreparePreSessionWorktreeRequest } from './controller.js'
 
@@ -37,7 +37,6 @@ export function PreSessionWorktreeToggle({ sessionId, session, input, inputActio
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [state, setState] = useState<LoadState>('loading')
   const [error, setError] = useState<string | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [pending, setPending] = useState<{ input: PreSessionDraftState; kind: 'ready' | 'empty' | 'files'; token?: string } | null>(null)
   const latestInput = useRef(input)
   latestInput.current = input
@@ -80,7 +79,6 @@ export function PreSessionWorktreeToggle({ sessionId, session, input, inputActio
     scope.alive = true
     setTarget(null)
     setPending(null)
-    setMenuOpen(false)
     if (blank) void refreshCurrent()
     return () => { scope.alive = false }
   }, [scope])
@@ -93,11 +91,9 @@ export function PreSessionWorktreeToggle({ sessionId, session, input, inputActio
   const busy = state === 'preparing'
   const retryingLookup = state === 'error' && target === null
   const disabled = busy || selected || (!canCreate && !retryingLookup) || input.phase !== 'plain'
-  const label = selected ? t('pre.session.directory.worktree') : t('pre.session.directory.local')
 
   const beginConfirmation = async (): Promise<void> => {
     if (disabled || scope.busy || !isCurrent()) return
-    setMenuOpen(false)
     if (retryingLookup) { await refreshCurrent(); return }
     scope.busy = true
     setState('preparing')
@@ -151,31 +147,13 @@ export function PreSessionWorktreeToggle({ sessionId, session, input, inputActio
 
   return (
     <span className="dsh-wt-pre-session" data-state={state}>
-      <Menu open={menuOpen} compact portal align="start" side="top"
-        onClose={() => setMenuOpen(false)}
-        items={[
-          { id: 'local', label: t('pre.session.option.local'), disabled: busy || selected },
-          { id: 'worktree', label: t('pre.session.option.worktree'), disabled },
-        ]}
-        onSelect={(id) => {
-          if (id === 'local') { setMenuOpen(false); cancelConfirmation() }
-          if (id === 'worktree') void beginConfirmation()
-        }}
-        anchor={(
-          <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={label}
-            aria-describedby={error ? `dsh-wt-pre-session-error-${sessionId}` : undefined}
-            className="dsh-wt-pre-session-menu" disabled={disabled}
-            onClick={() => setMenuOpen(current => !current)}
-            onKeyDown={(event) => {
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault()
-                setMenuOpen(true)
-              }
-            }}>
-            <span>{label}</span><span className="dsh-wt-pre-session-chevron" aria-hidden>⌄</span>
-          </button>
-        )}
-      />
+      <button type="button" role="switch" aria-checked={selected} aria-label={t('worktree')}
+        aria-describedby={error ? `dsh-wt-pre-session-error-${sessionId}` : undefined}
+        className="dsh-wt-pre-session-toggle" disabled={disabled}
+        onClick={() => { void beginConfirmation() }}>
+        <span className="dsh-wt-pre-session-check" aria-hidden="true">{selected ? '✓' : ''}</span>
+        <span>{t('worktree')}</span>
+      </button>
       {error ? (
         <span id={`dsh-wt-pre-session-error-${sessionId}`} className="dsh-wt-pre-session-error" role="alert">
           {error} <button type="button" className="dsh-wt-button" disabled={busy} onClick={() => { void beginConfirmation() }}>{t('retry')}</button>

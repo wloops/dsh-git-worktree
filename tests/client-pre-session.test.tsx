@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { ClientI18nProvider } from '../src/client/i18n.js'
+import { WORKTREE_STYLES } from '../src/client/styles.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createElement } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -11,6 +12,20 @@ import { PreSessionWorktreeToggle } from '../src/client/pre-session/PreSessionWo
 import { registerPreSessionWorktree } from '../src/client/pre-session/index.js'
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
 
+
+test('keeps the Worktree switch lightweight and uses Harness theme feedback', () => {
+  const rule = (selector: string) => WORKTREE_STYLES.slice(WORKTREE_STYLES.indexOf(`${selector} {`)).split('}')[0]
+  const trigger = rule('.dsh-wt-pre-session-toggle')
+  expect(trigger).toContain('border:none')
+  expect(trigger).toContain('background:transparent')
+  expect(trigger).toContain('height:28px')
+  expect(trigger).toContain('font-size:13px')
+  expect(trigger).toContain('font-weight:500')
+  expect(trigger).toContain('--dsw-alias-label-secondary')
+  expect(rule('.dsh-wt-pre-session-toggle:hover:not(:disabled)')).toContain('--dsw-alias-interactive-bg-hover')
+  expect(rule('.dsh-wt-pre-session-toggle:focus-visible')).toContain('--dsw-alias-border-l3')
+  expect(rule('.dsh-wt-pre-session-toggle[aria-checked="true"]')).toContain('--dsw-alias-label-primary')
+})
 
 function isolatedTarget(): WorktreeConsoleTargetDetails {
   const fixture = createWorktreeConsoleAdapterFixture().target
@@ -395,32 +410,32 @@ describe('Pre-session directory menu', () => {
     }
     const renderEntry = () => <ClientI18nProvider language={language}>{createElement(Entry, props)}</ClientI18nProvider>
     const view = render(renderEntry())
-    const toggle = await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     expect(toggle).toBeTruthy()
     fireEvent.click(toggle)
-    fireEvent.click(screen.getByRole('button', { name: /^(独立 Worktree|Isolated Worktree)$/ }))
+
     expect(await screen.findByRole('dialog')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: language === 'en' ? 'Cancel' : '取消' }))
     expect(inputActions.setDraft).not.toHaveBeenCalled()
     input.phase = 'submitting'
     view.rerender(renderEntry())
-    expect(screen.getByRole('button', { name: /^(工作目录：|Working directory:)/ }).getAttribute('disabled')).not.toBeNull()
+    expect(screen.getByRole('switch', { name: 'Worktree' }).getAttribute('disabled')).not.toBeNull()
     input.phase = 'plain'
     conversation.activeTargets.add('chat')
     view.rerender(renderEntry())
-    expect(screen.queryByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
     conversation.activeTargets.clear()
     session.promptAttempted = true
     view.rerender(renderEntry())
-    expect(screen.queryByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
     session.promptAttempted = false
     session.blank = false
     view.rerender(renderEntry())
-    expect(screen.queryByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
     session.blank = true
     session.running = true
     view.rerender(renderEntry())
-    expect(screen.queryByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
   })
 
   test('shows an accessible Local directory menu only for a blank Local Session', async () => {
@@ -439,8 +454,8 @@ describe('Pre-session directory menu', () => {
       controller={controller}
     />)
 
-    const toggle = await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })
-    expect(toggle.textContent).toContain('工作目录：本地')
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false))
 
     view.rerender(<PreSessionWorktreeToggle
@@ -451,7 +466,7 @@ describe('Pre-session directory menu', () => {
       adapter={fixture.adapter}
       controller={controller}
     />)
-    expect(screen.queryByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
   })
 
   test('waits for repository detection before showing the directory menu', async () => {
@@ -467,12 +482,12 @@ describe('Pre-session directory menu', () => {
       controller={{ prepare: vi.fn() }}
     />)
 
-    expect(screen.queryByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
     resolveCurrent({
       ok: true,
       value: { target: { ...fixture.target, checkoutId: null, targetSessionId: null, ownerSessionId: 'source-session', state: 'local', phase: 'local', managedRoot: null, capabilities: { ...fixture.target.capabilities, create: true } } },
     })
-    expect(await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeTruthy()
+    expect(await screen.findByRole('switch', { name: 'Worktree' })).toBeTruthy()
   })
 
   test('hides the directory menu when the Session workspace is not a Git repository', async () => {
@@ -493,7 +508,7 @@ describe('Pre-session directory menu', () => {
 
     await waitFor(() => {
       expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'source-session' })
-      expect(screen.queryByRole('button', { name: /^(工作目录：|Working directory:)/ })).toBeNull()
+      expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
       expect(screen.queryByRole('alert')).toBeNull()
     })
     expect(prepare).not.toHaveBeenCalled()
@@ -516,12 +531,12 @@ describe('Pre-session directory menu', () => {
       controller={{ prepare }}
     />)
 
-    const toggle = await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     fireEvent.click(toggle)
-    fireEvent.click(screen.getByRole('button', { name: /^(独立 Worktree|Isolated Worktree)$/ }))
+
     expect(screen.getByRole('dialog', { name: '在 Worktree 中开始？' })).toBeTruthy()
     expect(screen.getByText('当前输入内容和 1 个附件将移动到新的 Worktree 会话。')).toBeTruthy()
-    expect(toggle.textContent).toContain('工作目录：本地')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     expect(prepare).not.toHaveBeenCalled()
 
     const confirm = screen.getByRole('button', { name: '创建并切换' })
@@ -534,9 +549,9 @@ describe('Pre-session directory menu', () => {
     }))
 
     resolve(fixture.target)
-    await waitFor(() => expect(toggle.textContent).toContain('工作目录：Worktree'))
+    await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
     expect(screen.queryByRole('dialog', { name: '在 Worktree 中开始？' })).toBeNull()
-    expect(screen.getByText('工作目录：Worktree')).toBeTruthy()
+    expect(toggle.textContent).toBe('✓Worktree')
   })
 
   test('cancels the confirmation without creating or mutating the Local draft', async () => {
@@ -555,13 +570,13 @@ describe('Pre-session directory menu', () => {
       controller={{ prepare }}
     />)
 
-    const toggle = await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     fireEvent.click(toggle)
-    fireEvent.click(screen.getByRole('button', { name: /^(独立 Worktree|Isolated Worktree)$/ }))
+
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
     expect(screen.queryByRole('dialog', { name: '在 Worktree 中开始？' })).toBeNull()
-    expect(toggle.textContent).toContain('工作目录：本地')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     expect(prepare).not.toHaveBeenCalled()
     expect(inputActions.setDraft).not.toHaveBeenCalled()
     expect(inputActions.removeImage).not.toHaveBeenCalled()
@@ -596,11 +611,11 @@ describe('Pre-session directory menu', () => {
       controller={{ prepare }}
     />)
 
-    const toggle = await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('offline'))
     fireEvent.click(toggle)
-    fireEvent.click(screen.getByRole('button', { name: /^(独立 Worktree|Isolated Worktree)$/ }))
-    await waitFor(() => expect(screen.getByText('工作目录：本地')).toBeTruthy())
+
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Worktree' }).getAttribute('aria-checked')).toBe('false'))
     expect(fixture.adapter.current).toHaveBeenCalledTimes(2)
     expect(prepare).not.toHaveBeenCalled()
   })
@@ -621,13 +636,13 @@ describe('Pre-session directory menu', () => {
       controller={{ prepare }}
     />)
 
-    const toggle = await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
     fireEvent.click(toggle)
-    fireEvent.click(screen.getByRole('button', { name: /^(独立 Worktree|Isolated Worktree)$/ }))
+
     fireEvent.click(screen.getByRole('button', { name: '创建并切换' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('session create failed'))
     expect((toggle as HTMLButtonElement).disabled).toBe(false)
-    expect(toggle.textContent).toContain('工作目录：本地')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
@@ -645,9 +660,9 @@ test('English pre-session confirmation uses localized copy without modifying the
     inputActions: { setDraft: vi.fn(), addImages: vi.fn(() => true), removeImage: vi.fn() }, adapter: fixture.adapter, controller: { prepare },
   }
   const view = render(<ClientI18nProvider language="en"><PreSessionWorktreeToggle {...props} /></ClientI18nProvider>)
-  const toggle = await screen.findByRole('button', { name: /^(工作目录：|Working directory:)/ })
+  const toggle = await screen.findByRole('switch', { name: 'Worktree' })
   fireEvent.click(toggle)
-  fireEvent.click(screen.getByRole('button', { name: 'Isolated Worktree' }))
+
   expect(screen.getByRole('dialog', { name: 'Start in a Worktree?' })).toBeTruthy()
   expect(screen.getByText('The current input and 1 attachment will move to the new Worktree session.')).toBeTruthy()
   view.rerender(<ClientI18nProvider language="zh"><PreSessionWorktreeToggle {...props} /></ClientI18nProvider>)
@@ -657,7 +672,7 @@ test('English pre-session confirmation uses localized copy without modifying the
   await waitFor(() => expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ draft: '用户输入 unchanged', imageIds: ['附件-id'] }) })))
 })
 
-describe('Directory menu preflight and session ownership', () => {
+describe('Worktree switch preflight and session ownership', () => {
   function localFixture() {
     const fixture = successFixture()
     fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: {
@@ -673,24 +688,28 @@ describe('Directory menu preflight and session ownership', () => {
   }
 
   async function chooseWorktree() {
-    fireEvent.click(await screen.findByRole('button', { name: '工作目录：本地' }))
-    fireEvent.click(screen.getByRole('button', { name: '独立 Worktree' }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Worktree' }))
+
   }
 
-  test('opens with arrow key, closes with Escape, and Local performs no preflight', async () => {
+  test('is a focusable native button switch without Local label, and cancellation restores unchecked state', async () => {
     const fixture = localFixture()
     fixture.adapter.preflightCreate = vi.fn(async () => ({ ok: true, value: { kind: 'ready' } }))
     render(<PreSessionWorktreeToggle {...fixture.props} />)
-    const anchor = await screen.findByRole('button', { name: '工作目录：本地' })
-    expect(anchor.getAttribute('aria-haspopup')).toBe('menu')
-    fireEvent.keyDown(anchor, { key: 'ArrowDown' })
-    expect(screen.getByRole('menu')).toBeTruthy()
+    const toggle = await screen.findByRole('switch', { name: 'Worktree' })
+    expect(toggle.tagName).toBe('BUTTON')
+    expect(toggle.getAttribute('type')).toBe('button')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    toggle.focus()
+    expect(document.activeElement).toBe(toggle)
+    expect(screen.queryByText(/^(Local|本地|本地目录)$/)).toBeNull()
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(toggle)
+    await screen.findByRole('dialog')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('menu')).toBeNull()
-    fireEvent.click(anchor)
-    fireEvent.click(screen.getByRole('button', { name: '本地目录' }))
-    expect(screen.queryByRole('menu')).toBeNull()
-    expect(fixture.adapter.preflightCreate).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
     expect(fixture.props.controller.prepare).not.toHaveBeenCalled()
   })
 
@@ -698,8 +717,7 @@ describe('Directory menu preflight and session ownership', () => {
     const fixture = localFixture()
     fixture.adapter.preflightCreate = vi.fn(async () => ({ ok: true, value: { kind: 'empty', confirmationToken: 'token-1' } }))
     render(<ClientI18nProvider language={language}><PreSessionWorktreeToggle {...fixture.props} /></ClientI18nProvider>)
-    fireEvent.click(await screen.findByRole('button', { name: language === 'zh' ? '工作目录：本地' : 'Working directory: Local' }))
-    fireEvent.click(screen.getByRole('button', { name: language === 'zh' ? '独立 Worktree' : 'Isolated Worktree' }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Worktree' }))
     expect(await screen.findByRole('dialog', { name: language === 'zh' ? '需要创建初始版本' : 'An initial version is required' })).toBeTruthy()
     expect(screen.getByText(language === 'zh' ? /不会提交你现有的文件/ : /Your existing files will not be committed/)).toBeTruthy()
     expect(fixture.props.controller.prepare).not.toHaveBeenCalled()
@@ -719,7 +737,7 @@ describe('Directory menu preflight and session ownership', () => {
     await chooseWorktree()
     await screen.findByRole('dialog')
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(screen.getByRole('button', { name: '工作目录：本地' })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: 'Worktree' })).toBeTruthy()
     await chooseWorktree()
     await screen.findByRole('dialog')
     expect(screen.getByText(/当前未提交的文件不会带入独立工作目录/)).toBeTruthy()
@@ -740,7 +758,7 @@ describe('Directory menu preflight and session ownership', () => {
     fireEvent.click(await screen.findByRole('button', { name: '创建并继续' }))
     await screen.findByRole('alert')
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(screen.getByRole('button', { name: '工作目录：本地' })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: 'Worktree' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     await screen.findByRole('dialog')
     expect(fixture.adapter.preflightCreate).toHaveBeenCalledTimes(2)
@@ -755,13 +773,12 @@ describe('Directory menu preflight and session ownership', () => {
     let release!: (value: any) => void
     fixture.adapter.preflightCreate = vi.fn(() => new Promise(resolve => { release = resolve }))
     const view = render(<PreSessionWorktreeToggle {...fixture.props} />)
-    fireEvent.click(await screen.findByRole('button', { name: '工作目录：本地' }))
-    const option = screen.getByRole('button', { name: '独立 Worktree' })
+    const option = await screen.findByRole('switch', { name: 'Worktree' })
     fireEvent.click(option)
     fireEvent.click(option)
     expect(fixture.adapter.preflightCreate).toHaveBeenCalledTimes(1)
     view.rerender(<PreSessionWorktreeToggle {...fixture.props} sessionId="other-session" />)
-    await screen.findByRole('button', { name: '工作目录：本地' })
+    await screen.findByRole('switch', { name: 'Worktree' })
     release({ ok: true, value: { kind: 'empty', confirmationToken: 'stale' } })
     await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'other-session' }))
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -803,7 +820,7 @@ describe('Directory menu preflight and session ownership', () => {
     fireEvent.click(await screen.findByRole('button', { name: '创建并切换' }))
     await waitFor(() => expect(fixture.services.sessions.create).toHaveBeenCalledTimes(1))
     view.rerender(<PreSessionWorktreeToggle {...fixture.props} controller={controller} sessionId="other-session" />)
-    await screen.findByRole('button', { name: '工作目录：本地' })
+    await screen.findByRole('switch', { name: 'Worktree' })
     release()
     await waitFor(() => expect(fixture.adapter.discard).toHaveBeenCalled())
     expect(fixture.services.sessions.open).not.toHaveBeenCalled()
@@ -811,6 +828,6 @@ describe('Directory menu preflight and session ownership', () => {
     expect(fixture.sourceActions.removeImage).not.toHaveBeenCalled()
     expect(fixture.targetInput.setDraft).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.getByRole('button', { name: '工作目录：本地' })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: 'Worktree' })).toBeTruthy()
   })
 })

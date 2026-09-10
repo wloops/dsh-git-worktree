@@ -123,11 +123,13 @@ export const WORKTREE_STYLES = String.raw`
 .dsh-wt-retain-actions { display:flex; gap:6px; flex-wrap:wrap; }
 .dsh-wt-visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .dsh-wt-pre-session { position:relative; display:inline-flex; align-items:center; min-width:0; }
-.dsh-wt-pre-session-menu { display:inline-flex; align-items:center; gap:4px; min-height:28px; padding:3px 7px; border:0; border-radius:7px; background:transparent; color:inherit; font:inherit; font-size:12px; cursor:pointer; white-space:nowrap; }
-.dsh-wt-pre-session-menu:hover:not(:disabled) { background:color-mix(in srgb, currentColor 7%, transparent); }
-.dsh-wt-pre-session-menu:focus-visible { outline:2px solid #5a8dee; outline-offset:1px; }
-.dsh-wt-pre-session-menu:disabled { cursor:default; opacity:.72; }
-.dsh-wt-pre-session-chevron { font-size:11px; opacity:.6; }
+/* Match the Harness PermissionSelect toolbar trigger while retaining switch semantics. */
+.dsh-wt-pre-session-toggle { display:inline-flex; align-items:center; gap:4px; min-width:0; height:28px; padding:0 8px; border:none; border-radius:24px; outline:none; background:transparent; color:var(--dsw-alias-label-secondary, inherit); font:inherit; font-size:13px; line-height:20px; font-weight:500; cursor:pointer; white-space:nowrap; }
+.dsh-wt-pre-session-toggle:hover:not(:disabled) { background:var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 7%, transparent)); }
+.dsh-wt-pre-session-toggle:focus-visible { box-shadow:0 0 0 2px var(--dsw-alias-border-l3, currentColor); }
+.dsh-wt-pre-session-toggle:disabled { color:var(--dsw-alias-label-dimmed, inherit); cursor:default; }
+.dsh-wt-pre-session-toggle[aria-checked="true"] { color:var(--dsw-alias-label-primary, inherit); }
+.dsh-wt-pre-session-check { display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center; box-sizing:border-box; width:14px; height:14px; border:1px solid currentColor; border-radius:3px; font-size:11px; line-height:1; }
 .dsh-wt-pre-session-error { position:absolute; left:0; bottom:calc(100% + 7px); z-index:20; width:max-content; max-width:min(360px, 75vw); padding:7px 9px; border:1px solid color-mix(in srgb, #bd3b3b 35%, transparent); border-radius:8px; background:color-mix(in srgb, Canvas 96%, #bd3b3b 4%); color:#bd3b3b; font-size:11px; font-weight:500; line-height:1.4; white-space:normal; box-shadow:0 8px 24px color-mix(in srgb, black 14%, transparent); }
 
 .dsh-wt-pre-session-note { margin:0; color:color-mix(in srgb, currentColor 62%, transparent); font-size:12px; line-height:1.5; }
