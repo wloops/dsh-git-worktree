@@ -610,6 +610,9 @@ export const clientMessages = {
     "zh": "预览修改",
     "en": "Preview changes"
   },
+  "preparing.local.preview": { "zh": "正在准备本地预览…", "en": "Preparing local preview…" },
+  "withdrawing.local.preview": { "zh": "正在撤回本地预览…", "en": "Withdrawing local preview…" },
+  "saving.reviewed.changes": { "zh": "正在保存本次修改…", "en": "Saving reviewed changes…" },
   "confirm.and.save": {
     "zh": "确认并保存",
     "en": "Confirm and save"
@@ -1311,8 +1314,8 @@ export const clientMessages = {
     "en": "Changes are ready for your preview"
   },
   "previewing.these.changes.save.after.confirmation": {
-    "zh": "正在预览本次修改，确认后即可保存",
-    "en": "Previewing these changes; save after confirmation"
+    "zh": "正在本地预览，尚未保存",
+    "en": "Previewing locally; not saved yet"
   },
   "the.project.has.new.changes.preview.is.waiting": {
     "zh": "当前项目已有新变化，预览等待安全恢复",

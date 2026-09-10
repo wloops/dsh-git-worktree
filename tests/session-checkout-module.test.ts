@@ -998,7 +998,7 @@ describe('SessionCheckoutModule', () => {
     expect(readFileSync(join(context.projectRoot, 'local-note.txt'), 'utf8')).toBe('keep local note\n')
   })
 
-  test('Given a Ready Worktree When the owner withdraws Preview Then Local is restored and the Worktree resumes editing', async () => {
+  test('Given a Preview When the owner explicitly continues editing Then Local is restored and the review becomes working', async () => {
     const context = createContext()
     const target = await context.module.bind('session-1', { kind: 'isolated' })
     const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
@@ -1027,6 +1027,37 @@ describe('SessionCheckoutModule', () => {
     })
     expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
     expect(existsSync(managedRoot)).toBe(true)
+  })
+
+  test('Withdrawing preserves the same review and Worktree bytes; latest revision can preview again and save', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    writeFileSync(join(managedRoot, 'tracked.txt'), 'hello worktree\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'withdraw and retry', validationStatus: 'not_run', tests: [], suggestedCommitMessage: 'test: repeated preview',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const reviewId = ready.delivery.review.reviewId
+    const before = git(context.projectRoot, 'rev-parse', 'HEAD')
+    const preview = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })
+    if (preview.status !== 'previewed') throw new Error('expected preview')
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe('hello worktree\n')
+    const withdrawn = await context.module.operate({ action: 'rollback_preview', sessionId: 'session-1', expectedRevision: preview.target.revision })
+    if (withdrawn.status !== 'preview_rolled_back') throw new Error('expected rollback')
+    expect(withdrawn.target.delivery).toMatchObject({ state: 'ready_for_review', review: { reviewId } })
+    expect(withdrawn.target.revision).toBeGreaterThan(preview.target.revision)
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('base\n')
+    expect(readFileSync(join(managedRoot, 'tracked.txt'), 'utf8')).toBe('hello worktree\n')
+    expect(git(context.projectRoot, 'rev-parse', 'HEAD')).toBe(before)
+    expect(await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: ready.revision })).toMatchObject({ status: 'error', code: 'stale_target' })
+    const again = await context.module.operate({ action: 'preview', sessionId: 'session-1', expectedRevision: withdrawn.target.revision })
+    if (again.status !== 'previewed') throw new Error('expected second preview')
+    expect(again.target.delivery).toMatchObject({ state: 'preview_active', review: { reviewId } })
+    const saved = await context.module.operate({ action: 'finalize_preview', sessionId: 'session-1', expectedRevision: again.target.revision, commitMessage: 'test: repeated preview', retention: 'retain_manual' })
+    expect(saved).toMatchObject({ status: 'finished', target: { delivery: { state: 'retained' } } })
+    expect(readFileSync(join(context.projectRoot, 'tracked.txt'), 'utf8')).toBe('hello worktree\n')
+    expect(git(context.projectRoot, 'rev-list', '--count', `${before}..HEAD`)).toBe('1')
   })
 
   test('Given a Local Preview is accepted When the owner finalizes Then only the task becomes one retained Commit', async () => {

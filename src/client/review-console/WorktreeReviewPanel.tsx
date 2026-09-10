@@ -22,6 +22,7 @@ export interface WorktreeReviewIdentity {
 
 export interface WorktreeReviewPanelProps {
   review: WorktreeReviewEvidence
+  showActions?: boolean
   identity?: WorktreeReviewIdentity
   adapter?: WorktreeConsoleAdapter | null
   services?: WorktreeClientServices
@@ -31,7 +32,7 @@ export interface WorktreeReviewPanelProps {
   unavailableMessage?: string
 }
 
-function validationLabel(status: WorktreeReviewEvidence['validationStatus'], t: ClientTranslator = defaultClientTranslator): string {
+export function validationLabel(status: WorktreeReviewEvidence['validationStatus'], t: ClientTranslator = defaultClientTranslator): string {
   if (status === 'passed') return t("automated.validation.passed")
   if (status === 'failed') return t("automated.validation.failed.review.can.continue")
   if (status === 'partial') return t("validation.partially.passed")
@@ -59,6 +60,7 @@ function reviewIsStale(
 }
 
 export function WorktreeReviewPanel({
+  showActions = true,
   review,
   adapter,
   services,
@@ -207,7 +209,7 @@ export function WorktreeReviewPanel({
       ) : null}
 
       {invalidReason ? <div className="dsh-wt-error" role="alert">{invalidReason}</div> : null}
-      <ReviewActions
+      {showActions ? <ReviewActions
         review={review}
         adapter={adapter}
         services={services}
@@ -218,7 +220,7 @@ export function WorktreeReviewPanel({
         isActive={() => mounted.current && activeActionScope.current === actionScope}
         onStale={handleStale}
         onTargetChange={handleTargetChange}
-      />
+      /> : null}
     </section>
   )
 }

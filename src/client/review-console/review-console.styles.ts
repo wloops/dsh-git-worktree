@@ -81,13 +81,13 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
 .dsh-wt-delivery-proof header span { color:var(--wt-muted); }
 .dsh-wt-delivery-proof-compact { display:block; margin:1px 0 0; padding:0; border:0; background:transparent; color:var(--wt-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-wt-action-status { min-height:1.35em; margin-top:7px; color:var(--wt-muted); font-size:11px; }
-.dsh-wt-review-dock { box-sizing:border-box; display:flex; flex:none; align-items:center; gap:9px; width:calc(100% - 2 * var(--dsh-composer-side-clearance, 16px) - 2 * var(--dsh-composer-dock-inset, 0px)); max-width:calc(var(--dsh-composer-card-max-width, 780px) - 2 * var(--dsh-composer-dock-inset, 0px)); margin:0 auto 8px; padding:7px 9px; border:1px solid color-mix(in srgb, #3275db 22%, transparent); border-radius:9px; background:color-mix(in srgb, #3275db 6%, transparent); color:var(--wt-ink); font-size:12px; }
+.dsh-wt-review-dock { box-sizing:border-box; display:flex; flex:none; align-items:center; flex-wrap:wrap; gap:9px; width:calc(100% - 2 * var(--dsh-composer-side-clearance, 16px) - 2 * var(--dsh-composer-dock-inset, 0px)); max-width:calc(var(--dsh-composer-card-max-width, 780px) - 2 * var(--dsh-composer-dock-inset, 0px)); margin:0 auto 8px; padding:7px 9px; border:1px solid color-mix(in srgb, #3275db 22%, transparent); border-radius:9px; background:color-mix(in srgb, #3275db 6%, transparent); color:var(--wt-ink); font-size:12px; }
 .dsh-wt-review-dock-copy { display:grid; min-width:0; flex:1; gap:1px; }
-.dsh-wt-review-dock-copy strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dsh-wt-review-dock-copy strong { overflow-wrap:anywhere; }
 .dsh-wt-review-dock-copy span { color:var(--wt-muted); font-size:10px; }
-.dsh-wt-review-dock .dsh-wt-review-actions { min-width:0; padding:0; }
+.dsh-wt-review-dock .dsh-wt-review-actions { min-width:0; max-width:100%; padding:0; }
+.dsh-wt-action-status:empty { min-height:0; margin-top:0; }
 .dsh-wt-review-dock .dsh-wt-actions { justify-content:flex-end; }
-.dsh-wt-review-dock .dsh-wt-action-status,
 .dsh-wt-review-dock .dsh-wt-preflight-facts,
 .dsh-wt-review-dock .dsh-wt-conflict-list,
 .dsh-wt-review-dock .dsh-wt-delivery-proof:not(.dsh-wt-delivery-proof-compact) { display:none; }
@@ -107,7 +107,6 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
   .dsh-wt-review-actions { margin-left:0; padding-left:14px; }
   .dsh-wt-review-dock { flex-wrap:wrap; width:calc(100% - 2 * var(--dsh-composer-side-clearance, 12px) - 2 * var(--dsh-composer-dock-inset, 0px)); }
   .dsh-wt-review-dock-copy { flex-basis:calc(100% - 28px); }
-  .dsh-wt-review-dock-copy span { display:none; }
   .dsh-wt-review-dock .dsh-wt-review-actions { margin-left:auto; }
 }
 `

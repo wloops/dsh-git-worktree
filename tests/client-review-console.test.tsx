@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { WorktreeReviewStatus } from '../src/client/target-console/WorktreeReviewStatus.js'
 
 import { ClientI18nProvider } from '../src/client/i18n.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -414,7 +415,7 @@ describe('Domi-style Worktree Review', () => {
     fireEvent.click(screen.getByLabelText('更多交付操作'))
     fireEvent.click(screen.getByRole('menuitem', { name: '撤回本次预览' }))
 
-    await waitFor(() => expect(fixture.adapter.rollbackPreview).toHaveBeenCalledWith({ ...identity(8), resumeRevision: true }))
+    await waitFor(() => expect(fixture.adapter.rollbackPreview).toHaveBeenCalledWith({ ...identity(8), resumeRevision: false }))
   })
 
   test('Detached Preview 只按 Host proof 显示安全操作，并在点击撤回前强制重检', async () => {
@@ -617,34 +618,19 @@ describe('Domi-style Worktree Review', () => {
     fixture.adapter.current = vi.fn(async () => ({ ok: true as const, value: { target: current } }))
     render(loggedReviewRow(fixture.adapter))
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '预览修改' })).toBeTruthy())
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('button', { name: '预览修改' })).toBeNull()
     current = preview
     window.dispatchEvent(new CustomEvent(WORKTREE_REVIEW_REFRESH_EVENT, { detail: { sessionId: 'target-session' } }))
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '确认并保存' })).toBeTruthy())
-    expect(fixture.adapter.current).toHaveBeenCalledTimes(2)
-  })
-
-  test('logged ToolView 在 Remote 可用时可连续 Preview 再按最新 revision 提交', async () => {
-    const fixture = createWorktreeConsoleAdapterFixture()
-    fixture.adapter.current = vi.fn(async () => ({ ok: true, value: { target: fixture.target } }))
-    fixture.adapter.finalizePreview = vi.fn(fixture.adapter.finalizePreview)
-    render(loggedReviewRow(fixture.adapter))
-    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'target-session' }))
-    expect((screen.getByRole('button', { name: '预览修改' }) as HTMLButtonElement).disabled).toBe(false)
-
-    fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '确认并保存' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '确认并保存' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认交付并清理' }))
-    await waitFor(() => expect(fixture.adapter.finalizePreview).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 8 })))
-    expect(screen.queryByRole('button', { name: 'Show diff' })).toBeNull()
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText('验收结果已过期，请刷新')).toBeNull()
+    expect(screen.queryByRole('button', { name: '确认并保存' })).toBeNull()
   })
 
   test('logged ToolView 在 live Console 不可用时仍可回放紧凑证据', () => {
     render(loggedReviewRow())
     expect(screen.getByText('Review summary')).toBeTruthy()
-    expect(screen.getByText(/连接后即可执行验收操作/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: '预览修改' })).toBeNull()
   })
 })
@@ -686,4 +672,22 @@ describe('English review dialogs and live locale changes', () => {
     expect(screen.getByText('已保存第 1 个 Worktree 阶段并继续修改；阶段尚未发布到 Local。')).toBeTruthy()
     expect(fixture.adapter.checkpoint).toHaveBeenCalledTimes(1)
   })
+})
+
+
+test('logged result card and dock keep one live review through withdraw, refresh and save', async () => {
+  const fixture = createWorktreeConsoleAdapterFixture(true)
+  render(<>{loggedReviewRow(fixture.adapter)}<WorktreeReviewStatus session={{ sessionId: 'target-session' }} adapter={fixture.adapter} services={clientServices()} /></>)
+  fireEvent.click(await screen.findByRole('button', { name: '预览修改' }))
+  await screen.findByRole('button', { name: '确认并保存' })
+  fireEvent.click(screen.getByLabelText('更多交付操作'))
+  fireEvent.click(screen.getByRole('menuitem', { name: '撤回本次预览' }))
+  const again = await screen.findByRole('button', { name: '预览修改' })
+  await waitFor(() => expect(again.hasAttribute('disabled')).toBe(false))
+  expect(screen.queryByText('验收结果已过期，请刷新')).toBeNull()
+  fireEvent.click(again)
+  fireEvent.click(await screen.findByRole('button', { name: '确认并保存' }))
+  fireEvent.click(screen.getByRole('button', { name: '确认交付并清理' }))
+  await waitFor(() => expect(fixture.calls).toContainEqual({ method: 'finalizePreview', request: expect.objectContaining({ expectedReviewId: 'review-1', expectedRevision: 16 }) }))
+  await waitFor(() => expect(document.querySelector('.dsh-wt-review-dock')).toBeNull())
 })

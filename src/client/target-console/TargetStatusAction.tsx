@@ -43,7 +43,13 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
   const [menuOpen, setMenuOpen] = useState(false)
   const [managerOpen, setManagerOpen] = useState(false)
   const [cleanupConfirmOpen, setCleanupConfirmOpen] = useState(false)
-  const [pendingAction, setPendingAction] = useState<'discard' | 'retry_cleanup' | null>(null)
+  const [pendingAction, setPendingAction] = useState<'discard' | 'retry_cleanup' | 'begin_next_iteration' | null>(null)
+  const actionScope = useRef(0)
+  const activeSession = useRef(sessionId)
+  if (activeSession.current !== sessionId) {
+    activeSession.current = sessionId
+    actionScope.current += 1
+  }
   const mounted = useRef(true)
   const request = useRef(0)
 
@@ -147,6 +153,30 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
     }
   }
 
+  const beginNextIteration = async (): Promise<void> => {
+    if (!target?.checkoutId || !target.capabilities.beginNextIteration || pendingAction !== null) return
+    const scope = actionScope.current
+    const active = () => mounted.current && scope === actionScope.current
+    setMenuOpen(false)
+    setPendingAction('begin_next_iteration')
+    setError(null)
+    try {
+      const outcome = await adapter.beginNextIteration({ sessionId, checkoutId: target.checkoutId, expectedRevision: target.revision })
+      if (!active()) return
+      if (!outcome.ok) {
+        setError(outcome.error.message)
+        if (outcome.error.code === 'stale_target') void refresh()
+        return
+      }
+      setTarget(current => current ? { ...current, ...outcome.value.target } : current)
+      requestWorktreeReviewRefresh(sessionId)
+    } catch (reason) {
+      if (active()) setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      if (active()) setPendingAction(null)
+    }
+  }
+
   const discard = async (): Promise<void> => {
     if (!target?.checkoutId || !target.capabilities.discard || pendingAction !== null) return
     setCleanupConfirmOpen(false)
@@ -198,6 +228,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
     ...(target && target.sourceSessionId !== sessionId
       ? [{ id: 'source', label: t("return.to.source.session") } satisfies MenuEntry]
       : []),
+    ...(target?.capabilities.beginNextIteration ? [{ id: 'begin_next_iteration', label: pendingAction === 'begin_next_iteration' ? t("creating") : t("start.next.iteration"), disabled: pendingAction !== null } satisfies MenuEntry] : []),
     ...(target ? [{ id: 'manager', label: t("manage.linked.worktrees") } satisfies MenuEntry] : []),
   ]
   const footer: MenuEntry[] = target?.capabilities.retryCleanup
@@ -219,6 +250,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
         onSelect={(id) => {
           if (id === 'reveal') reveal()
           if (id === 'source') openSource()
+          if (id === 'begin_next_iteration') void beginNextIteration()
           if (id === 'manager') { setMenuOpen(false); setManagerOpen(true) }
           if (id === 'retry_cleanup') void retryCleanup()
           if (id === 'discard') { setMenuOpen(false); setCleanupConfirmOpen(true) }

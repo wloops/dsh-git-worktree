@@ -1,8 +1,8 @@
+import { validationLabel } from '../review-console/WorktreeReviewPanel.js'
 import { useClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails, WorktreeConsoleTargetSummary } from '../../console-contract.js'
 import type { WorktreeClientServices } from '../actions.js'
-import { DeliveryProof } from '../review-console/DeliveryProof.js'
 import { ReviewActions } from '../review-console/ReviewActions.js'
 import {
   restoreWorktreeRecovery,
@@ -25,7 +25,6 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
   const sessionId = session.sessionId
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [startingIteration, setStartingIteration] = useState(false)
   const recovery = useWorktreeRecoverySnapshot(sessionId)
   const mounted = useRef(true)
   const requestToken = useRef(0)
@@ -44,7 +43,8 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
       const outcome = await adapter.current({ sessionId })
       if (!mounted.current || currentSessionId.current !== sessionId || token !== requestToken.current) return
       if (outcome.ok) {
-        setTarget(outcome.value.target)
+        setTarget(current => current?.checkoutId === outcome.value.target.checkoutId && current.revision > outcome.value.target.revision
+          ? current : outcome.value.target)
         setError(null)
       } else {
         setError(outcome.error.message)
@@ -104,54 +104,6 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
     )
   }
 
-  if (target?.state === 'delivered' && target.checkoutId !== null && target.capabilities.beginNextIteration) {
-    const beginNextIteration = async (): Promise<void> => {
-      if (startingIteration) return
-      const generation = sessionGeneration.current
-      setStartingIteration(true)
-      setError(null)
-      try {
-        const outcome = await adapter.beginNextIteration({
-          sessionId,
-          checkoutId: target.checkoutId!,
-          expectedRevision: target.revision,
-        })
-        if (!mounted.current || currentSessionId.current !== sessionId || generation !== sessionGeneration.current) return
-        if (!outcome.ok) {
-          setError(outcome.error.message)
-          if (outcome.error.code === 'stale_target') void refresh()
-          return
-        }
-        setTarget(current => current ? { ...current, ...outcome.value.target } : current)
-      } catch (reason) {
-        if (mounted.current && currentSessionId.current === sessionId && generation === sessionGeneration.current) {
-          setError(reason instanceof Error ? reason.message : String(reason))
-        }
-      } finally {
-        if (mounted.current && currentSessionId.current === sessionId && generation === sessionGeneration.current) setStartingIteration(false)
-      }
-    }
-    return (
-      <section className="dsh-wt-review-dock" aria-label={t("next.worktree.iteration")} data-review-state="delivered">
-        <span className="dsh-wt-review-dock-icon" aria-hidden>{t("symbol.4")}</span>
-        <span className="dsh-wt-review-dock-copy">
-          <strong>{t("this.iteration.is.delivered.continue.the.next.iteration")}</strong>
-          <span>{t("safely.recreate.the.cleaned.worktree.path.while.preserving")}</span>
-          <DeliveryProof target={target} compact />
-        </span>
-        {error ? <span className="dsh-wt-error">{error}</span> : null}
-        <button
-          type="button"
-          className="dsh-wt-button dsh-wt-primary"
-          disabled={startingIteration}
-          onClick={() => { void beginNextIteration() }}
-        >
-          {startingIteration ? t("creating") : t("start.next.iteration")}
-        </button>
-      </section>
-    )
-  }
-
   if (
     !target
     || !target.review
@@ -168,7 +120,8 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
   const applyTarget = (nextTarget: WorktreeConsoleTargetSummary): void => {
-    setTarget(current => current ? { ...current, ...nextTarget } : current)
+    setTarget(current => current && current.checkoutId === nextTarget.checkoutId && current.revision <= nextTarget.revision
+      ? { ...current, ...nextTarget } : current)
   }
 
   const detachedFromHeadDrift = target.state === 'preview_detached'
@@ -188,17 +141,23 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
     ? detachedFromHeadDrift
       ? t("same.branch.fast.forward.can.be.safely.retried")
       : t("automatic.rollback.will.recheck.conflicts.no.writes.if")
-    : t("files.5", { p0: review.changedFiles.length, p1: review.validationStatus === 'passed' ? t("automated.validation.passed") : t("please.check.validation.results") })
+    : t("files.5", { p0: review.changedFiles.length, p1: validationLabel(review.validationStatus, t) })
 
   return (
     <section className="dsh-wt-review-dock" aria-label={t("worktree.ready.for.review")} data-review-state={target.state}>
       <span className="dsh-wt-review-dock-icon" aria-hidden>{target.state === 'preview_detached' || target.state === 'recovery_required' ? '!' : '✓'}</span>
-      <span className="dsh-wt-review-dock-copy">
-        <strong>{label}</strong>
-        <span>{detail}</span>
-      </span>
       {error ? <span className="dsh-wt-error">{error}</span> : null}
       <ReviewActions
+        key={`${sessionId}:${target.checkoutId}`}
+        renderStatus={operation => (
+          <span className="dsh-wt-review-dock-copy" role="status" aria-live="polite" aria-atomic="true">
+            <strong>{operation === 'preview' ? t("preparing.local.preview")
+              : operation === 'rollback' ? t("withdrawing.local.preview")
+                : operation === 'finish' || operation === 'finalize_preview' ? t("saving.reviewed.changes")
+                  : operation ? t("processing.worktree.please.wait") : label}</strong>
+            <span>{detail}</span>
+          </span>
+        )}
         review={review}
         adapter={adapter}
         services={services}

@@ -101,9 +101,9 @@ export interface WorktreeConsoleAdapterFixture {
 }
 
 /** Shared deterministic fake used by the three parallel Worktree Console tracks. */
-export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFixture {
+export function createWorktreeConsoleAdapterFixture(stateful = false): WorktreeConsoleAdapterFixture {
   const calls: WorktreeConsoleFixtureCall[] = []
-  const target = readyTarget()
+  let target = readyTarget()
   const record = <TRequest>(method: WorktreeConsoleFixtureMethod, request: TRequest): void => {
     calls.push({ method, request })
   }
@@ -338,7 +338,7 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
           capabilities: { ...target.capabilities, preflight: false, preview: false, resumeRevision: false, rollbackPreview: false, finalize: false, finalizePreview: false },
         }, changedFiles: ['src/index.ts'] })
       }
-      return outcome({ target: { ...target, revision: target.revision + 1 }, changedFiles: ['src/index.ts'] })
+      return outcome({ target: { ...target, state: 'ready_for_review', revision: target.revision + 1, capabilities: { ...readyTarget().capabilities } }, changedFiles: ['src/index.ts'] })
     },
     async discard(request: WorktreeConsoleDiscardRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleMutationResponse>> {
       record('discard', request)
@@ -385,5 +385,20 @@ export function createWorktreeConsoleAdapterFixture(): WorktreeConsoleAdapterFix
     },
   }
 
-  return { adapter, calls, target }
+  if (stateful) {
+    for (const method of ['preview', 'rollbackPreview', 'resumeRevision', 'finalizePreview'] as const) {
+      const operation = adapter[method].bind(adapter)
+      Object.assign(adapter, { [method]: async (request: Parameters<typeof operation>[0]) => {
+        if (request.expectedRevision !== target.revision) return { ok: false, error: { code: 'stale_target', message: 'Revision changed' } }
+        const result = await operation(request as never)
+        if (result.ok) {
+          // Host journaling and completion each advance CAS; callers must use returned identity.
+          result.value.target.revision = target.revision + 3
+          target = { ...target, ...result.value.target, review: result.value.target.review }
+        }
+        return result
+      } })
+    }
+  }
+  return { adapter, calls, get target() { return target } }
 }

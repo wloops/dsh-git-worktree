@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -37,6 +38,7 @@ interface ReviewActionsProps {
   target?: WorktreeConsoleTargetSummary
   disabled: boolean
   unavailableMessage: string
+  renderStatus?: (operation: Mutation | null) => ReactNode
   focusReview?: () => void
   isActive?: () => boolean
   onStale: (error: WorktreeConsoleError) => void
@@ -76,6 +78,7 @@ export function ReviewActions({
   disabled,
   unavailableMessage,
   focusReview,
+  renderStatus,
   isActive = () => true,
   onStale,
   onTargetChange,
@@ -225,7 +228,10 @@ export function ReviewActions({
       return
     }
     setError(() => (t: ClientTranslator): WorktreeConsoleError => (nextError))
-    if (nextError.code === 'stale_target') onStale(nextError)
+    if (nextError.code === 'stale_target') {
+      setMessage(() => (t: ClientTranslator) => t("state.changed.before.writing.the.operation.stopped.recover"))
+      onStale(nextError)
+    }
     if (nextError.code === 'stale_local' || nextError.code === 'stale_isolated') {
       setMessage(() => (t: ClientTranslator) => t("state.changed.before.writing.the.operation.stopped.recover"))
       void refreshPreflight()
@@ -463,7 +469,7 @@ export function ReviewActions({
       return
     }
     applyTarget(outcome.value.target)
-    setMessage(() => (t: ClientTranslator) => t("synced.as.a.reversible.local.preview.review.the"))
+    setMessage(renderStatus ? null : () => (t: ClientTranslator) => t("synced.as.a.reversible.local.preview.review.the"))
     finish()
   }
 
@@ -574,11 +580,20 @@ export function ReviewActions({
       }
       freshProof = inspected.preflight.proof
     }
-    const outcome = await adapter.rollbackPreview({
-      ...identity,
-      resumeRevision,
-      ...(freshProof ? { recoveryProof: freshProof } : {}),
-    })
+    let outcome
+    try {
+      outcome = await adapter.rollbackPreview({
+        ...identity,
+        resumeRevision,
+        ...(freshProof ? { recoveryProof: freshProof } : {}),
+      })
+    } catch (reason) {
+      if (isActive()) {
+        finishError({ code: 'transport_unavailable', message: reason instanceof Error ? reason.message : String(reason) })
+        requestWorktreeReviewRefresh(identity.sessionId)
+      } else finish()
+      return
+    }
     if (!isActive()) {
       finish()
       return
@@ -588,9 +603,11 @@ export function ReviewActions({
       return
     }
     applyTarget(outcome.value.target)
-    setMessage(() => (t: ClientTranslator) => outcome.value.target.state === 'preview_detached'
-      ? t("recovery.conditions.changed.before.writing.preview.evidence.and")
-      : resumeRevision ? t("local.preview.rolled.back.you.can.continue.editing") : t("local.preview.rolled.back.the.review.can.be"))
+    if (!renderStatus || outcome.value.target.state === 'preview_detached') {
+      setMessage(() => (t: ClientTranslator) => outcome.value.target.state === 'preview_detached'
+        ? t("recovery.conditions.changed.before.writing.preview.evidence.and")
+        : resumeRevision ? t("local.preview.rolled.back.you.can.continue.editing") : t("local.preview.rolled.back.the.review.can.be"))
+    }
     finish()
   }
 
@@ -905,7 +922,7 @@ export function ReviewActions({
       {t("confirm.and.save")} </button>
   ) : previewRecovery ? (
     rollbackRecoverySafe ? (
-      <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview(true) }}>
+      <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.rollbackPreview} onClick={() => { void rollbackPreview() }}>
         {submitting === 'rollback' ? t("processing") : t("recover.and.roll.back.preview")}
       </button>
     ) : (
@@ -920,6 +937,8 @@ export function ReviewActions({
   ) : null
 
   return (
+    <>
+    {renderStatus?.(submitting)}
     <section className="dsh-wt-review-actions" aria-label={t("review.actions")}>
       {!live ? <p className="dsh-wt-status">{unavailableMessage}</p> : null}
       {terminal ? (
@@ -962,9 +981,15 @@ export function ReviewActions({
                   closeMoreMenu()
                 }}>{t("save.stage.and.continue")}</button>
               ) : null}
-              {previewActive || rollbackRecoverySafe ? (
+              {previewActive ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
                   void rollbackPreview(true)
+                  closeMoreMenu()
+                }}>{t("continue.editing")}</button>
+              ) : null}
+              {previewActive || rollbackRecoverySafe ? (
+                <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
+                  void rollbackPreview()
                   closeMoreMenu()
                 }}>{previewActive ? t("roll.back.this.preview") : t("retry.rollback")}</button>
               ) : null}
@@ -1149,12 +1174,13 @@ export function ReviewActions({
       ) : null}
       {target && (target.state === 'cleanup_pending' || terminal) ? <DeliveryProof target={target} /> : null}
       <div className="dsh-wt-action-status" aria-live="polite">
-        {submitting ? t("processing.worktree.please.wait") : message?.(t)}
+        {submitting ? (renderStatus ? null : t("processing.worktree.please.wait")) : message?.(t)}
       </div>
       {error && !isStale(error) ? (
         <div className="dsh-wt-error" role="alert">
           {t("error.detail", { message: error.message, category: t(`error.category.${worktreeConsoleErrorMeta(error.code).category}`), recovery: t(`error.recovery.${worktreeConsoleErrorMeta(error.code).recovery}`) })} </div>
       ) : null}
     </section>
+    </>
   )
 }

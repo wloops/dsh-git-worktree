@@ -109,6 +109,7 @@ export function WorktreeReviewRow({ block, sessionId, adapter, services }: Props
     <section className="dsh-wt-card" data-tool="worktree_ready_for_review" data-state={state} aria-label={t("worktree.ready.for.review")}>
       {review ? (
         <WorktreeReviewPanel
+          showActions={false}
           review={review}
           adapter={adapter}
           services={services}
