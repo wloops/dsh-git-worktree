@@ -4,15 +4,38 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-11
+
+`0.9.0` 完善新会话创建、验收与项目导航体验：空仓库可在明确确认后安全建立首次提交；Worktree 入口恢复为与 DSH 工具栏协调的原生紧凑开关；验收区增加只读详情弹窗，并修复撤回预览、历史 Worktree 分组及慢请求轮询的状态问题。
+
+### Added
+
+- 新会话目录入口支持无提交 Git 仓库：Host 先执行只读预检，再经用户明确确认创建空首次提交；不纳入用户文件或暂存内容，不改写 Git 身份，并在状态变化或失败后安全拒绝、允许重试。
+- 验收条新增 Lucide 图标化只读详情弹窗，集中展示文件列表、验证记录和版本信息；操作仍留在验收条，历史卡保持结果导向的精简展示。
+- Host 为历史 Managed Worktree 提供不含路径的导航归属投影，侧边栏可将过滤后的历史分组和未归组会话安全合并回原项目，同时保留歧义项与普通成员。
+
+### Changed
+
+- 新建 Session 的目录入口改为 Harness 原生紧凑菜单与 Worktree 开关，跟随真实状态恢复，并与 DSH 工具栏尺寸、主题反馈和图标体系保持一致。
+- cleanup 后的“开始下一轮修改”移至 owner Session 顶部 Worktree 菜单；验收条聚焦当前摘要、文件数、验证状态与交付操作。
+- 统一 Worktree 管理、Preview、详情和更多操作的 Lucide 图标与间距，减少重复标题、常驻外框和开发辅助文案。
+
 ### Fixed
 
-- 缓解 #6 的后台状态查询开销：会话状态按钮与验收栏共享展示查询，慢请求完成后再调度下一轮，主动刷新合并且丢弃失效结果，避免重复轮询和未完成请求堆积。
-- 展示查询按 Client adapter、会话及语言隔离；卸载停止调度，重挂载不消费旧请求结果。创建、交付和清理的实时安全校验保持不变。
+- 撤回 Local Preview 后继续保留同一验收身份，避免旧异步结果覆盖；区分“撤回预览”和“继续修改”，并展示真实文件数、验证状态和 revision 防回退结果。
+- 缓解 #6 的后台状态查询开销：状态按钮与验收栏共享按 Client adapter、会话及语言隔离的展示查询；慢请求完成后再调度，主动刷新合并并丢弃失效结果，避免重复轮询和未完成请求堆积。
+- 展示查询在卸载时停止调度，重挂载不消费旧请求结果；创建、交付和清理的实时安全校验保持独立且不降级。
 - 修正发布门禁的 Remote 方法清单，补入已存在且已有回归覆盖的 `preflightCreate` 与 `createWithInitialCommit`；不改变运行时协议。
 
 ### Documentation
 
 - 增加新旧 Harness 兼容矩阵，区分开发基线、peer 声明、用户反馈、部分实测与未验证项；记录 `0.8.0` 对 `0.1.5-rc.1` 的隔离验证及端到端限制，不强制升级 Host，不扩大依赖声明。
+- 清理过时 UI Skill 和并行开发交接稿，按当前实现更新 UI 维护指南、Console 模块职责与验证入口。
+
+### Compatibility
+
+- 开发与可重复构建基线仍为 DeepSeek Harness `0.1.2-rc.1`；`0.1.5-rc.1` 只有用户反馈和部分隔离验证，不扩大 peer 声明，也不要求现有用户升级 Host。
+- 新增空仓库首次提交能力和历史导航投影，不迁移既有 Worktree registry、Review、Recovery 或 Session 数据。
 
 ## [0.8.0] - 2026-09-09
 
@@ -309,6 +332,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.9.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.5...v0.8.0
 [0.7.5]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.3...v0.7.4

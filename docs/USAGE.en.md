@@ -170,7 +170,7 @@ dsh plugin --profile web add dsh-git-worktree
 ### Git tag install
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.8.0
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.9.0
 ```
 
 If pnpm 10+ blocks `prepare` for a Git dependency, add this to the profile's `pnpm-workspace.yaml`:
@@ -189,13 +189,13 @@ When the web UI shows **Failed to load plugins**, inspect the detailed error and
 - `require("@deepseek-ai/dsh-client-runtime/client") missed the module table` means the plugin is still `0.7.2` or older, while Harness `0.1.2-rc.1` and later removed `dsh-client-runtime`.
 - `dsh-git-worktree` waiting for `conversation` while the official Conversation/Sidebar plugins wait for `uiWorkspace` identifies the `0.7.3` Client activation cycle.
 
-The activation-cycle fix starts in `0.7.4`. Select a plugin/Host combination from the [compatibility matrix](COMPATIBILITY.md#english), rather than requiring the newest DSH. The example uses the current `0.8.0`; restart Harness after installation:
+The activation-cycle fix starts in `0.7.4`. Select a plugin/Host combination from the [compatibility matrix](COMPATIBILITY.md#english), rather than requiring the newest DSH. The example uses the current `0.9.0`; restart Harness after installation:
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.8.0
+dsh plugin --profile web add dsh-git-worktree@0.9.0
 ```
 
-Confirm the installed version with `dsh plugin --profile web list` before restarting Harness. Note that pnpm's supply-chain policy delays freshly published releases: for a few days after publishing, `add` without a version may still resolve to an older build. To install immediately, add the exact version (for example `- dsh-git-worktree@0.8.0`) to the existing `minimumReleaseAgeExclude` list in the profile's `pnpm-workspace.yaml` and reinstall.
+Confirm the installed version with `dsh plugin --profile web list` before restarting Harness. Note that pnpm's supply-chain policy delays freshly published releases: for a few days after publishing, `add` without a version may still resolve to an older build. To install immediately, add the exact version (for example `- dsh-git-worktree@0.9.0`) to the existing `minimumReleaseAgeExclude` list in the profile's `pnpm-workspace.yaml` and reinstall.
 
 If you installed from a Git tag, install the latest tag with the Git tag command above instead. If the version is confirmed correct but the error persists, pnpm blocked the `prepare` build during the previous install. Add `allowBuilds` as shown above and reinstall.
 
@@ -225,6 +225,8 @@ To keep using the plugin, install a version containing this fix. Recovery does n
 
 Common causes include an inaccessible project root, Git failure, unknown content in the target directory, or Session/Workspace identity mismatch. The plugin never deletes a directory whose ownership it cannot prove.
 
+If the Git repository has no commits yet, the Worktree toggle first shows a preflight confirmation. On confirmation the plugin creates an empty initial commit only: working-tree files and staged content are excluded, and Git identity is never configured or rewritten automatically. If repository state changes while confirmation is open, creation stops conservatively and can be retried after inspection.
+
 ### Preview changes is unavailable
 
 Read the Preflight message first. The cause may be a conflict, stale Review, busy acceptance slot, Local branch change, or modified Worktree content. Refresh and follow the action offered by the UI.
@@ -243,9 +245,11 @@ Read the Preflight message first. The cause may be a conflict, stale Review, bus
 
    ![Ready for Review](screenshots/02-ready-for-review.png)
 
+   Use the review bar for the summary, changed-file count, and validation status. **View details** opens a read-only dialog with the file list, validation records, and version information; delivery actions remain in the review bar.
+
 4. Inspect the result in Local Preview. Choose **Confirm and save**, or use the More menu to **Withdraw this preview**.
 5. On save, clean up immediately or retain the runtime environment when needed.
-6. After cleanup, choose **Start next iteration** in the same owner Session.
+6. After cleanup, the bottom review bar closes; choose **Start next iteration** from the Worktree menu at the top of the same owner Session.
 
 > UI copy follows the installed version. This guide no longer embeds screenshots with the retired “Sync to Local review / Accept and commit” wording.
 
