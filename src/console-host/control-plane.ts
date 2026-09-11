@@ -490,15 +490,27 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
 
   return {
     sidebarTopology: () => outcome(async () => {
+      const records = Object.values(options.registry.read().managedCheckouts)
+      const memberships = await options.lookup.getSidebarMemberships?.(records.map(record => record.managedRoot))
+      const membershipByRoot = new Map(memberships?.map(item => [item.managedRoot, item]))
       const projects = new Map<string, {
         project: { id: string; name: string }
         tasksByOwner: Map<string, WorktreeSidebarTopologyResponse['projects'][number]['tasks'][number]>
+        workspaceIds: Set<string>
+        sessionIds: Set<string>
       }>()
-      for (const record of Object.values(options.registry.read().managedCheckouts)) {
+      for (const record of records) {
         const project = projects.get(record.projectId) ?? {
           project: { id: record.projectId, name: record.projectName },
           tasksByOwner: new Map(),
+          workspaceIds: new Set<string>(),
+          sessionIds: new Set<string>(),
         }
+        // Preserve directory identities from all iterations, not just the
+        // newest owner's badge. Cleanup may already have removed its members.
+        const membership = membershipByRoot.get(record.managedRoot)
+        for (const id of membership?.workspaceIds ?? []) project.workspaceIds.add(id)
+        for (const id of membership?.sessionIds ?? []) project.sessionIds.add(id)
         const task = {
           checkoutId: record.checkoutId,
           ownerSessionId: record.ownerSessionId,
@@ -522,6 +534,12 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
         projects: [...projects.values()].map(project => ({
           project: project.project,
           tasks: [...project.tasksByOwner.values()],
+          ...(memberships === undefined ? {} : {
+            memberships: {
+              workspaceIds: [...project.workspaceIds],
+              sessionIds: [...project.sessionIds],
+            },
+          }),
         })),
       }
     }),

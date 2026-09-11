@@ -92,6 +92,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
       value: {
         projects: [{
           project: { id: 'project-1', name: 'Project' },
+          memberships: { workspaceIds: ['cleaned'], sessionIds: ['cold'] },
           tasks: [{
             checkoutId: 'checkout-1', ownerSessionId: 'owner', sourceSessionId: 'source',
             iteration: 1, revision: 2, phase: 'ready' as const, state: 'working' as const,

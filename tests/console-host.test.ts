@@ -265,6 +265,34 @@ describe('Worktree Console Host control plane', () => {
     })
   })
 
+  it('carries directory memberships from every iteration without exposing paths', async () => {
+    const old = readyRecord()
+    old.checkoutId = 'old'
+    old.managedRoot = '/old-root'
+    old.delivery = { state: 'delivered', iteration: 1, commitOid: A, deliveredAt: 10 }
+    const current = readyRecord()
+    current.managedRoot = '/new-root'
+    if (current.delivery.state !== 'ready_for_review') throw new Error('fixture')
+    current.delivery.review.iteration = 2
+    const lookup = {
+      getProject: vi.fn(), getSession: vi.fn(),
+      getSidebarMemberships: vi.fn(async () => [
+        { managedRoot: '/old-root', workspaceIds: ['empty-old'], sessionIds: ['cold'] },
+        { managedRoot: '/new-root', workspaceIds: ['current'], sessionIds: ['target-session'] },
+      ]),
+    }
+    const { control } = plane(current, {
+      lookup,
+      registry: { read: () => ({ version: 2, revision: 1, sessionBindings: {}, managedCheckouts: { old, current } }), write: vi.fn() },
+    })
+    const result = await control.sidebarTopology()
+    expect(lookup.getSidebarMemberships).toHaveBeenCalledWith(['/old-root', '/new-root'])
+    expect(result.ok && result.value.projects[0]?.memberships).toEqual({ workspaceIds: ['empty-old', 'current'], sessionIds: ['cold', 'target-session'] })
+    expect(JSON.stringify(result)).not.toContain('/old-root')
+    expect(JSON.stringify(result)).not.toContain('/new-root')
+    expect(result.ok && result.value.projects[0]?.tasks).toHaveLength(1)
+  })
+
   it('projects a cleaned delivered owner even though its immutable Workspace path is temporarily absent', async () => {
     const delivered = readyRecord()
     delivered.phase = 'discarded'

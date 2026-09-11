@@ -187,6 +187,35 @@ describe('Managed Workspace sidebar', () => {
     expect(alert).not.toHaveBeenCalled()
   })
 
+  test('reprojects an archived owner missing from the list and restores it on unarchive', async () => {
+    const props = browserProps()
+    const snapshot = state()
+    const remote = adapter()
+    const archivedWorkspaces = { ...snapshot.workspaces, archivedSessionIds: [ownerSession] }
+    const missingOwner = {
+      ...snapshot.sessions,
+      ids: [localSession],
+      byId: { [localSession]: snapshot.sessions.byId[localSession] },
+    } as SessionListState
+    const view = render(<ManagedOfficialWorkspaceBrowser
+      {...props}
+      useWorkspaces={selector => selector(archivedWorkspaces)}
+      useSessions={selector => selector(missingOwner)}
+      adapter={remote}
+      OfficialBrowser={InspectBrowser}
+    />)
+    await waitFor(() => expect(screen.queryByText('demo--uuid--worktree')).toBeNull())
+    view.rerender(<ManagedOfficialWorkspaceBrowser
+      {...props}
+      useWorkspaces={selector => selector(snapshot.workspaces)}
+      useSessions={selector => selector(snapshot.sessions)}
+      adapter={remote}
+      OfficialBrowser={InspectBrowser}
+    />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '修复验收卡' }).getAttribute('data-worktree-label')).toBe('待验收'))
+    expect(screen.queryByText('demo--uuid--worktree')).toBeNull()
+  })
+
   test('falls back to the untouched official projection when topology is unavailable', async () => {
     const props = browserProps()
     const unavailable = {
@@ -219,4 +248,27 @@ test('switches only managed sidebar badges while official labels and session tit
   expect(screen.getByRole('button', { name: '修复验收卡' }).getAttribute('data-worktree-label')).toBe('待验收')
   expect(screen.getByText('demo')).toBeTruthy()
   expect(remote.sidebarTopology).toHaveBeenCalledTimes(1)
+})
+
+
+test('renders Host-proven historical members under Local without giving them owner badges', async () => {
+  const snapshot = state()
+  const historical = 'historical' as SessionId
+  snapshot.sessions.ids.push(historical)
+  snapshot.sessions.byId[historical] = { ...snapshot.sessions.byId[ownerSession]!, id: historical, displayTitle: '历史会话', blank: false }
+  const remote = adapter()
+  const original = remote.sidebarTopology.bind(remote)
+  remote.sidebarTopology = async () => {
+    const result = await original()
+    if (result.ok) result.value.projects[0]!.memberships = { workspaceIds: [managedWorkspace], sessionIds: [ownerSession, historical] }
+    return result
+  }
+  const props = browserProps(snapshot)
+  render(<ManagedOfficialWorkspaceBrowser {...props} adapter={remote} OfficialBrowser={InspectBrowser} />)
+  await waitFor(() => expect(screen.getByRole('button', { name: '历史会话' })).toBeTruthy())
+  expect(screen.queryByText('demo--uuid--worktree')).toBeNull()
+  const row = screen.getByRole('button', { name: '历史会话' })
+  expect(row.getAttribute('data-worktree-kind')).toBeNull()
+  fireEvent.click(row)
+  expect(props.open).toHaveBeenCalledWith(historical)
 })

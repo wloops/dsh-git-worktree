@@ -198,6 +198,8 @@ export interface WorktreeSidebarTask {
 export interface WorktreeSidebarProject {
   project: WorktreeConsoleProject
   tasks: WorktreeSidebarTask[]
+  /** Host-proven directory membership, including cleaned and older iterations. No paths or mutation authority. */
+  memberships?: { workspaceIds: string[]; sessionIds: string[] }
 }
 
 export interface WorktreeSidebarTopologyResponse {

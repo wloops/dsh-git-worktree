@@ -30,7 +30,15 @@ export interface SessionCheckoutProjectRecord {
   root: string
 }
 
+export interface SidebarDirectoryMembership {
+  managedRoot: string
+  workspaceIds: string[]
+  sessionIds: string[]
+}
+
 export interface SessionCheckoutLookupPort {
+  /** Read-only navigation evidence; never used to authorize a checkout operation. */
+  getSidebarMemberships?(managedRoots: readonly string[]): Promise<SidebarDirectoryMembership[]>
   getSession(sessionId: string): SessionCheckoutSessionRecord | undefined
   getProject(projectId: string): SessionCheckoutProjectRecord | undefined
 }

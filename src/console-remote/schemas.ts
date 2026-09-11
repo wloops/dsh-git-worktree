@@ -221,6 +221,7 @@ export const listResponseSchema: z.ZodType<WorktreeConsoleListResponse> = strict
 export const sidebarTopologyResponseSchema: z.ZodType<WorktreeSidebarTopologyResponse> = strict({
   projects: z.array(strict({
     project: projectSchema,
+    memberships: strict({ workspaceIds: z.array(z.string().min(1)), sessionIds: z.array(sessionIdSchema) }).optional(),
     tasks: z.array(strict({
       checkoutId: checkoutIdSchema,
       ownerSessionId: sessionIdSchema,

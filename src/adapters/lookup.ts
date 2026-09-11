@@ -72,6 +72,28 @@ export function createDshLookupPort(ctx: Context): SessionCheckoutLookupPort {
   }
 
   return {
+    getSidebarMemberships: async (managedRoots) => {
+      if (managedRoots.length === 0) return []
+      const workspaces = registry()?.list() ?? []
+      const query = ctx.get('sessionQuery') as {
+        listSessions?(): Promise<readonly { header: { id: string; cwd?: string } }[]>
+      } | undefined
+      // Query headers, not transcript bodies or cached projection metadata.
+      // A missing directory must not erase historical navigation identity.
+      const headers = query?.listSessions ? (await query.listSessions()).map(item => item.header) : []
+      return [...new Set(managedRoots)].map(managedRoot => {
+        const matches = workspaces.filter(workspace => sameResolvedPath(workspace.path, managedRoot))
+        return {
+          managedRoot,
+          workspaceIds: matches.map(workspace => workspace.id),
+          sessionIds: [...new Set([
+            ...matches.flatMap(workspace => [...workspace.sessionIds]),
+            ...headers.filter(header => typeof header.cwd === 'string' && sameResolvedPath(header.cwd, managedRoot))
+              .map(header => header.id),
+          ])],
+        }
+      })
+    },
     getSession: (sessionId): SessionCheckoutSessionRecord | undefined => {
       const workspaces = registry()?.list() ?? []
       for (const workspace of workspaces) {

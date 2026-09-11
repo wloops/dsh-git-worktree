@@ -81,3 +81,19 @@ describe('DSH lookup adapter', () => {
     expect(lookup.getSession('ambiguous')).toBeUndefined()
   })
 })
+
+
+test('sidebar identity includes empty cleaned workspaces and cold headers, without granting getSession authority', async () => {
+  const root = resolve('fixtures', 'cleaned-root')
+  const base = contextOf([workspace('cleaned', root)])
+  const ctx = { get: (name: string) => name === 'sessionQuery' ? {
+    listSessions: async () => [
+      { header: { id: 'cold', cwd: root } },
+      { header: { id: 'other', cwd: root + '-lookalike' } },
+      { header: { id: 'pathless' } },
+    ],
+  } : base.get(name) } as unknown as Context
+  const lookup = createDshLookupPort(ctx)
+  expect(await lookup.getSidebarMemberships!([root])).toEqual([{ managedRoot: root, workspaceIds: ['cleaned'], sessionIds: ['cold'] }])
+  expect(lookup.getSession('cold')).toBeUndefined()
+})

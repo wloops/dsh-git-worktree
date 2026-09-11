@@ -66,7 +66,9 @@ export function ManagedOfficialWorkspaceBrowser({
     workspaces: workspaceState.items,
     sessions: sessionState.byId,
     topology,
-  }, t), [sessionState.byId, topology, workspaceState.items, t])
+    archivedSessionIds: workspaceState.archivedSessionIds,
+    currentSessionId: sessionState.current,
+  }, t), [sessionState.byId, sessionState.current, topology, workspaceState.items, workspaceState.archivedSessionIds, t])
 
   const projectedWorkspaceState = useMemo<WorkspaceListState>(() => ({
     ...workspaceState,
@@ -122,7 +124,8 @@ export function ManagedOfficialWorkspaceBrowser({
       if (
         protectedWorkspaceIds.has(workspaceId)
         || protectedIds.has(sessionId)
-        || (beforeSessionId !== undefined && protectedIds.has(beforeSessionId))
+        || projection.relocatedSessionIds.has(sessionId)
+        || (beforeSessionId !== undefined && (protectedIds.has(beforeSessionId) || projection.relocatedSessionIds.has(beforeSessionId)))
       ) return
       await props.insertSessionBefore(workspaceId, sessionId, beforeSessionId)
     }}
