@@ -131,7 +131,7 @@ try {
 if (hostContribution?.package !== manifest.name || hostContribution.face !== 'host') fail('./typert has invalid package/face identity')
 if (remoteContribution?.package !== manifest.name) fail('./remote has invalid package identity')
 if (hostContribution.invocations !== remoteContribution.descriptors) fail('./typert and ./remote must share one descriptor array instance')
-const expectedRemoteMethods = ['sidebarTopology', 'current', 'list', 'create', 'inspect', 'reviewDiff', 'preflight', 'previewRecoveryPreflight', 'preparePreviewRecoveryAnalysis', 'createPreviewRecoveryHandoff', 'preview', 'checkpoint', 'resumeRevision', 'prepareReviewRegeneration', 'rollbackPreview', 'discard', 'finalize', 'finalizePreview', 'setRetention', 'retryCleanup', 'beginNextIteration']
+const expectedRemoteMethods = ['sidebarTopology', 'current', 'list', 'preflightCreate', 'createWithInitialCommit', 'create', 'inspect', 'reviewDiff', 'preflight', 'previewRecoveryPreflight', 'preparePreviewRecoveryAnalysis', 'createPreviewRecoveryHandoff', 'preview', 'checkpoint', 'resumeRevision', 'prepareReviewRegeneration', 'rollbackPreview', 'discard', 'finalize', 'finalizePreview', 'setRetention', 'retryCleanup', 'beginNextIteration']
 if (JSON.stringify(hostContribution.invocations.map(value => value.method)) !== JSON.stringify(expectedRemoteMethods)) {
   fail(`manual Remote methods differ from the required surface: ${hostContribution.invocations.map(value => value.method).join(', ')}`)
 }

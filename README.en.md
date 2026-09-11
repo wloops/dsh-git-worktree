@@ -69,13 +69,13 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 ### Requirements
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.1.2-rc.1` package line
+- DeepSeek Harness: `0.1.2-rc.1` is the development validation baseline; `0.1.5-rc.1` is user-reported working and partially verified in isolation. See the [compatibility matrix and limitations](docs/COMPATIBILITY.md#english); the newest Host is not mandatory.
 - Harness Web Client
 - A Git Workspace
 
 Before upgrading an existing Harness installation, handle Host data migration: `0.1.2-rc.1` removes the optional SQLite Session backend, so use an older Harness version to export that data first. Code Mode is now named PTC mode, while existing conversation records remain readable. Launch applications and install this plugin through a `dsh` Profile.
 
-After upgrading Harness from an earlier release, if the web UI shows **Failed to load plugins**, install version `0.8.0` or later and restart Harness. Releases through `0.7.2` depend on the discontinued `dsh-client-runtime`; `0.7.3` can also form a `conversation` / `uiWorkspace` activation cycle in the rc.1 Web Client.
+After upgrading Harness from an earlier release, if the web UI shows **Failed to load plugins**, choose a fixed version from the [compatibility matrix](docs/COMPATIBILITY.md#english) and restart Harness; the example below uses the current `0.8.0`. Releases through `0.7.2` depend on the discontinued `dsh-client-runtime`; `0.7.3` can also form a `conversation` / `uiWorkspace` activation cycle in the rc.1 Web Client.
 
 ```bash
 dsh plugin --profile web add dsh-git-worktree@0.8.0

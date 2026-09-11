@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修正发布门禁的 Remote 方法清单，补入已存在且已有回归覆盖的 `preflightCreate` 与 `createWithInitialCommit`；不改变运行时协议。
+
+### Documentation
+
+- 增加新旧 Harness 兼容矩阵，区分开发基线、peer 声明、用户反馈、部分实测与未验证项；记录 `0.8.0` 对 `0.1.5-rc.1` 的隔离验证及端到端限制，不强制升级 Host，不扩大依赖声明。
+
 ## [0.8.0] - 2026-09-09
 
 `0.8.0` 为插件增加 Client 与 Host 全链路中英文支持：界面、工具、命令和 Host 用户消息跟随 DSH 语言选择，并通过显式 Console 语言传递与异步上下文隔离保持并发会话正确；同时修复新建 Session 时 Worktree 入口因使用过期状态 seam 而崩溃的问题。

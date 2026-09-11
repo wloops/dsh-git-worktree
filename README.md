@@ -69,13 +69,13 @@ flowchart LR
 ### 环境要求
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.1.2-rc.1` 包线
+- DeepSeek Harness：`0.1.2-rc.1` 为开发验证基线；`0.1.5-rc.1` 已有用户可用反馈并通过部分隔离验证，详见[兼容矩阵与限制](docs/COMPATIBILITY.md#中文)。并非只能使用最新版。
 - Harness Web Client
 - Git Workspace
 
 从旧 Harness 升级时请先处理 Host 数据迁移：`0.1.2-rc.1` 已移除可选 SQLite Session 后端，旧数据需使用旧版 Harness 导出；Code Mode 已更名为 PTC mode，但现有会话记录仍可读取。应用和本插件统一通过 `dsh` Profile 启动与安装。
 
-从旧版 Harness 升级后，如果 Web 界面提示 **Failed to load plugins**，请安装 `0.8.0` 或更高版本并重启 Harness。`0.7.2` 及更早版本依赖已停止发布的 `dsh-client-runtime`；`0.7.3` 在 rc.1 Web Client 中还可能形成 `conversation` / `uiWorkspace` 循环等待。
+从旧版 Harness 升级后，如果 Web 界面提示 **Failed to load plugins**，请按[兼容矩阵](docs/COMPATIBILITY.md#中文)选择修复版本并重启 Harness；下方以当前 `0.8.0` 为例。`0.7.2` 及更早版本依赖已停止发布的 `dsh-client-runtime`；`0.7.3` 在 rc.1 Web Client 中还可能形成 `conversation` / `uiWorkspace` 循环等待。
 
 ```bash
 dsh plugin --profile web add dsh-git-worktree@0.8.0
