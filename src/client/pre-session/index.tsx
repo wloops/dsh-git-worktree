@@ -4,18 +4,16 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { WorktreeConsoleAdapter } from '../../console-contract.js'
 import type { PreSessionWorktreeServices } from '../actions.js'
 import { createPreSessionWorktreeController } from './controller.js'
-import {
-  PreSessionWorktreeToggle,
-  type PreSessionWorktreeToggleProps,
-} from './PreSessionWorktreeToggle.js'
+import { PreSessionWorktreeToggle } from './PreSessionWorktreeToggle.js'
+import { adaptHarnessInputActions, readHarnessInput, type HarnessInputActions, type HarnessInputState } from './harness-input.js'
 
 /** rc.1 input.left has no owner snapshot props; snapshots come from standard hooks. */
 export interface PreSessionSlotProps {
   sessionId: string
   useSession: SnapshotSelectorHook<SessionSnapshot>
   useConversation: SnapshotSelectorHook<{ readonly activeTargets: ReadonlySet<string> }>
-  useInput: SnapshotSelectorHook<PreSessionWorktreeToggleProps['input']>
-  inputActions: PreSessionWorktreeToggleProps['inputActions']
+  useInput: SnapshotSelectorHook<HarnessInputState>
+  inputActions: HarnessInputActions
 }
 
 export interface PreSessionSlotContextLike {
@@ -41,12 +39,12 @@ export function registerPreSessionWorktree(
     const sessionPhase = useSession(session => (!session.blank && !session.awaitingFirstTurn) || session.running
       ? 'active' : session.promptAttempted ? 'engaging' : 'blank')
     const hasActiveTarget = useConversation(conversation => conversation.activeTargets.size > 0)
-    const input = useInput(snapshot => snapshot)
+    const input = readHarnessInput(useInput(snapshot => snapshot))
     return <PreSessionWorktreeToggle
       sessionId={sessionId}
       session={{ composerPhase: hasActiveTarget ? 'active' : sessionPhase }}
       input={input}
-      inputActions={inputActions}
+      inputActions={adaptHarnessInputActions(inputActions)}
       adapter={adapter}
       controller={controller}
     />

@@ -70,11 +70,7 @@ export interface WorktreeClientServices {
   }
 }
 
-export interface PreSessionInput {
-  setDraft(text: string): void
-  addImages(ids: readonly string[]): boolean
-  removeImage(id: string): void
-}
+export type PreSessionInput = import('./pre-session/harness-input.js').HarnessInputActions
 
 /** Additional public Harness faces used only by the blank-session preparation flow. */
 export interface PreSessionWorktreeServices extends WorktreeClientServices {

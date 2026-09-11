@@ -1,4 +1,5 @@
 import { translatorForServices } from '../i18n.js'
+import { adaptHarnessInputActions } from './harness-input.js'
 import type {
   WorktreeConsoleAdapter,
   WorktreeConsoleCreateResponse,
@@ -128,7 +129,7 @@ export class PreSessionWorktreeController {
       if (targetBinding?.ctx === undefined) {
         throw new PreSessionWorktreeError(t("the.target.session.was.created.but.harness.has"))
       }
-      const targetInput = this.services.conversation.input.for(targetBinding.ctx)
+      const targetInput = adaptHarnessInputActions(this.services.conversation.input.for(targetBinding.ctx))
       if (!sourceStillMatches(request)) {
         throw new PreSessionWorktreeError(t("the.local.draft.or.attachments.changed.after.confirmation"))
       }

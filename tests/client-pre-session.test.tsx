@@ -438,6 +438,63 @@ describe('Pre-session directory menu', () => {
     expect(screen.queryByRole('switch', { name: 'Worktree' })).toBeNull()
   })
 
+  test.each([{ ids: [] }, { ids: ['image-1', 'file-2'] }])('migrates current Harness attachmentIds through the registered entry: $ids', async ({ ids }) => {
+    const fixture = successFixture()
+    fixture.adapter.current = vi.fn(async () => ({
+      ok: true,
+      value: { target: { ...fixture.target, state: 'local', capabilities: { ...fixture.target.capabilities, create: true } } },
+    }))
+    const targetInput = {
+      draft: '',
+      ids: [] as string[],
+      setDraft(text: string) { this.draft = text },
+      addAttachments(values: readonly string[]) { this.ids.push(...values); return true },
+      removeAttachment: vi.fn(),
+    }
+    fixture.services.conversation.input.for = () => targetInput
+    const source = { setDraft: vi.fn(), addAttachments: vi.fn(() => true), removeAttachment: vi.fn() }
+    let Entry: any
+    registerPreSessionWorktree({ slots: {
+      inject: (_name, callback) => { callback() },
+      register: (_descriptor, component) => { Entry = component },
+    } }, fixture.adapter, fixture.services)
+    render(createElement(Entry, {
+      sessionId: 'source-session', inputActions: source,
+      useSession: (select: any) => select({ blank: true }),
+      useConversation: (select: any) => select({ activeTargets: new Set() }),
+      useInput: (select: any) => select({ draft: ids.length ? 'move attachments' : '', attachmentIds: ids, occurrences: [], phase: 'plain', draftRev: 1 }),
+    }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Worktree' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(fixture.adapter.create).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '创建并切换' }))
+    await waitFor(() => expect(fixture.services.sessions.open).toHaveBeenCalledWith('target-session'))
+    expect(targetInput.ids).toEqual(ids)
+    expect(targetInput.draft).toBe(ids.length ? 'move attachments' : '')
+    expect(source.setDraft).toHaveBeenCalledWith('')
+    expect(source.removeAttachment.mock.calls).toEqual(ids.map(id => [id]))
+  })
+
+  test('recovers from a snapshot failure and allows retry after input is corrected', async () => {
+    const fixture = successFixture()
+    fixture.adapter.current = vi.fn(async () => ({
+      ok: true,
+      value: { target: { ...fixture.target, state: 'local', capabilities: { ...fixture.target.capabilities, create: true } } },
+    }))
+    const input = { draft: '', imageIds: undefined as unknown as string[], occurrences: [], phase: 'plain' }
+    const props = { sessionId: 'source-session', session: { composerPhase: 'blank' }, input, inputActions, adapter: fixture.adapter, controller: { prepare: vi.fn() } }
+    const view = render(<PreSessionWorktreeToggle {...props} />)
+    fireEvent.click(await screen.findByRole('switch', { name: 'Worktree' }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect((screen.getByRole('switch') as HTMLButtonElement).disabled).toBe(false)
+    expect(fixture.adapter.create).not.toHaveBeenCalled()
+    input.imageIds = []
+    view.rerender(<PreSessionWorktreeToggle {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   test('shows an accessible Local directory menu only for a blank Local Session', async () => {
     const fixture = successFixture()
     fixture.adapter.current = vi.fn(async () => ({

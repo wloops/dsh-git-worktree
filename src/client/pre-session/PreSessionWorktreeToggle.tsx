@@ -99,8 +99,8 @@ export function PreSessionWorktreeToggle({ sessionId, session, input, inputActio
     scope.busy = true
     setState('preparing')
     setError(null)
-    const captured = snapshotInput(latestInput.current)
     try {
+      const captured = snapshotInput(latestInput.current)
       const outcome = adapter.preflightCreate ? await adapter.preflightCreate({ sourceSessionId: sessionId }) : null
       if (!isCurrent()) return
       if (outcome && !outcome.ok) throw new Error(`${outcome.error.code}: ${outcome.error.message}`)
