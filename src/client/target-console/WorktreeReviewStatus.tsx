@@ -1,7 +1,8 @@
+import { subscribeCurrent } from './current-polling.js'
+import { useClientLanguage, useClientTranslator } from '../i18n.js'
 import { ReviewDetailsModal, validationText, validationIcon } from '../review-console/ReviewDetailsModal.js'
 import { ReviewIcon } from '../review-console/ReviewIcon.js'
 import { useReviewPreflight } from '../review-console/preflight-cache.js'
-import { useClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails, WorktreeConsoleTargetSummary } from '../../console-contract.js'
 import type { WorktreeClientServices } from '../actions.js'
@@ -12,7 +13,7 @@ import {
   useWorktreeRecoverySnapshot,
 } from '../review-console/recovery-continuation.js'
 import { reviewEvidenceFromTarget, reviewIdentityFromTarget } from '../review-console/index.js'
-import { WORKTREE_REVIEW_REFRESH_EVENT } from '../review-console/status-events.js'
+import { requestWorktreeReviewRefresh } from '../review-console/status-events.js'
 
 export interface WorktreeReviewStatusProps {
   session: { sessionId: string }
@@ -23,6 +24,7 @@ export interface WorktreeReviewStatusProps {
 /** Domi-style compact delivery status above the native Harness composer. */
 export function WorktreeReviewStatus({ session, adapter, services }: WorktreeReviewStatusProps) {
   const t = useClientTranslator()
+  const language = useClientLanguage()
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   const sessionId = session.sessionId
@@ -32,7 +34,6 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
   const { snapshot: detailPreflight } = useReviewPreflight(adapter, target ? reviewIdentityFromTarget(sessionId, target) ?? undefined : undefined, false)
   useEffect(() => { setDetailsOpen(false) }, [sessionId, target?.review?.reviewId])
   const mounted = useRef(true)
-  const requestToken = useRef(0)
   const sessionGeneration = useRef(0)
   const currentSessionId = useRef(sessionId)
   currentSessionId.current = sessionId
@@ -43,45 +44,31 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
   }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
-    const token = ++requestToken.current
-    try {
-      const outcome = await adapter.current({ sessionId })
-      if (!mounted.current || currentSessionId.current !== sessionId || token !== requestToken.current) return
-      if (outcome.ok) {
-        const refreshedTarget = outcome.value.target
-        setTarget(current => current && current.checkoutId === refreshedTarget.checkoutId && current.revision > refreshedTarget.revision ? current : refreshedTarget)
-        setError(null)
-      } else {
-        setError(outcome.error.message)
-      }
-    } catch (reason) {
-      if (mounted.current && currentSessionId.current === sessionId && token === requestToken.current) {
-        setError(reason instanceof Error ? reason.message : String(reason))
-      }
-    }
-  }, [adapter, sessionId])
+    requestWorktreeReviewRefresh(sessionId)
+  }, [sessionId])
 
   useEffect(() => {
     restoreWorktreeRecovery({ sessionId, adapter, services })
   }, [adapter, services, sessionId])
 
+
   useEffect(() => {
     sessionGeneration.current += 1
-    requestToken.current += 1
     setTarget(null)
     setError(null)
-    void refresh()
-    const listener = (event: Event): void => {
-      const detail = (event as CustomEvent<{ sessionId?: string }>).detail
-      if (detail?.sessionId === sessionId) void refresh()
-    }
-    const timer = window.setInterval(() => { void refresh() }, 5_000)
-    window.addEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
-    }
-  }, [refresh, sessionId])
+    const stop = subscribeCurrent(adapter, sessionId, language, result => {
+      if ('error' in result) {
+        setError(result.error instanceof Error ? result.error.message : String(result.error))
+      } else if (result.outcome.ok) {
+        const refreshedTarget = result.outcome.value.target
+        setTarget(current => current && current.checkoutId === refreshedTarget.checkoutId && current.revision > refreshedTarget.revision ? current : refreshedTarget)
+        setError(null)
+      } else {
+        setError(result.outcome.error.message)
+      }
+    })
+    return () => { stop(); sessionGeneration.current += 1 }
+  }, [adapter, language, sessionId])
 
   const standaloneRecovery = recovery
     && target?.checkoutId === recovery.request.checkoutId

@@ -1,3 +1,4 @@
+import { subscribeCurrent } from './current-polling.js'
 import { ReviewIcon } from '../review-console/ReviewIcon.js'
 import { useClientLanguage, useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -7,7 +8,7 @@ import type {
   WorktreeConsoleTargetDetails,
 } from '../../console-contract.js'
 import { openExistingSession, type WorktreeClientServices } from '../actions.js'
-import { requestWorktreeReviewRefresh, WORKTREE_REVIEW_REFRESH_EVENT } from '../review-console/status-events.js'
+import { requestWorktreeReviewRefresh } from '../review-console/status-events.js'
 import { WorktreeManagerModal } from './WorktreeManagerModal.js'
 
 export interface TargetStatusActionProps {
@@ -52,7 +53,6 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
     actionScope.current += 1
   }
   const mounted = useRef(true)
-  const request = useRef(0)
 
   useEffect(() => {
     mounted.current = true
@@ -60,45 +60,29 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
   }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
-    const token = ++request.current
-    try {
-      const outcome = await adapter.current({ sessionId })
-      if (!mounted.current || token !== request.current) return
-      if (outcome.ok) {
-        setTarget(outcome.value.target)
-        setError(null)
-      } else {
-        setError(outcome.error.message)
-      }
-    } catch (reason) {
-      if (mounted.current && token === request.current) {
-        setError(reason instanceof Error ? reason.message : String(reason))
-      }
-    } finally {
-      if (mounted.current && token === request.current) setLoading(false)
-    }
-  }, [adapter, sessionId])
+    requestWorktreeReviewRefresh(sessionId)
+  }, [sessionId])
 
   useEffect(() => {
-    request.current += 1
     setTarget(null)
     setLoading(true)
+    setError(null)
     setMenuOpen(false)
     setManagerOpen(false)
     setCleanupConfirmOpen(false)
     setPendingAction(null)
-    void refresh()
-    const listener = (event: Event): void => {
-      const detail = (event as CustomEvent<{ sessionId?: string }>).detail
-      if (detail?.sessionId === sessionId) void refresh()
-    }
-    const timer = window.setInterval(() => { void refresh() }, 5_000)
-    window.addEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener(WORKTREE_REVIEW_REFRESH_EVENT, listener)
-    }
-  }, [refresh, sessionId])
+    return subscribeCurrent(adapter, sessionId, language, result => {
+      if ('error' in result) {
+        setError(result.error instanceof Error ? result.error.message : String(result.error))
+      } else if (result.outcome.ok) {
+        setTarget(result.outcome.value.target)
+        setError(null)
+      } else {
+        setError(result.outcome.error.message)
+      }
+      setLoading(false)
+    })
+  }, [adapter, language, sessionId])
 
   const state = target?.state ?? (loading ? 'loading' : 'error')
   const stateLabel = state === 'loading' ? t("loading") : state === 'error' ? t("unavailable") : STATE_LABELS(t)[state]
@@ -283,7 +267,6 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
         onClose={() => setManagerOpen(false)}
         onTargetChange={() => {
           requestWorktreeReviewRefresh(sessionId)
-          void refresh()
         }}
       />
       <Modal
