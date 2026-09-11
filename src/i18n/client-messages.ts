@@ -2,6 +2,8 @@ import type { MessageCatalog } from './core.js'
 
 /** Plugin-owned Client copy; parameters are opaque user/Host data. */
 export const clientMessages = {
+  "manager.task.label": {"zh":"{project} · 第 {iteration} 轮","en":"{project} · Iteration {iteration}"},
+  "manager.task.id": {"zh":"任务标识","en":"Task ID"},
   "detail.title": {"zh": "验收详情", "en": "Review details"},
   "detail.close": {"zh": "关闭验收详情", "en": "Close review details"},
   "detail.passed": {"zh": "验证通过", "en": "Passed"},
@@ -1151,10 +1153,7 @@ export const clientMessages = {
     "zh": "会话目标",
     "en": "SESSION TARGET"
   },
-  "linked.worktrees": {
-    "zh": "关联 Worktrees",
-    "en": "Linked Worktrees"
-  },
+  "linked.worktrees": {"zh": "Worktree 管理", "en": "Worktree manager"},
   "refreshing": {
     "zh": "刷新中…",
     "en": "Refreshing…"
@@ -1163,18 +1162,12 @@ export const clientMessages = {
     "zh": "刷新",
     "en": "Refresh"
   },
-  "current.target": {
-    "zh": "当前目标",
-    "en": "Current target"
-  },
+  "current.target": {"zh": "当前工作目录", "en": "Current working directory"},
   "create.worktree": {
     "zh": "创建 Worktree",
     "en": "Create Worktree"
   },
-  "logical.links": {
-    "zh": "逻辑关联",
-    "en": "Logical links"
-  },
+  "logical.links": {"zh": "所属项目", "en": "Project"},
   "this.project.has.no.managed.worktrees.yet": {
     "zh": "这个项目还没有受管 Worktree。",
     "en": "This project has no managed Worktrees yet."
@@ -1219,10 +1212,7 @@ export const clientMessages = {
     "zh": "打开中…",
     "en": "Opening…"
   },
-  "open.2": {
-    "zh": "打开",
-    "en": "Open"
-  },
+  "open.2": {"zh": "打开工作目录", "en": "Open working directory"},
   "discard": {
     "zh": "放弃 {p0}",
     "en": "Discard {p0}"
@@ -1231,10 +1221,7 @@ export const clientMessages = {
     "zh": "放弃中…",
     "en": "Discarding…"
   },
-  "discard.2": {
-    "zh": "放弃",
-    "en": "Discard"
-  },
+  "discard.2": {"zh": "放弃任务", "en": "Discard task"},
   "retry.cleanup": {
     "zh": "重试清理 {p0}",
     "en": "Retry cleanup {p0}"
@@ -1267,14 +1254,8 @@ export const clientMessages = {
     "zh": "确认放弃修改",
     "en": "Confirm discard changes"
   },
-  "close.linked.worktrees": {
-    "zh": "关闭关联 Worktrees",
-    "en": "Close linked Worktrees"
-  },
-  "source.target.logical.links.are.maintained.by.the": {
-    "zh": "由插件 registry 维护的 source/target 逻辑关联；DSH 仍按各自 cwd 显示独立 Workspace。",
-    "en": "Source/target logical links are maintained by the plugin registry; DSH still displays separate Workspaces by their cwd."
-  },
+  "close.linked.worktrees": {"zh": "关闭 Worktree 管理", "en": "Close Worktree manager"},
+  "source.target.logical.links.are.maintained.by.the": {"zh": "查看当前项目的独立工作目录及任务状态。", "en": "View isolated working directories and task status for this project."},
   "worktree.recovery.continuation": {
     "zh": "Worktree 恢复续跑",
     "en": "Worktree recovery continuation"

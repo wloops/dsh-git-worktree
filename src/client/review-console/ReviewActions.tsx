@@ -928,12 +928,12 @@ export function ReviewActions({
       </button>
     ) : (
       <button type="button" className="dsh-wt-button" disabled={allDisabled || target?.state !== 'preview_detached'} onClick={() => { void refreshRecoveryPreflight() }}>
-        {recoveryPreflight.status === 'loading' ? t("checking") : t("check.again")}
+        <ReviewIcon name="refresh" />{recoveryPreflight.status === 'loading' ? t("checking") : t("check.again")}
       </button>
     )
   ) : cleanupPending ? (
     <button type="button" className="dsh-wt-button" disabled={allDisabled || !target?.capabilities.retryCleanup} onClick={() => { void retryCleanup() }}>
-      {submitting === 'retry_cleanup' ? t("cleaning.up") : t("retry.environment.cleanup")}
+      <ReviewIcon name="refresh" />{submitting === 'retry_cleanup' ? t("cleaning.up") : t("retry.environment.cleanup")}
     </button>
   ) : null
 
@@ -969,11 +969,11 @@ export function ReviewActions({
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.resumeRevision} onClick={() => {
                     void resumeRevision()
                     closeMoreMenu()
-                  }}>{submitting === 'resume_revision' ? t("recovering") : t("continue.editing")}</button>
+                  }}><ReviewIcon name="edit" />{submitting === 'resume_revision' ? t("recovering") : t("continue.editing")}</button>
                   <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalize || !safeReadyPreflight} onClick={() => {
                     setCommitMode('finish')
                     closeMoreMenu()
-                  }}>{t("skip.preview.and.save")}</button>
+                  }}><ReviewIcon name="confirm" />{t("skip.preview.and.save")}</button>
                 </>
               ) : null}
               {previewActive && target.capabilities.checkpoint && target.checkpointGeneration ? (
@@ -992,19 +992,19 @@ export function ReviewActions({
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.rollbackPreview} onClick={() => {
                   void rollbackPreview()
                   closeMoreMenu()
-                }}>{previewActive ? t("roll.back.this.preview") : t("retry.rollback")}</button>
+                }}><ReviewIcon name="rollback" />{previewActive ? t("roll.back.this.preview") : t("retry.rollback")}</button>
               ) : null}
               {finalizeRecoverySafe ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item" disabled={allDisabled || !target.capabilities.finalizePreview} onClick={() => {
                   setCommitMode('finalize_preview')
                   closeMoreMenu()
-                }}>{t("save.changes")}</button>
+                }}><ReviewIcon name="confirm" />{t("save.changes")}</button>
               ) : null}
               {canDiscard ? (
                 <button type="button" role="menuitem" className="dsh-wt-more-item dsh-wt-danger-text" disabled={allDisabled} onClick={() => {
                   setDiscardOpen(true)
                   closeMoreMenu()
-                }}>{t("discard.task")}</button>
+                }}><ReviewIcon name="discard" />{t("discard.task")}</button>
               ) : null}
             </div>
           </details>
@@ -1023,7 +1023,7 @@ export function ReviewActions({
           <div className="dsh-wt-modal-footer">
             <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCheckpoint}>{t("cancel")}</button>
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={submitting !== null || !checkpointMessage.trim() || checkpointMessage.trim().length > 500} onClick={() => { void checkpoint() }}>
-              {submitting === 'checkpoint' ? t("saving") : t("save.progress.and.continue")}
+              <ReviewIcon name="save" />{submitting === 'checkpoint' ? t("saving") : t("save.progress.and.continue")}
             </button>
           </div>
         )}
@@ -1053,7 +1053,7 @@ export function ReviewActions({
           <div className="dsh-wt-modal-footer">
             <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeCommit}>{t("cancel")}</button>
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={submitting !== null || !commitMessage.trim() || commitMessage.trim().length > 500} onClick={() => { void submitCommit() }}>
-              {submitting === 'finish' || submitting === 'finalize_preview'
+              <ReviewIcon name="confirm" />{submitting === 'finish' || submitting === 'finalize_preview'
                 ? t("saving")
                 : retainEnvironment ? t("confirm.delivery.and.retain.environment") : t("confirm.delivery.and.clean.up")}
             </button>
@@ -1093,7 +1093,7 @@ export function ReviewActions({
           <div className="dsh-wt-modal-footer">
             <button type="button" className="dsh-wt-button" disabled={submitting !== null} onClick={closeDiscard}>{t("cancel")}</button>
             <button type="button" className="dsh-wt-button dsh-wt-danger" disabled={submitting !== null} onClick={() => { void discard() }}>
-              {submitting === 'discard' ? t("discarding") : t("confirm.discard.task")}
+              <ReviewIcon name="discard" />{submitting === 'discard' ? t("discarding") : t("confirm.discard.task")}
             </button>
           </div>
         )}
@@ -1114,10 +1114,10 @@ export function ReviewActions({
           <div className="dsh-wt-preflight-head">
             <strong>{t("detached.preview.recovery")}</strong>
             <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || recoveryPreflight.status === 'loading'} onClick={() => { void refreshRecoveryPreflight() }}>
-              {t("check.again")} </button>
+              <ReviewIcon name="refresh" />{t("check.again")} </button>
           </div>
           <p>{t("detached.is.a.delivery.recovery.state.not.git")}</p>
-          {recoveryPreflight.status === 'loading' ? <p>{t("checking.local.head.index.working.tree.retained.artifacts")}</p> : null}
+          <ReviewIcon name="refresh" />{recoveryPreflight.status === 'loading' ? <p>{t("checking.local.head.index.working.tree.retained.artifacts")}</p> : null}
           {recoveryPreflight.status === 'error' ? <p className="dsh-wt-error">{recoveryPreflight.error.message}</p> : null}
           {recoveryPreflight.status === 'success' && recoveryPreflight.preflight.status === 'blocked' ? (
             <p className="dsh-wt-error">{recoveryPreflight.preflight.message}</p>
@@ -1137,13 +1137,13 @@ export function ReviewActions({
               ) : null}
               {recoveryProof.blocker ? (
                 <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void openHolder() }}>
-                  {t("open.the.worktree.holding.the.local.review.slot")} </button>
+                  <ReviewIcon name="external" />{t("open.the.worktree.holding.the.local.review.slot")} </button>
               ) : null}
               <div className="dsh-wt-recovery-actions">
                 <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void analyzeRecovery() }}>
-                  {t("ask.agent.for.read.only.analysis")} </button>
+                  <ReviewIcon name="search" />{t("ask.agent.for.read.only.analysis")} </button>
                 <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null || !services} onClick={() => { void handoffRecovery() }}>
-                  {t("hand.off.to.a.new.worktree")} </button>
+                  <ReviewIcon name="branch" />{t("hand.off.to.a.new.worktree")} </button>
               </div>
             </>
           ) : null}
@@ -1168,7 +1168,7 @@ export function ReviewActions({
           {activeRecovery.status === 'failed' ? (
             <>
               <span>{t("recovery.request.failed")}{activeRecovery.error}</span>
-              <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null} onClick={() => retryWorktreeRecovery(activeRecovery.request.sessionId)}>{t("resend")}</button>
+              <button type="button" className="dsh-wt-inline-action" disabled={submitting !== null} onClick={() => retryWorktreeRecovery(activeRecovery.request.sessionId)}><ReviewIcon name="send" />{t("resend")}</button>
             </>
           ) : null}
         </div>

@@ -1,3 +1,4 @@
+import { ReviewIcon } from './review-console/ReviewIcon.js'
 import { useClientTranslator } from './i18n.js'
 import { useState } from 'react'
 import { openIsolatedTarget, type WorktreeClientServices } from './actions.js'
@@ -53,7 +54,7 @@ export function WorktreeCreateRow({ block, services }: Props) {
           </div>
           <div className="dsh-wt-actions">
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={openState === 'opening'} onClick={() => void openTarget()}>
-              {openState === 'opening' ? t("opening.2") : openState === 'error' ? t("retry.opening.isolated.session") : t("open.isolated.session")}
+              <ReviewIcon name="external" />{openState === 'opening' ? t("opening.2") : openState === 'error' ? t("retry.opening.isolated.session") : t("open.isolated.session")}
             </button>
             <span className="dsh-wt-status">{t("the.current.local.session.cwd.will.not.be")}</span>
           </div>

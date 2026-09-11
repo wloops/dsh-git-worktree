@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 
 export type MenuEntry =
-  | { id: string; label: ReactNode; disabled?: boolean; danger?: boolean }
+  | { id: string; label: ReactNode; icon?: ReactNode; disabled?: boolean; danger?: boolean }
   | { type: 'separator'; id: string }
   | { type: 'label'; id: string; text: string }
 
@@ -29,7 +29,7 @@ export function Menu({ open, anchor, items, footer, onSelect, onClose }: {
       : <span key={entry.id}>{entry.text}</span>
     : (
         <button key={entry.id} type="button" disabled={entry.disabled} onClick={() => onSelect(entry.id)}>
-          {entry.label}
+          {entry.icon}{entry.label}
         </button>
       )
   return <span>{anchor}{open ? <div role="menu">{items.map(renderEntry)}{footer?.map(renderEntry)}</div> : null}</span>
@@ -45,6 +45,7 @@ export function Modal({
   children,
   footer,
   headless,
+  className,
 }: {
   open: boolean
   onClose(): void
@@ -54,6 +55,7 @@ export function Modal({
   children?: ReactNode
   footer?: ReactNode
   headless?: boolean
+  className?: string
 }) {
   useEffect(() => {
     if (!open) return
@@ -65,7 +67,8 @@ export function Modal({
   }, [onClose, open])
   if (!open) return null
   return (
-    <div role="dialog" aria-modal="true" aria-label={title}>
+    <div role="dialog" aria-modal="true" aria-label={title} className={className}>
+      {!headless ? <h2>{title}</h2> : null}
       {!headless ? <button type="button" aria-label={closeLabel} onClick={onClose}>×</button> : null}
       {description ? <p>{description}</p> : null}
       {children}

@@ -551,7 +551,8 @@ describe('Pre-session directory menu', () => {
     resolve(fixture.target)
     await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
     expect(screen.queryByRole('dialog', { name: '在 Worktree 中开始？' })).toBeNull()
-    expect(toggle.textContent).toBe('✓Worktree')
+    expect(toggle.textContent).toBe('Worktree')
+    expect(toggle.querySelector('.lucide-check')).toBeTruthy()
   })
 
   test('cancels the confirmation without creating or mutating the Local draft', async () => {

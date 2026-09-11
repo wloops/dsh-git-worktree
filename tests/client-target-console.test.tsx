@@ -225,8 +225,8 @@ describe('Harness-native Session Target slots', () => {
 
     fireEvent.click(trigger)
     fireEvent.click(screen.getByRole('button', { name: '管理关联 Worktrees' }))
-    expect(await screen.findByRole('dialog', { name: '关联 Worktrees' })).toBeTruthy()
-    expect(await screen.findByRole('heading', { name: '关联 Worktrees' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Worktree 管理' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Worktree 管理' })).toBeTruthy()
     expect(screen.queryByRole('tab', { name: 'Worktrees' })).toBeNull()
   })
 
@@ -1109,10 +1109,10 @@ test('manager switches plugin labels while preserving target data and actions', 
   const fixture = createWorktreeConsoleAdapterFixture()
   const services = clientServices()
   const view = render(<ClientI18nProvider language="en"><WorktreeConsoleView sessionId="source-session" adapter={fixture.adapter} services={services} /></ClientI18nProvider>)
-  await screen.findByText('Linked Worktrees')
+  await screen.findByText('Worktree manager')
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
   view.rerender(<ClientI18nProvider language="zh"><WorktreeConsoleView sessionId="source-session" adapter={fixture.adapter} services={services} /></ClientI18nProvider>)
-  expect(screen.getByText('关联 Worktrees')).toBeTruthy()
+  expect(screen.getByText('Worktree 管理')).toBeTruthy()
   expect(services.workspaces.openPath).not.toHaveBeenCalled()
   expect(services.sessions.create).not.toHaveBeenCalled()
 })
@@ -1228,4 +1228,32 @@ test('a delayed refresh snapshot cannot regress the withdrawn review revision', 
   fireEvent.click(screen.getByRole('button', { name: '预览修改' }))
   await screen.findByRole('button', { name: '确认并保存' })
   expect(fixture.calls.filter(call => call.method === 'preview').at(-1)?.request).toMatchObject({ expectedRevision: 13 })
+})
+
+test('顶部状态和菜单使用统一 Lucide 图标，保持菜单文字及操作语义', async () => {
+  const fixture = createWorktreeConsoleAdapterFixture()
+  render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} />)
+  const trigger = await screen.findByRole('button', { name: /Session Target.*Worktree/ })
+  expect(trigger.querySelector('.lucide-git-branch')).toBeTruthy()
+  expect(trigger.querySelector('.lucide-chevron-down')).toBeTruthy()
+  fireEvent.click(trigger)
+  for (const name of ['打开当前工作位置', '返回来源 Session', '管理关联 Worktrees']) {
+    expect(screen.getByRole('button', { name }).querySelector('svg.lucide')).toBeTruthy()
+  }
+})
+
+test('管理弹窗只保留一个标题，以任务摘要为主、标识为辅', async () => {
+  const fixture = createWorktreeConsoleAdapterFixture()
+  render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={clientServices()} />)
+  fireEvent.click(await screen.findByRole('button', { name: /Session Target.*Worktree/ }))
+  fireEvent.click(screen.getByRole('button', { name: '管理关联 Worktrees' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Worktree 管理' })
+  expect(within(dialog).getAllByRole('heading', { name: 'Worktree 管理' })).toHaveLength(1)
+  expect(within(dialog).getByText('查看当前项目的独立工作目录及任务状态。')).toBeTruthy()
+  expect(within(dialog).queryByText(/registry|source\/target|cwd/)).toBeNull()
+  const row = await within(dialog).findByRole('listitem')
+  expect(row.querySelector('.dsh-wtc-task-name')?.textContent).toBe('Fixture review')
+  expect(row.querySelector('.dsh-wtc-facts .dsh-wtc-checkout-id')?.textContent).toBe('checkout-1')
+  expect(within(row).getByText('打开工作目录')).toBeTruthy()
+  expect(within(row).getByText('放弃任务')).toBeTruthy()
 })

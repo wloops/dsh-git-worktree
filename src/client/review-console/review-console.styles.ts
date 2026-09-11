@@ -181,4 +181,11 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
 .dsh-wt-review-actions .dsh-wt-more-trigger { display:inline-flex; align-items:center; justify-content:center; }
 @media(max-width:620px) { .dsh-wt-details-header { padding:16px; } }
 
+/* CircleEllipsis provides its own outline; preserve a full button-sized hit target. */
+.dsh-wt-review-dock .dsh-wt-more-trigger,
+.dsh-wt-more-trigger { border-color:transparent; background:transparent; }
+.dsh-wt-more-trigger:hover { background:var(--wt-panel); }
+.dsh-wt-more-trigger:focus-visible { outline:2px solid #5a8dee; outline-offset:2px; }
+.dsh-wt-more-item .dsh-wt-icon { flex:0 0 16px; }
+.dsh-wt-review-actions .dsh-wt-inline-action { display:inline-flex; align-items:center; gap:6px; }
 `

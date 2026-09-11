@@ -1,3 +1,4 @@
+import { ReviewIcon } from './ReviewIcon.js'
 import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useEffect, useId, useState } from 'react'
 import type {
@@ -63,7 +64,7 @@ export function WorktreeReviewPanel({ review, target, identity, unavailableMessa
       data-worktree-review-id={review.reviewId}
     >
       <header className="dsh-wt-review-compact-head">
-        <span className="dsh-wt-review-status-icon" data-validation={review.validationStatus} aria-hidden>{t("symbol.4")}</span>
+        <span className="dsh-wt-review-status-icon" data-validation={review.validationStatus} aria-hidden><ReviewIcon name="check" /></span>
         <div className="dsh-wt-review-compact-copy">
           <h2 className="dsh-wt-review-title">{t("review.iteration.ready", { iteration: review.iteration })}</h2>
           <p className="dsh-wt-review-summary">{review.summary}</p>

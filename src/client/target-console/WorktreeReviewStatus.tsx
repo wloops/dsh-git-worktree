@@ -91,7 +91,7 @@ export function WorktreeReviewStatus({ session, adapter, services }: WorktreeRev
   if (standaloneRecovery) {
     return (
       <section className="dsh-wt-review-dock" aria-label={t("worktree.recovery.continuation")} data-recovery-status={standaloneRecovery.status}>
-        <span className="dsh-wt-review-dock-icon" aria-hidden>!</span>
+        <ReviewIcon name="warning" />
         <span className="dsh-wt-review-dock-copy">
           <strong>{standaloneRecovery.request.kind === 'worktree_apply_conflict' ? t("worktree.conflict.recovery") : t("read.only.review.regeneration")}</strong>
           <span>

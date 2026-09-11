@@ -135,4 +135,9 @@ export const WORKTREE_STYLES = String.raw`
 .dsh-wt-pre-session-note { margin:0; color:color-mix(in srgb, currentColor 62%, transparent); font-size:12px; line-height:1.5; }
 @media (max-width: 560px) { .dsh-wt-grid { grid-template-columns:1fr; gap:3px; } .dsh-wt-label { margin-top:4px; } }
 ${REVIEW_CONSOLE_STYLES}
+
+.dsh-wt-pre-session .dsh-wt-button,
+.dsh-wt-create-dialog .dsh-wt-button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:34px; line-height:20px; box-sizing:border-box; }
+.dsh-wt-create-dialog .dsh-wt-button .dsh-wt-icon { width:16px; height:16px; flex:0 0 16px; vertical-align:middle; }
+.dsh-wt-pre-session-check .dsh-wt-icon { width:12px; height:12px; flex-basis:12px; }
 `

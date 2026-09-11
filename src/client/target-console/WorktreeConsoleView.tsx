@@ -1,3 +1,4 @@
+import { ReviewIcon } from '../review-console/ReviewIcon.js'
 import { useClientLanguage, useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
@@ -18,6 +19,7 @@ import {
 } from '../actions.js'
 
 export interface WorktreeConsoleViewProps {
+  embedded?: boolean
   sessionId: string
   adapter: WorktreeConsoleAdapter
   services: WorktreeClientServices
@@ -88,6 +90,7 @@ const ATTENTION_RANK: Record<WorktreeConsoleTargetState, number> = {
 
 /** Source-linked Worktree management surface backed only by WorktreeConsoleAdapter. */
 export function WorktreeConsoleView({
+  embedded = false,
   sessionId,
   adapter,
   services,
@@ -340,11 +343,8 @@ export function WorktreeConsoleView({
 
   return (
     <section className="dsh-wtc-console" aria-label={t("worktree.console")}>
-      <header className="dsh-wtc-console-head">
-        <div>
-          <span className="dsh-wtc-kicker">{t("session.target")}</span>
-          <h2>{t("linked.worktrees")}</h2>
-        </div>
+      <header className="dsh-wtc-console-head" data-embedded={embedded || undefined}>
+        {!embedded ? <h2>{t("linked.worktrees")}</h2> : null}
         <button type="button" className="dsh-wtc-button" disabled={loading} onClick={() => { void refresh() }}>
           {loading ? t("refreshing") : t("refresh")}
         </button>
@@ -366,7 +366,7 @@ export function WorktreeConsoleView({
                   disabled={pendingAction !== null}
                   onClick={() => { void createTarget() }}
                 >
-                  {pendingAction === 'create' ? t("creating.2") : t("create.worktree")}
+                  <ReviewIcon name="create" />{pendingAction === 'create' ? t("creating.2") : t("create.worktree")}
                 </button>
               ) : null}
             </div>
@@ -392,12 +392,13 @@ export function WorktreeConsoleView({
                     <div className="dsh-wtc-row-main">
                       <div className="dsh-wtc-row-title">
                         <TargetState target={target} />
-                        <span className="dsh-wtc-row-id">{target.checkoutId ?? 'Local source'}</span>
+                        <span className="dsh-wtc-task-name">{target.review?.summary || t("manager.task.label", { project: target.project.name, iteration: target.iteration })}</span>
                         {target.checkoutId === visibleSnapshot.current.checkoutId ? <span className="dsh-wtc-relation">{t("current.2")}</span> : null}
                         {sessionId === target.sourceSessionId && sessionId !== target.ownerSessionId ? <span className="dsh-wtc-relation">{t("source")}</span> : null}
                         {sessionId !== target.sourceSessionId && sessionId !== target.ownerSessionId ? <span className="dsh-wtc-relation">{t("linked.task")}</span> : null}
                       </div>
                       <div className="dsh-wtc-facts">
+                        {target.checkoutId ? <span className="dsh-wtc-checkout-id" title={t("manager.task.id")}>{target.checkoutId}</span> : null}
                         <span>{t("iteration")} {t("count.iterations", { count: target.iteration })}</span>
                         {target.dirty ? <span>{t("uncommitted.changes")}</span> : <span>{t("clean")}</span>}
                         {(target.checkpoints?.length ?? 0) > 0 ? <span>{t("saved")} {target.checkpoints!.length} {t("undelivered.stages")}</span> : null}
@@ -416,7 +417,7 @@ export function WorktreeConsoleView({
                           disabled={pendingAction !== null}
                           onClick={() => { void openListedTarget(target) }}
                         >
-                          {pendingAction === `open:${target.checkoutId}` ? t("opening") : t("open.2")}
+                          <ReviewIcon name="folder" />{pendingAction === `open:${target.checkoutId}` ? t("opening") : t("open.2")}
                         </button>
                       ) : null}
                       {target.capabilities.discard && target.checkoutId !== null ? (
@@ -430,7 +431,7 @@ export function WorktreeConsoleView({
                             else void discardTarget(target, false)
                           }}
                         >
-                          {pendingAction === `discard:${target.checkoutId}` ? t("discarding.2") : t("discard.2")}
+                          <ReviewIcon name="discard" />{pendingAction === `discard:${target.checkoutId}` ? t("discarding.2") : t("discard.2")}
                         </button>
                       ) : null}
                       {target.capabilities.retryCleanup && target.checkoutId !== null ? (
@@ -441,7 +442,7 @@ export function WorktreeConsoleView({
                           disabled={pendingAction !== null}
                           onClick={() => { void retryCleanup(target) }}
                         >
-                          {pendingAction === `cleanup:${target.checkoutId}` ? t("retrying") : t("retry.cleanup.2")}
+                          <ReviewIcon name="refresh" />{pendingAction === `cleanup:${target.checkoutId}` ? t("retrying") : t("retry.cleanup.2")}
                         </button>
                       ) : null}
                     </div>
@@ -480,7 +481,7 @@ export function WorktreeConsoleView({
               className="dsh-wtc-button dsh-wtc-danger"
               onClick={() => { void discardTarget(confirmTarget, true) }}
             >
-              {t("confirm.discard.changes")} </button>
+              <ReviewIcon name="discard" />{t("confirm.discard.changes")} </button>
           </div>
         </div>
       ) : null}

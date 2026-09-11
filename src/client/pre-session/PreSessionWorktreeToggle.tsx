@@ -1,3 +1,4 @@
+import { ReviewIcon } from '../review-console/ReviewIcon.js'
 import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useEffect, useRef, useState } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -151,15 +152,15 @@ export function PreSessionWorktreeToggle({ sessionId, session, input, inputActio
         aria-describedby={error ? `dsh-wt-pre-session-error-${sessionId}` : undefined}
         className="dsh-wt-pre-session-toggle" disabled={disabled}
         onClick={() => { void beginConfirmation() }}>
-        <span className="dsh-wt-pre-session-check" aria-hidden="true">{selected ? '✓' : ''}</span>
+        <span className="dsh-wt-pre-session-check" aria-hidden="true">{selected ? <ReviewIcon name="confirm" /> : null}</span>
         <span>{t('worktree')}</span>
       </button>
       {error ? (
         <span id={`dsh-wt-pre-session-error-${sessionId}`} className="dsh-wt-pre-session-error" role="alert">
-          {error} <button type="button" className="dsh-wt-button" disabled={busy} onClick={() => { void beginConfirmation() }}>{t('retry')}</button>
+          {error} <button type="button" className="dsh-wt-button" disabled={busy} onClick={() => { void beginConfirmation() }}><ReviewIcon name="refresh" />{t('retry')}</button>
         </span>
       ) : null}
-      <Modal open={pending !== null} onClose={cancelConfirmation}
+      <Modal className="dsh-wt-create-dialog" open={pending !== null} onClose={cancelConfirmation}
         title={pending?.kind === 'empty' ? t('pre.session.initial.title') : t('start.in.a.worktree')}
         closeLabel={t('close')}
         description={pending === null ? '' : pending.kind === 'empty' ? t('pre.session.initial.description') : pending.kind === 'files' ? t('pre.session.files.description') : confirmationDescription(pending.input, t)}
@@ -167,7 +168,7 @@ export function PreSessionWorktreeToggle({ sessionId, session, input, inputActio
           <>
             <button type="button" className="dsh-wt-button" disabled={busy} onClick={cancelConfirmation}>{t('cancel')}</button>
             {pending?.kind !== 'files' ? <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={busy} onClick={() => { void confirm() }}>
-              {busy ? t('creating') : pending?.kind === 'empty' ? t('pre.session.initial.confirm') : t('create.and.switch')}
+              <ReviewIcon name="create" />{busy ? t('creating') : pending?.kind === 'empty' ? t('pre.session.initial.confirm') : t('create.and.switch')}
             </button> : null}
           </>
         )}>

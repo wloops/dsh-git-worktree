@@ -78,11 +78,23 @@ test('更多及预览操作使用 Lucide，长文本 Modal 使用独立可滚动
   fixture.target.review!.summary = '很长的验收标题'.repeat(30)
   fixture.target.review!.changedFiles = ['src/' + 'long-path/'.repeat(30) + 'file.ts']
   render(<WorktreeReviewStatus session={{ sessionId: 'target-session' }} adapter={fixture.adapter} services={services} />)
-  expect((await screen.findByRole('button', { name: '预览修改' })).querySelector('.lucide-eye')).toBeTruthy()
-  expect(document.querySelector('.dsh-wt-more-trigger .lucide-ellipsis')).toBeTruthy()
+  expect((await screen.findByRole('button', { name: '预览修改' })).querySelector('.lucide-tv-minimal-play')).toBeTruthy()
+  expect(document.querySelector('.dsh-wt-more-trigger .lucide-circle-ellipsis')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '查看详情' }))
   const dialog = screen.getByRole('dialog', { name: '验收详情' })
   expect(dialog.querySelector('.dsh-wt-details-header .lucide-x')).toBeTruthy()
   expect(dialog.querySelector('.dsh-wt-details-body')).toBeTruthy()
   expect(within(dialog).getByText(fixture.target.review!.changedFiles[0]!)).toBeTruthy()
+})
+
+test('待验收更多菜单每个操作均有语义图标且不重复插入', async () => {
+  const fixture = createWorktreeConsoleAdapterFixture()
+  render(<WorktreeReviewStatus session={{ sessionId: 'target-session' }} adapter={fixture.adapter} services={services} />)
+  await screen.findByRole('button', { name: '预览修改' })
+  const trigger = document.querySelector<HTMLElement>('.dsh-wt-more-trigger')!
+  expect(trigger.querySelector('.lucide-circle-ellipsis')).toBeTruthy()
+  fireEvent.click(trigger)
+  const items = document.querySelectorAll('.dsh-wt-more-item')
+  expect(items.length).toBeGreaterThan(2)
+  for (const item of Array.from(items)) expect(item.querySelectorAll('svg.lucide')).toHaveLength(1)
 })

@@ -1,3 +1,4 @@
+import { ReviewIcon } from './ReviewIcon.js'
 import { useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import type { WorktreeConsoleTargetSummary } from '../../console-contract.js'
 import type { WorktreeApplyPreflightView } from '../../types.js'
@@ -44,7 +45,7 @@ export function PreflightStatus({
     return (
       <div className="dsh-wt-preflight" data-preflight="error">
         <span>{t("preflight.failed")}{snapshot.error.message}</span>
-        <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}>{t("check.again")}</button>
+        <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}><ReviewIcon name="refresh" />{t("check.again")}</button>
       </div>
     )
   }
@@ -81,16 +82,16 @@ export function PreflightStatus({
       }[holder.state]}</p> : null}
       {preflight.status === 'conflict' || blocked ? (
         <div className="dsh-wt-recovery-actions">
-          <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}>{t("check.again")}</button>
+          <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onRefresh}><ReviewIcon name="refresh" />{t("check.again")}</button>
           {preflight.status === 'conflict' ? (
             <button type="button" className="dsh-wt-inline-action" disabled={busy || !target?.capabilities.resumeRevision} onClick={() => onRecovery(preflight)}>
-              {t("ask.agent.to.resolve.conflicts")} </button>
+              <ReviewIcon name="warning" />{t("ask.agent.to.resolve.conflicts")} </button>
           ) : staleIsolated ? (
             <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={() => onRecovery(preflight)}>
-              {t("regenerate.review")} </button>
+              <ReviewIcon name="refresh" />{t("regenerate.review")} </button>
           ) : null}
           {holder ? (
-            <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onOpenHolder}>{t("open.holding.task")}</button>
+            <button type="button" className="dsh-wt-inline-action" disabled={busy} onClick={onOpenHolder}><ReviewIcon name="external" />{t("open.holding.task")}</button>
           ) : null}
         </div>
       ) : null}

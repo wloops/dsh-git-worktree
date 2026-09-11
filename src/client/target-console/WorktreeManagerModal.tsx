@@ -37,6 +37,7 @@ export function WorktreeManagerModal({
       contentClassName="dsh-wtc-manager-content"
     >
       <WorktreeConsoleView
+        embedded
         sessionId={sessionId}
         adapter={adapter}
         services={services}

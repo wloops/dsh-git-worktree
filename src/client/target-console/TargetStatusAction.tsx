@@ -1,3 +1,4 @@
+import { ReviewIcon } from '../review-console/ReviewIcon.js'
 import { useClientLanguage, useClientTranslator, defaultClientTranslator, type ClientTranslator } from '../i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Menu, Modal, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -224,17 +225,17 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
   const items: MenuEntry[] = [
     { id: 'summary', label: summary, disabled: true },
     { type: 'separator', id: 'summary-separator' },
-    ...(target?.managedRoot && target.capabilities.open ? [{ id: 'reveal', label: t("open.current.working.location") } satisfies MenuEntry] : []),
+    ...(target?.managedRoot && target.capabilities.open ? [{ id: 'reveal', icon: <ReviewIcon name="folder" />, label: t("open.current.working.location") } satisfies MenuEntry] : []),
     ...(target && target.sourceSessionId !== sessionId
-      ? [{ id: 'source', label: t("return.to.source.session") } satisfies MenuEntry]
+      ? [{ id: 'source', icon: <ReviewIcon name="external" />, label: t("return.to.source.session") } satisfies MenuEntry]
       : []),
-    ...(target?.capabilities.beginNextIteration ? [{ id: 'begin_next_iteration', label: pendingAction === 'begin_next_iteration' ? t("creating") : t("start.next.iteration"), disabled: pendingAction !== null } satisfies MenuEntry] : []),
-    ...(target ? [{ id: 'manager', label: t("manage.linked.worktrees") } satisfies MenuEntry] : []),
+    ...(target?.capabilities.beginNextIteration ? [{ id: 'begin_next_iteration', icon: <ReviewIcon name="create" />, label: pendingAction === 'begin_next_iteration' ? t("creating") : t("start.next.iteration"), disabled: pendingAction !== null } satisfies MenuEntry] : []),
+    ...(target ? [{ id: 'manager', icon: <ReviewIcon name="manager" />, label: t("manage.linked.worktrees") } satisfies MenuEntry] : []),
   ]
   const footer: MenuEntry[] = target?.capabilities.retryCleanup
-    ? [{ id: 'retry_cleanup', label: pendingAction === 'retry_cleanup' ? t("processing") : t("retry.environment.cleanup"), disabled: pendingAction !== null }]
+    ? [{ id: 'retry_cleanup', icon: <ReviewIcon name="refresh" />, label: pendingAction === 'retry_cleanup' ? t("processing") : t("retry.environment.cleanup"), disabled: pendingAction !== null }]
     : target?.capabilities.discard
-      ? [{ id: 'discard', label: pendingAction === 'discard' ? t("processing") : t("discard.task.and.clean.up.worktree"), danger: true, disabled: pendingAction !== null }]
+      ? [{ id: 'discard', icon: <ReviewIcon name="discard" />, label: pendingAction === 'discard' ? t("processing") : t("discard.task.and.clean.up.worktree"), danger: true, disabled: pendingAction !== null }]
       : []
 
   return (
@@ -266,10 +267,10 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
             title={t("session.target.and.linked.worktrees")}
             onClick={() => setMenuOpen(current => !current)}
           >
-            <span className="dsh-wtc-target-dot" aria-hidden />
+            <ReviewIcon name={target?.state === 'local' ? 'local' : 'branch'} className="dsh-wtc-target-kind" />
             {target?.state === 'local' || !target ? triggerLabel : <>{t("worktree.2")} <span>{stateLabel}</span></>}
             {expiry ? <span className="dsh-wtc-target-expiry">· {expiry}</span> : null}
-            <span className="dsh-wtc-target-chevron" aria-hidden />
+            <ReviewIcon name="down" className="dsh-wtc-target-chevron" />
           </button>
         )}
       />

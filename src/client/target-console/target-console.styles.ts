@@ -145,4 +145,12 @@ export const TARGET_CONSOLE_STYLES = String.raw`
   .dsh-wtc-current, .dsh-wtc-row { align-items: flex-start; flex-direction: column; }
   .dsh-wtc-current-actions, .dsh-wtc-row-actions { width: 100%; justify-content: flex-start; }
 }
+.dsh-wtc-button, .dsh-wtc-link { display:inline-flex; align-items:center; gap:6px; }
+.dsh-wtc-button .dsh-wt-icon, .dsh-wtc-link .dsh-wt-icon { width:16px; height:16px; flex:0 0 16px; }
+.dsh-wtc-target-kind { width:14px; height:14px; flex:0 0 14px; }
+.dsh-wtc-target-chip .dsh-wtc-target-chevron { width:12px; height:12px; border:0; transform:none; margin:0; }
+.dsh-wtc-target-chip[aria-expanded="true"] .dsh-wtc-target-chevron { transform:rotate(180deg); }
+.dsh-wtc-console-head[data-embedded] { justify-content:flex-end; }
+.dsh-wtc-task-name { min-width:0; overflow-wrap:anywhere; font-weight:500; }
+.dsh-wtc-facts .dsh-wtc-checkout-id { font-size:11px; overflow-wrap:anywhere; }
 `

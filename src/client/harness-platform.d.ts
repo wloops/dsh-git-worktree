@@ -9,7 +9,7 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   import type { ComponentType, ReactNode } from 'react'
 
   export type MenuEntry =
-    | { id: string; label: ReactNode; disabled?: boolean; danger?: boolean }
+    | { id: string; label: ReactNode; icon?: ReactNode; disabled?: boolean; danger?: boolean }
     | { type: 'separator'; id: string }
     | { type: 'label'; id: string; text: string }
 
