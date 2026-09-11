@@ -231,8 +231,10 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     }
   }
 
-  async function authorize(sessionId: string, checkoutId: string): Promise<ManagedCheckoutRecord> {
-    const caller = await options.module.inspect(sessionId)
+  async function authorize(sessionId: string, checkoutId: string, observedCaller?: SessionTargetView): Promise<ManagedCheckoutRecord> {
+    // Only read endpoints pass a caller observed in this request. Mutations
+    // always perform fresh inspection before their own transactional checks.
+    const caller = observedCaller ?? await options.module.inspect(sessionId)
     const record = recordOf(options.registry, checkoutId)
     if (record.ownerSessionId !== sessionId && record.sourceSessionId !== sessionId) {
       throw domainError('not_owner', hostMessage('theCurrentSessionIsNotAllowedToAccessThis'))
@@ -254,6 +256,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
   async function linkedReadAccess(
     sessionId: string,
     checkoutId: string,
+    observedCaller?: SessionTargetView,
   ): Promise<{
     record: ManagedCheckoutRecord
     linkedRead: boolean
@@ -261,7 +264,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
   }> {
     const requested = recordOf(options.registry, checkoutId)
     if (requested.ownerSessionId === sessionId || requested.sourceSessionId === sessionId) {
-      return { record: await authorize(sessionId, checkoutId), linkedRead: false }
+      return { record: await authorize(sessionId, checkoutId, observedCaller), linkedRead: false }
     }
     const caller = await callerTarget(sessionId)
     if (caller.checkout.kind !== 'isolated') {
@@ -316,6 +319,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     dirty?: boolean
   }> {
     if (record.phase === 'discarded') return { managedRoot: null }
+    if (options.module.observeManagedCheckout) return options.module.observeManagedCheckout(record.checkoutId)
     const managedRoot = await options.module.resolveManagedRoot(record.checkoutId)
     const snapshot = await options.git.inspect(managedRoot)
     if (snapshot === null) throw domainError('checkout_mismatch', hostMessage('theWorktreeGitIdentityCannotBeVerified'))
@@ -378,8 +382,9 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     sessionId: string,
     checkoutId: string,
     observedDeliveryProof?: WorktreeConsoleDeliveryProof,
+    observedCaller?: SessionTargetView,
   ) {
-    const access = await linkedReadAccess(sessionId, checkoutId)
+    const access = await linkedReadAccess(sessionId, checkoutId, observedCaller)
     const observed = await observe(access.record)
     let projectedRecord = access.record
     if (access.acceptanceAnchorCheckoutId !== undefined) {
@@ -548,7 +553,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       const target = await callerTarget(sessionId)
       if (target.checkout.kind === 'local') return { target: projectLocal(target, sessionId) }
       return {
-        target: await details(sessionId, target.checkout.id, deliveryProofFromTarget(target)),
+        target: await details(sessionId, target.checkout.id, deliveryProofFromTarget(target), target),
       }
     }),
 
@@ -557,7 +562,7 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
       let sourceSessionId = request.sessionId
       let localRoot: string | undefined
       if (caller.checkout.kind === 'isolated') {
-        const anchor = await authorize(request.sessionId, caller.checkout.id)
+        const anchor = await authorize(request.sessionId, caller.checkout.id, caller)
         sourceSessionId = anchor.sourceSessionId ?? anchor.ownerSessionId
         localRoot = anchor.localRoot
       } else {

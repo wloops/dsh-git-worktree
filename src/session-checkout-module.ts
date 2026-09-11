@@ -3621,12 +3621,16 @@ export function createSessionCheckoutModule(
     return summarizeManagedWorktree(updated)
   }
 
-  async function resolveManagedRoot(checkoutId: string): Promise<string> {
+  async function observeManagedCheckout(checkoutId: string) {
     const record = dependencies.registry.read().managedCheckouts[checkoutId]
     if (!record || record.phase === 'discarded') throw new SessionCheckoutError('checkout_missing', hostMessage('theWorktreeDirectoryNoLongerExists'))
     const validated = await validateManagedCheckout(bindingForManagedRecord(record), record, false)
     if (!validated) throw new SessionCheckoutError('checkout_mismatch', hostMessage('theWorktreeDirectoryIdentityCannotBeVerified'))
-    return validated.canonicalManagedRoot
+    return { managedRoot: validated.canonicalManagedRoot, snapshot: validated.snapshot, dirty: validated.status.dirty }
+  }
+
+  async function resolveManagedRoot(checkoutId: string): Promise<string> {
+    return (await observeManagedCheckout(checkoutId)).managedRoot
   }
 
   async function cleanupExpiredRetained(now = Date.now()): Promise<string[]> {
@@ -4154,6 +4158,7 @@ export function createSessionCheckoutModule(
     bulkCleanupManagedWorktrees: (candidates) => withBindingLock(() => bulkCleanupManagedWorktrees(candidates)),
     manageManagedWorktree: (input) => withBindingLock(() => manageManagedWorktree(input)),
     resolveManagedRoot: (checkoutId) => withBindingLock(() => resolveManagedRoot(checkoutId)),
+    observeManagedCheckout: (checkoutId) => withBindingLock(() => observeManagedCheckout(checkoutId)),
     cleanupExpiredRetained: (now) => withBindingLock(
       () => cleanupExpiredRetained(now),
       { allowConcurrentInspect: true },

@@ -2,7 +2,7 @@ import { createNodeSessionCheckoutDependencies } from './support/production-adap
 import { createSessionCheckoutModule } from '../src/session-checkout-module.js'
 import { createWorktreeConsoleControlPlane } from '../src/console-host/control-plane.js'
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile, readFile, rename } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, readFile, rename, realpath } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,6 +45,36 @@ async function fixture() {
   return { root, repo, hooks, port: createDshGitPort(ctx, { hooksPath: join(root, 'no-hooks') }) }
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
+
+it('reads fresh Git identity paths together for subdirectories and detached worktrees', async () => {
+  const { root, repo, hooks, port } = await fixture()
+  git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base'])
+  const managed = join(root, '工作 tree')
+  expect(git(repo, ['worktree', 'add', '--detach', managed, 'HEAD']).status).toBe(0)
+  const nested = join(managed, '子 directory')
+  await mkdir(nested)
+  const calls: string[][] = []
+  hooks.beforeCommand = args => { calls.push(args) }
+  const snapshot = await port.inspect(nested)
+  expect(snapshot).toMatchObject({ root: await realpath(managed), commonDir: await realpath(join(repo, '.git')), branch: null, headRef: 'HEAD' })
+  expect(snapshot?.gitDir).not.toBe(snapshot?.commonDir)
+  expect(calls.filter(args => args.includes('--git-common-dir'))).toHaveLength(1)
+  expect(calls.find(args => args.includes('--git-common-dir'))).toContain('--absolute-git-dir')
+  calls.length = 0
+  await port.inspect(nested)
+  expect(calls.some(args => args.includes('--git-common-dir'))).toBe(true)
+})
+
+it.skipIf(process.platform === 'win32')('falls back to single identity reads for a repository path containing a newline', async () => {
+  const { root, hooks, port } = await fixture()
+  const repo = join(root, 'line\nbreak')
+  await mkdir(repo)
+  expect(git(repo, ['init', '-b', 'main']).status).toBe(0)
+  const calls: string[][] = []
+  hooks.beforeCommand = args => { calls.push(args) }
+  expect(await port.inspect(repo)).toMatchObject({ root: await realpath(repo), commonDir: await realpath(join(repo, '.git')), gitDir: await realpath(join(repo, '.git')) })
+  expect(calls.filter(args => args.includes('--git-common-dir'))).toHaveLength(2)
+})
 
 describe('production Git adapter: unborn repositories', () => {
   it('recognizes git init without requiring HEAD or writing a commit', async () => {

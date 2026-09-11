@@ -186,8 +186,17 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
         if (topLevel.code === 128 && /^fatal: not a git repository/.test(topLevel.stderr) && !await hasGitMetadata(root)) return null
         throw new SessionCheckoutError('git_operation_failed', hostMessage('repositoryInspectionFailed'))
       }
-      const commonDir = await runSessionGitChecked(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
-      const gitDir = await runSessionGitChecked(root, ['rev-parse', '--path-format=absolute', '--absolute-git-dir'])
+      // Both paths come from the same fresh Git invocation. Do not cache across
+      // operations: the worktree/common-directory identity is a safety boundary.
+      const paths = (await runSessionGitChecked(root, [
+        'rev-parse', '--path-format=absolute', '--git-common-dir', '--absolute-git-dir',
+      ])).split('\n')
+      // Newlines are legal in POSIX paths; retain the unambiguous single-value
+      // reads when the multi-value output cannot be parsed safely.
+      const commonDir = paths.length === 2 ? paths[0]!
+        : await runSessionGitChecked(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+      const gitDir = paths.length === 2 ? paths[1]!
+        : await runSessionGitChecked(root, ['rev-parse', '--path-format=absolute', '--absolute-git-dir'])
       const head = await runSessionGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
       let headOid = head.stdout
       if (head.code !== 0) {

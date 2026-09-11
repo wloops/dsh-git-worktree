@@ -9,6 +9,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {
+  GitCheckoutSnapshot,
   ManagedApplyConflictRecoveryContinuation,
   ManagedPreviewRecoveryAnalysisContinuation,
   ManagedPreviewRecoveryHandoffContinuation,
@@ -149,6 +150,8 @@ export interface SessionCheckoutModule {
   manageManagedWorktree(input: ManageManagedWorktreeInput): Promise<ManagedWorktreeSummaryView>
   /** Resolve a managed checkout's canonical root after identity validation (workspace registration). */
   resolveManagedRoot(checkoutId: string): Promise<string>
+  /** Fresh validated observation; callers can project it without re-reading Git. */
+  observeManagedCheckout?(checkoutId: string): Promise<{ managedRoot: string; snapshot: GitCheckoutSnapshot; dirty: boolean }>
   cleanupExpiredRetained(now?: number): Promise<string[]>
   reconcile(): Promise<SessionCheckoutReconcileSummary>
 }
