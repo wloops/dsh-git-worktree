@@ -4,12 +4,21 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-15
+
+`0.9.1` 修复 Windows 长路径和慢速仓库中 Worktree 创建失败或超时的问题，并减少状态与预览流程的重复 Git 查询；失败清理继续以可证明归属为前提，不修改用户 Git 配置、不全局 prune，也不删除未知锁或残留。
+
 ### Fixed
 
 - Windows 下为创建、检出、状态与验收交付的 Git 调用启用命令级长路径支持，修复 Worktree 路径前缀增长导致的 Filename too long；不修改用户 Git 配置或跳过 LFS。
 - Worktree 创建使用独立可配置的 5 分钟共享时限，普通 Git 默认从 30 秒提高至 2 分钟；失败后等待进程树退出，验证本次目录、元数据和残留内容后回滚并恢复原会话绑定，允许手动重试。无法证明安全的残留继续保留，不全局 prune、不删除未知锁；稀疏检出保持原生语义。
 - 减少状态读取与 Worktree 管理列表的重复 Git 查询：复用同次只读请求的调用者检查及同次目录验证结果，保留预览、交付、清理的实时安全校验与锁。
 - 合并 Git common directory 与 worktree Git directory 的身份路径查询，减少进程启动开销；对包含换行的路径保留单值查询回退。
+
+### Compatibility
+
+- 继续使用既有 DeepSeek Harness peer 范围和 Worktree registry；无需迁移数据或修改 Git 配置。
+- 新增 `gitTimeoutMs`（默认 2 分钟）与 `worktreeAddTimeoutMs`（默认 5 分钟）配置，现有配置不需要补写。
 
 ## [0.9.0] - 2026-09-11
 
@@ -341,6 +350,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.9.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.5...v0.8.0
 [0.7.5]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.4...v0.7.5
