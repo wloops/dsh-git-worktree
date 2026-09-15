@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 创建首次及下一轮 Managed Worktree 时一次性携带项目 `.dsh/skills`、`.agents/skills` 和 `.claude/skills` 的本地文件与资源，并接入 `.claude` Skill 加载；携带的辅助文件不自动混入交付，已跟踪改动与显式暂存保留正常 Git 语义。冲突、链接或复制中断时保留现场，不覆盖不同内容或反向同步 Local。
+
 ## [0.9.1] - 2026-09-15
 
 `0.9.1` 修复 Windows 长路径和慢速仓库中 Worktree 创建失败或超时的问题，并减少状态与预览流程的重复 Git 查询；失败清理继续以可证明归属为前提，不修改用户 Git 配置、不全局 prune，也不删除未知锁或残留。

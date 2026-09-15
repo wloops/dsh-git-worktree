@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createDshGitPort } from '../src/adapters/git.js'
 import { Config, apply } from '../src/index.js'
 import { gitTimeoutMs } from '../src/adapters/git-options.js'
+import { ProjectSkillStore } from '../src/adapters/project-skills.js'
 
 afterEach(() => vi.useRealTimers())
 it('keeps command termination grace separate from a customized query deadline', async () => {
@@ -15,7 +16,10 @@ it('keeps command termination grace separate from a customized query deadline', 
     grace = spec.graceMs
     return { done: new Promise(resolve => { finish = resolve }), collected: {} }
   } } } as unknown as Context
-  const port = createDshGitPort(ctx, { hooksPath: '/hooks', gitTimeoutMs: 40_000 })
+  const projectSkills = new ProjectSkillStore('/unused')
+  vi.spyOn(projectSkills, 'paths').mockResolvedValue(null)
+  vi.spyOn(projectSkills, 'forget').mockResolvedValue(undefined)
+  const port = createDshGitPort(ctx, { hooksPath: '/hooks', gitTimeoutMs: 40_000, projectSkills })
   const pending = port.removeWorktree('/repo', '/managed')
   await vi.advanceTimersByTimeAsync(40_001)
   expect(signal?.aborted).toBe(false)

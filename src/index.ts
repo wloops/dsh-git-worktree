@@ -1,3 +1,5 @@
+import { ProjectSkillStore } from './adapters/project-skills.js'
+import { mountProjectSkillProvider } from './adapters/project-skill-provider.js'
 /**
  * dsh-git-worktree plugin entry. The session-checkout domain (state machine,
  * apply engine, ports) is Domi-ported and host-agnostic; this file is the DSH
@@ -218,15 +220,17 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
   mkdirSync(hooksPath, { recursive: true })
 
   const lookup = createDshLookupPort(ctx)
-  const git = createDshGitPort(ctx, { hooksPath, gitTimeoutMs: config.gitTimeoutMs, worktreeAddTimeoutMs: config.worktreeAddTimeoutMs })
+  const projectSkills = new ProjectSkillStore(join(stateDir, 'project-skills'))
+  const git = createDshGitPort(ctx, { hooksPath, projectSkills, gitTimeoutMs: config.gitTimeoutMs, worktreeAddTimeoutMs: config.worktreeAddTimeoutMs })
   const files = createNodeFilesPort()
   const registry = new AtomicJsonCheckoutRegistry(join(stateDir, 'managed-checkouts.json'))
+  mountProjectSkillProvider(ctx, registry)
   const module = createSessionCheckoutModule({
     lookup,
     git,
     files,
     registry,
-    applyEngine: createSessionCheckoutApplyEngine(),
+    applyEngine: createSessionCheckoutApplyEngine({ projectSkills }),
     managedCheckoutsRoot: stateDir,
     createCheckoutId: randomUUID,
   })
@@ -237,7 +241,7 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
     files,
     registry,
     git,
-    reviewDiff: createGitWorktreeReviewDiffReader(),
+    reviewDiff: createGitWorktreeReviewDiffReader(projectSkills),
   }))
 
   registerTools(ctx, module)

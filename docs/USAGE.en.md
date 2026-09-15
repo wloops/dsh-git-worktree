@@ -309,3 +309,16 @@ pnpm run dev:dsh:remove
 - [UI development notes](UI-DEVELOPMENT.md)
 - [Release checklist](RELEASE.md)
 - [Changelog](../CHANGELOG.md)
+
+## Project Skills
+
+The first Managed Worktree and each new iteration take a one-time copy of the Local project's `.dsh/skills/`, `.agents/skills/`, and `.claude/skills/`, including untracked/ignored files, resources, and empty directories. Whole configuration directories are not copied. There is no continuous synchronization or writeback to Local, and existing Worktrees are not backfilled.
+
+`.dsh` and `.agents` keep the Host's default loader. `.claude` uses the upstream filesystem Skill provider, scoped to verified Managed Worktrees. Same-name priority is `.dsh`, `.agents`, `.claude`, then global sources.
+
+- Resolve uncommitted tracked Skill edits, deletions, or creation-baseline conflicts before creation; different content is never silently overwritten.
+- Carried auxiliary files and newly generated untracked resources inside their Skill directories are excluded from automatic review/checkpoint/preview/final commits. Tracked changes retain normal Git semantics. Explicitly stage auxiliary files to deliver them (`git add -f` for ignored files).
+- Modified/deleted carried resources or unknown resources prevent cleanup from discarding the Worktree. Interrupted copies also retain recovery evidence instead of automatically deleting it.
+- Only the three listed roots are supported. Symlinks/junctions and external links are rejected. Limits: 5000 files, 64 MiB total, 10000 inspected entries, and 64 directory levels.
+
+Copying uses Node file APIs and requires no new native plugin dependency. This is intended for trusted local projects: do not replace or modify these directories from another process while copying. Path checks do not provide atomic containment against malicious concurrent directory replacement.

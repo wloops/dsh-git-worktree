@@ -1,3 +1,4 @@
+import { ProjectSkillStore, PROJECT_SKILL_ROOTS, hasDeliverableStatus, trackedSkillPaths } from './project-skills.js'
 import { createWorktree } from './worktree-creation.js'
 import { gitTimeoutMs, validateGitTimeouts, type GitTimeoutOptions } from './git-options.js'
 import { initialCommitActions, type GitCommitProtocol } from './initial-commit.js'
@@ -29,6 +30,7 @@ const GIT_COLLECT_BYTES = 1 << 20
 export interface GitPortOptions extends GitTimeoutOptions {
   /** Directory holding the empty `core.hooksPath` target; created by the caller. */
   hooksPath: string
+  projectSkills?: ProjectSkillStore
 }
 
 interface GitCommandResult {
@@ -207,6 +209,7 @@ async function hasGitMetadata(root: string): Promise<boolean> {
 /** Build the `ctx.subprocess`-backed git port. */
 export function createDshGitPort(ctx: Context, options: GitPortOptions): SessionCheckoutGitPort {
   validateGitTimeouts(options)
+  const projectSkills = options.projectSkills ?? new ProjectSkillStore(join(dirname(options.hooksPath), 'project-skills'))
   const runSessionGit = (cwd: string, args: string[], input?: string | GitCommitProtocol) => runGit(ctx, cwd, args, options, input)
   const runSessionGitChecked = (cwd: string, args: string[]) => runGitChecked(ctx, cwd, args, options)
 
@@ -263,20 +266,32 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
     },
     status: async (root) => {
       const output = await runSessionGitChecked(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
-      return { dirty: output.length > 0 }
+      const carried = await projectSkills.scope(root)
+      return { dirty: hasDeliverableStatus(output, new Set(carried?.paths ?? []), carried?.directories) }
     },
     createDetachedWorktree: async (localRoot, managedRoot, baseOid, saveEvidence) => {
+      const skills = await projectSkills.snapshot(localRoot)
+      const changed = await runSessionGitChecked(localRoot, ['diff', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
+        + await runSessionGitChecked(localRoot, ['diff', '--cached', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
+      if (changed) throw new SessionCheckoutError('git_operation_failed', `Project Skills: commit or resolve local tracked Skill changes before creating a Worktree (${changed.split('\0').filter(Boolean).join(', ')})`)
       const deadline = Date.now() + gitTimeoutMs(['worktree', 'add'], options)
       await createWorktree(localRoot, managedRoot, baseOid,
         (cwd, args, creating) => runGit(ctx, cwd, args, options, undefined, creating ? { deadline }
           : args[0] === 'worktree' && ['move', 'remove'].includes(args[1] ?? '')
             ? { deadline: Date.now() + gitTimeoutMs(args, options) } : undefined),
         saveEvidence)
+      await projectSkills.carry(skills, managedRoot)
     },
     removeWorktree: async (localRoot, managedRoot) => {
       // Git treats a reviewed-but-uncommitted final snapshot as modified/untracked;
       // the caller has already verified checkout identity and the full fingerprint.
+      if (await projectSkills.paths(managedRoot)) {
+        const index = await runSessionGitChecked(managedRoot, ['ls-files', '--stage', '-z'])
+        const head = await runSessionGitChecked(managedRoot, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'])
+        await projectSkills.assertRemovable(managedRoot, trackedSkillPaths(index, head))
+      }
       await runSessionGitChecked(localRoot, ['worktree', 'remove', '--force', managedRoot])
+      await projectSkills.forget(managedRoot)
     },
     retainApplyBase: async (localRoot, checkoutId, oid) => {
       await runSessionGitChecked(localRoot, ['update-ref', applyBaseRef(checkoutId), oid])

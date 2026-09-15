@@ -9,6 +9,9 @@ import { dirname, join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import type { Context } from '@deepseek-ai/cordis'
 import { createDshGitPort } from '../src/adapters/git.js'
+import { ProjectSkillStore } from '../src/adapters/project-skills.js'
+import { createSessionCheckoutApplyEngine } from '../src/session-checkout-apply.js'
+import { createGitWorktreeReviewDiffReader } from '../src/console-host/review-diff.js'
 
 const roots: string[] = []
 function testEnvironment(overrides: Record<string, string | undefined> = {}) {
@@ -43,7 +46,7 @@ async function fixture() {
       stderr: { readFrom: () => ({ text: stderr }) },
     } }
   } } } as unknown as Context
-  return { root, repo, hooks, port: createDshGitPort(ctx, { hooksPath: join(root, 'no-hooks') }) }
+  return { root, repo, hooks, ctx, port: createDshGitPort(ctx, { hooksPath: join(root, 'no-hooks') }) }
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
@@ -305,3 +308,158 @@ it.skipIf(process.platform !== 'win32')('creates long-path Windows checkouts on 
   expect(await readFile(join(repo, '.git', 'config'), 'utf8')).toBe(configBefore)
   expect(git(repo, ['status', '--porcelain']).stdout).toBe('')
 }, 120_000)
+
+it('carries ignored project Skill resources on creation without making the checkout dirty', async () => {
+  const { root, repo, port } = await fixture()
+  git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base'])
+  await writeFile(join(repo, '.git', 'info', 'exclude'), '/.agents/skills/\n')
+  const skill = join(repo, '.agents', 'skills', 'local-helper')
+  await mkdir(join(skill, 'scripts'), { recursive: true })
+  const body = '---\nname: local-helper\ndescription: Local helper\n---\nRead scripts/helper.txt.\n'
+  await writeFile(join(skill, 'SKILL.md'), body)
+  await writeFile(join(skill, 'scripts', 'helper.txt'), 'local-only resource\n')
+  const managed = join(root, 'managed')
+  const head = git(repo, ['rev-parse', 'HEAD']).stdout.trim()
+  await port.createDetachedWorktree(repo, managed, head)
+  expect(await readFile(join(managed, '.agents', 'skills', 'local-helper', 'SKILL.md'), 'utf8')).toBe(body)
+  expect(await readFile(join(managed, '.agents', 'skills', 'local-helper', 'scripts', 'helper.txt'), 'utf8')).toBe('local-only resource\n')
+  expect(await port.status(managed)).toEqual({ dirty: false })
+  expect(git(repo, ['rev-parse', 'HEAD']).stdout.trim()).toBe(head)
+  expect(git(repo, ['ls-files']).stdout).toBe('')
+})
+
+it('keeps carried Skills out of review, checkpoint, preview and finalize and carries fresh Skills into the next iteration', async () => {
+  const { root, repo, port } = await fixture()
+  git(repo, ['config', 'user.name', 'Test'])
+  git(repo, ['config', 'user.email', 'test@example.test'])
+  git(repo, ['config', 'core.autocrlf', 'false'])
+  await writeFile(join(repo, 'app.txt'), 'base\n')
+  git(repo, ['add', '.'])
+  git(repo, ['commit', '-m', 'base'])
+  const baseOid = git(repo, ['rev-parse', 'HEAD']).stdout.trim()
+  const skillPath = '.agents/skills/local-helper/SKILL.md'
+  await mkdir(dirname(join(repo, skillPath)), { recursive: true })
+  await writeFile(join(repo, skillPath), 'private Skill v1\n')
+  const projectSkills = new ProjectSkillStore(join(root, 'project-skills'))
+  const engine = createSessionCheckoutApplyEngine({ projectSkills })
+  let targetRoot: string | undefined
+  const deps = createNodeSessionCheckoutDependencies({ configDir: join(root, 'config'), lookup: {
+    getSession: id => id === 'source' ? { id, projectId: 'project' } : id === 'target' && targetRoot ? { id, projectId: 'managed' } : undefined,
+    getProject: id => id === 'project' ? { id, name: 'Project', root: repo } : id === 'managed' && targetRoot ? { id, name: 'Managed', root: targetRoot } : undefined,
+    getUnboundTargetPolicy: () => 'unselected',
+  } })
+  deps.git = port
+  deps.applyEngine = engine
+  const module = createSessionCheckoutModule(deps)
+  targetRoot = (await module.createIsolatedTarget('source', 'target')).managedRoot
+  expect(await port.status(targetRoot)).toEqual({ dirty: false })
+  await writeFile(join(targetRoot, 'app.txt'), 'changed\n')
+  const input = { baseOid, localPath: repo, isolatedPath: targetRoot }
+  const generated = '.agents/skills/local-helper/generated.json'
+  await writeFile(join(targetRoot, generated), 'private generated data')
+  expect(await engine.inspectReview(input)).toMatchObject({ status: 'ready', changedFiles: ['app.txt'] })
+  await expect(port.removeWorktree(repo, targetRoot)).rejects.toThrow(/modified/)
+  await rm(join(targetRoot, generated))
+  const review = await engine.inspectReview(input)
+  if (review.status !== 'ready') throw new Error(JSON.stringify(review))
+  expect(review.changedFiles).toEqual(['app.txt'])
+  const checkpoint = await engine.checkpoint({ isolatedPath: targetRoot, expectedFingerprint: review.isolatedFingerprint, expectedHeadOid: review.isolatedHeadOid, commitMessage: 'test: checkpoint' })
+  expect(checkpoint.status).toBe('checkpointed')
+  expect(git(targetRoot, ['ls-tree', '-r', '--name-only', 'HEAD']).stdout).not.toContain(skillPath)
+  const ready = await module.markReadyForReview('target', { summary: 'Skills isolation', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: isolation' })
+  if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected ready review')
+  const diff = await createGitWorktreeReviewDiffReader(projectSkills).read({ managedRoot: targetRoot, baseOid, reviewId: ready.delivery.review.reviewId, revision: ready.revision, changedFiles: ['app.txt'] })
+  expect(diff.files).toHaveLength(1)
+  const preview = await module.operate({ action: 'preview', sessionId: 'target', expectedRevision: ready.revision })
+  if (preview.status !== 'previewed') throw new Error(JSON.stringify(preview))
+  expect(await readFile(join(repo, skillPath), 'utf8')).toBe('private Skill v1\n')
+  const saved = await module.operate({ action: 'finalize_preview', sessionId: 'target', expectedRevision: preview.target.revision, commitMessage: 'test: isolation', retention: 'cleanup' })
+  if (saved.status !== 'finished') throw new Error(JSON.stringify(saved))
+  expect(saved.cleanup).toBe('discarded')
+  expect(git(repo, ['ls-tree', '-r', '--name-only', 'HEAD']).stdout).not.toContain(skillPath)
+  await writeFile(join(repo, skillPath), 'private Skill v2\n')
+  const head = git(repo, ['rev-parse', 'HEAD']).stdout
+  const index = await readFile(join(repo, '.git', 'index'))
+  await module.beginNextIteration('target', saved.target.revision)
+  expect(await readFile(join(targetRoot, skillPath), 'utf8')).toBe('private Skill v2\n')
+  expect(git(repo, ['rev-parse', 'HEAD']).stdout).toBe(head)
+  expect(await readFile(join(repo, '.git', 'index'))).toEqual(index)
+})
+
+it('preserves tracked Skill edits and explicit promotion of a carried Skill into Git', async () => {
+  const { root, repo, port } = await fixture()
+  git(repo, ['config', 'user.name', 'Test'])
+  git(repo, ['config', 'user.email', 'test@example.test'])
+  git(repo, ['config', 'core.autocrlf', 'false'])
+  const tracked = '.dsh/skills/tracked/SKILL.md'
+  await mkdir(dirname(join(repo, tracked)), { recursive: true })
+  await writeFile(join(repo, tracked), 'tracked base\n')
+  git(repo, ['add', '.']); git(repo, ['commit', '-m', 'base'])
+  const privatePath = '.dsh/skills/private/SKILL.md'
+  await mkdir(dirname(join(repo, privatePath)), { recursive: true })
+  await writeFile(join(repo, privatePath), 'private\n')
+  const head = git(repo, ['rev-parse', 'HEAD']).stdout.trim()
+  const managed = join(root, 'managed')
+  await port.createDetachedWorktree(repo, managed, head)
+  const engine = createSessionCheckoutApplyEngine({ projectSkills: new ProjectSkillStore(join(root, 'project-skills')) })
+  await writeFile(join(managed, tracked), 'tracked change\n')
+  expect(await engine.inspectReview({ baseOid: head, isolatedPath: managed, localPath: repo })).toMatchObject({ status: 'ready', changedFiles: [tracked] })
+  git(managed, ['add', '-f', '--', privatePath])
+  const review = await engine.inspectReview({ baseOid: head, isolatedPath: managed, localPath: repo })
+  expect(review).toMatchObject({ status: 'ready', changedFiles: [privatePath, tracked] })
+})
+
+it('rejects local tracked Skill conflicts before creating and retains later auxiliary changes on cleanup', async () => {
+  const { root, repo, port } = await fixture()
+  git(repo, ['config', 'user.name', 'Test']); git(repo, ['config', 'user.email', 'test@example.test'])
+  const path = '.claude/skills/helper/SKILL.md'
+  await mkdir(dirname(join(repo, path)), { recursive: true }); await writeFile(join(repo, path), 'base\n')
+  git(repo, ['add', '.']); git(repo, ['commit', '-m', 'base'])
+  const head = git(repo, ['rev-parse', 'HEAD']).stdout.trim()
+  await writeFile(join(repo, path), 'local change\n')
+  await expect(port.createDetachedWorktree(repo, join(root, 'conflict'), head)).rejects.toThrow(/tracked Skill changes/)
+  expect(git(repo, ['worktree', 'list', '--porcelain']).stdout).not.toContain('conflict')
+  git(repo, ['add', '--', path])
+  await writeFile(join(repo, path), 'base\n')
+  await expect(port.createDetachedWorktree(repo, join(root, 'staged-conflict'), head)).rejects.toThrow(/tracked Skill changes/)
+  git(repo, ['restore', '--staged', '--worktree', '--', path])
+  await rm(join(repo, path))
+  await expect(port.createDetachedWorktree(repo, join(root, 'deleted-conflict'), head)).rejects.toThrow(/tracked Skill changes/)
+  git(repo, ['restore', '--', path])
+  const auxiliary = '.claude/skills/helper/data.txt'
+  await writeFile(join(repo, auxiliary), 'private resource\n')
+  const managed = join(root, 'managed')
+  await port.createDetachedWorktree(repo, managed, head)
+  await writeFile(join(managed, auxiliary), 'must preserve\n')
+  await expect(port.removeWorktree(repo, managed)).rejects.toThrow(/modified/)
+  expect(await readFile(join(managed, auxiliary), 'utf8')).toBe('must preserve\n')
+})
+
+it('preserves an evidenced checkout and Local when Skill carrying is interrupted after creation', async () => {
+  const { root, repo, ctx } = await fixture()
+  git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base'])
+  const skill = '.agents/skills/helper/SKILL.md'
+  await mkdir(dirname(join(repo, skill)), { recursive: true })
+  await writeFile(join(repo, skill), 'private')
+  const before = git(repo, ['status', '--porcelain=v1', '-uall']).stdout
+  class InterruptedStore extends ProjectSkillStore {
+    override async carry(snapshot: Parameters<ProjectSkillStore['carry']>[0], target: string) {
+      await super.carry({ files: snapshot.files.slice(0, 1) }, target)
+      throw new Error('simulated interruption after first Skill file')
+    }
+  }
+  const deps = createNodeSessionCheckoutDependencies({ configDir: join(root, 'config'), lookup: {
+    getSession: id => id === 'source' ? { id, projectId: 'project' } : undefined,
+    getProject: id => ({ id, name: 'Project', root: repo }),
+    getUnboundTargetPolicy: () => 'unselected',
+  } })
+  deps.git = createDshGitPort(ctx, { hooksPath: join(root, 'no-hooks'), projectSkills: new InterruptedStore(join(root, 'skills-state')) })
+  const module = createSessionCheckoutModule(deps)
+  await expect(module.createIsolatedTarget('source', 'target')).rejects.toThrow()
+  const records = Object.values(deps.registry.read().managedCheckouts)
+  expect(records).toHaveLength(1)
+  expect(records[0]!.phase).toBe('recovery_required')
+  expect(await readFile(join(records[0]!.managedGitRoot, skill), 'utf8')).toBe('private')
+  expect(git(repo, ['status', '--porcelain=v1', '-uall']).stdout).toBe(before)
+  expect(await readFile(join(repo, skill), 'utf8')).toBe('private')
+})

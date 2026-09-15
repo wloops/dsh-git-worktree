@@ -309,3 +309,16 @@ pnpm run dev:dsh:remove
 - [UI 开发说明](UI-DEVELOPMENT.md)
 - [发布清单](RELEASE.md)
 - [变更记录](../CHANGELOG.md)
+
+## 项目 Skills
+
+首次创建及交付后的下一轮创建，会一次性携带 Local 项目中的 `.dsh/skills/`、`.agents/skills/`、`.claude/skills/`，包括未跟踪、忽略的文件、资源及空目录。不会复制整个配置目录，也不会持续同步或反向写回 Local；已有 Worktree 不会自动补拷。
+
+`.dsh` 和 `.agents` 继续使用 Host 默认加载器；`.claude` 通过上游文件系统 Skill provider 加载，仅作用于当前插件确认的 Managed Worktree。同名 Skill 的优先级是 `.dsh`、`.agents`、`.claude`，然后全局来源。
+
+- Local 中已跟踪 Skill 存在未提交修改、删除或与创建基线冲突时，先处理这些改动再创建；不会静默覆盖。
+- 携带的辅助文件及其 Skill 目录内新生成的未跟踪资源，不自动进入验收、checkpoint、预览或最终提交。已跟踪文件仍按正常 Git 规则交付；确实要交付辅助文件时，显式 `git add`（忽略文件需 `git add -f`）。
+- 修改、删除携带资源或产生未知资源后，清理会保留 Worktree，避免丢失这些未交付内容。复制中断也会保留恢复现场，不自动删除。
+- 只携带上述目录，不展开符号链接/junction 或项目外链接；文件上限 5000、总大小 64 MiB、目录检查上限 10000 项与 64 层。
+
+复制使用 Node 文件 API，无需新增原生插件依赖。适用于可信本地项目；复制期间不要由其他进程替换或修改相关目录。路径检查不是针对恶意并发目录替换的原子隔离保证。

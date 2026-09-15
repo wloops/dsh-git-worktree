@@ -1,3 +1,4 @@
+import { type ProjectSkillStore, trackedSkillPaths } from './adapters/project-skills.js'
 import { hostMessage } from './i18n/host.js'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -270,6 +271,7 @@ export interface SessionCheckoutApplyEngine {
 }
 
 export interface SessionCheckoutApplyEngineOptions {
+  projectSkills?: ProjectSkillStore
   /** 测试/宿主 seam：在最后一次 Local fingerprint 校验前执行。 */
   beforeFinalLocalValidation?(): Promise<void> | void
   /** 测试/宿主 seam：在 Local 写入完成、独立写后验证开始前执行。 */
@@ -526,6 +528,7 @@ async function captureSnapshot(
   indexPath: string,
   objectDirectory: string | null,
   sourceObjects: string | null,
+  projectSkills?: ProjectSkillStore,
 ): Promise<CheckoutSnapshot> {
   const headOid = stdoutText(await runGit(checkoutPath, ['rev-parse', 'HEAD']))
   const headTreeOid = stdoutText(await runGit(checkoutPath, ['rev-parse', `${headOid}^{tree}`]))
@@ -560,8 +563,15 @@ async function captureSnapshot(
   const indexTreeOid = stdoutText(await runGit(checkoutPath, ['write-tree'], { env }))
   // 先还原真实 index 的 staged 语义，再叠加 working tree，得到完整最终状态。
   await runGit(checkoutPath, ['add', '-A', '--', '.'], { env })
+  let carried: Awaited<ReturnType<ProjectSkillStore['state']>> = null
+  if (await projectSkills?.paths(checkoutPath)) {
+    const headPaths = (await runGit(checkoutPath, ['ls-tree', '-r', '--name-only', '-z', headOid])).stdout
+    carried = await projectSkills!.state(checkoutPath, trackedSkillPaths(indexEntries, headPaths))
+    if (carried?.paths.length) await runGit(checkoutPath, ['update-index', '--force-remove', '-z', '--stdin'], { env, input: Buffer.from(carried.paths.join('\0') + '\0') })
+  }
   const treeOid = stdoutText(await runGit(checkoutPath, ['write-tree'], { env }))
-  const fingerprint = snapshotFingerprint(headOid, headRef, indexEntries, treeOid)
+  const primaryFingerprint = snapshotFingerprint(headOid, headRef, indexEntries, treeOid)
+  const fingerprint = carried?.paths.length ? createHash('sha256').update(primaryFingerprint).update(carried.fingerprint).digest('hex') : primaryFingerprint
 
   return { fingerprint, headOid, headRef, headTreeOid, indexTreeOid, treeOid, indexEntries }
 }
@@ -1062,6 +1072,10 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
   constructor(private readonly options: SessionCheckoutApplyEngineOptions) {}
 
+  private captureSnapshot(checkoutPath: string, indexPath: string, objectDirectory: string | null, sourceObjects: string | null): Promise<CheckoutSnapshot> {
+    return captureSnapshot(checkoutPath, indexPath, objectDirectory, sourceObjects, this.options.projectSkills)
+  }
+
   async checkpoint(input: CheckpointInput): Promise<CheckpointResult> {
     const commitMessage = input.commitMessage.trim()
     if (!commitMessage || commitMessage.length > 500 || !OID_PATTERN.test(input.expectedHeadOid) || !input.expectedFingerprint.trim()) {
@@ -1079,7 +1093,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (projectPathPrefix === null) {
         return { status: 'error', error: { code: 'invalid_input', message: hostMessage('theCheckpointProjectDirectoryDoesNotBelongToThe') } }
       }
-      const snapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'checkpoint.index'), null, null)
+      const snapshot = await this.captureSnapshot(isolatedGitRoot, join(tempRoot, 'checkpoint.index'), null, null)
       if (snapshot.headRef !== null) {
         return { status: 'error', error: { code: 'operation_not_allowed', message: hostMessage('checkpointCanOnlyWriteToADetachedManagedWorktree') } }
       }
@@ -1110,7 +1124,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       await copyFile(finalIndexPath, adjacentIndex)
 
       await this.options.beforeFinalIsolatedValidation?.()
-      const finalSnapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'final-checkpoint.index'), null, null)
+      const finalSnapshot = await this.captureSnapshot(isolatedGitRoot, join(tempRoot, 'final-checkpoint.index'), null, null)
       if (finalSnapshot.headOid !== snapshot.headOid || finalSnapshot.fingerprint !== snapshot.fingerprint) {
         return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeChangedBeforeSavingTheCheckpointPrepareTheReview') } }
       }
@@ -1151,7 +1165,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
       try {
         await this.options.afterIsolatedWriteBeforeVerification?.()
-        const completed = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'completed.index'), null, null)
+        const completed = await this.captureSnapshot(isolatedGitRoot, join(tempRoot, 'completed.index'), null, null)
         if (
           completed.headOid !== commitOid
           || completed.headRef !== null
@@ -1214,7 +1228,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const targetTreeOid = stdoutText(await runGit(isolatedGitRoot, ['rev-parse', `${input.commitOid}^{tree}`]))
       const existingLock = await inspectIndexFileTree(isolatedGitRoot, indexLockPath)
       const markerOwned = await checkpointLockMarkerOwned(indexLockMarker, input.commitOid)
-      const snapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'current.index'), null, null)
+      const snapshot = await this.captureSnapshot(isolatedGitRoot, join(tempRoot, 'current.index'), null, null)
       if (snapshot.headRef !== null) {
         return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('worktreeNoLongerHasADetachedHEAD') } }
       }
@@ -1258,7 +1272,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       }
 
       await this.options.beforeFinalIsolatedValidation?.()
-      const lockedSnapshot = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'locked-current.index'), null, null)
+      const lockedSnapshot = await this.captureSnapshot(isolatedGitRoot, join(tempRoot, 'locked-current.index'), null, null)
       if (
         lockedSnapshot.headOid !== snapshot.headOid
         || lockedSnapshot.fingerprint !== snapshot.fingerprint
@@ -1270,7 +1284,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       ownedIndexLock = null
       await removeBestEffort(indexLockMarker)
       ownedLockMarker = null
-      const completed = await captureSnapshot(isolatedGitRoot, join(tempRoot, 'completed.index'), null, null)
+      const completed = await this.captureSnapshot(isolatedGitRoot, join(tempRoot, 'completed.index'), null, null)
       if (
         completed.headOid !== input.commitOid
         || completed.headRef !== null
@@ -1311,7 +1325,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         return { status: 'error', error: { code: 'invalid_input', message: hostMessage('theLocalAndIsolatedProjectSubdirectoriesDoNotMatch') } }
       }
       await runGit(localGitRoot, ['cat-file', '-e', `${input.baseOid}^{commit}`])
-      const isolated = await captureSnapshot(
+      const isolated = await this.captureSnapshot(
         isolatedGitRoot,
         join(tempRoot, 'isolated.index'),
         objectDirectory,
@@ -1372,13 +1386,13 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       }
       await runGit(localGitRoot, ['cat-file', '-e', `${input.baseOid}^{commit}`])
 
-      const local = await captureSnapshot(
+      const local = await this.captureSnapshot(
         localGitRoot,
         join(tempRoot, 'local.index'),
         objectDirectory,
         localObjects,
       )
-      const isolated = await captureSnapshot(
+      const isolated = await this.captureSnapshot(
         isolatedGitRoot,
         join(tempRoot, 'isolated.index'),
         objectDirectory,
@@ -1475,7 +1489,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (!pathsMatch(sourceObjects, stored.scope.sourceObjects)) {
         return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theApplyPlanSGitRepositoryIdentityHasChanged') } }
       }
-      const local = await captureSnapshot(
+      const local = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'local.index'),
         objectDirectory,
@@ -1485,7 +1499,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedAfterPlanningRecalculateThePlan') } }
       }
 
-      const isolated = await captureSnapshot(
+      const isolated = await this.captureSnapshot(
         stored.scope.isolatedGitRoot,
         join(tempRoot, 'isolated.index'),
         objectDirectory,
@@ -1497,7 +1511,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
       // 将已审核的 Isolated 最终状态写成无 ref 的内部 commit，供同一 checkout 后续 Apply 去重。
       // 使用独立 index，不改变 Isolated 的真实 staged/working tree。
-      const persistentIsolated = await captureSnapshot(
+      const persistentIsolated = await this.captureSnapshot(
         stored.scope.isolatedGitRoot,
         join(tempRoot, 'persistent-isolated.index'),
         null,
@@ -1516,7 +1530,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       )
 
       await this.options.beforeFinalLocalValidation?.()
-      const finalLocal = await captureSnapshot(
+      const finalLocal = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'final-local.index'),
         objectDirectory,
@@ -1567,7 +1581,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (!pathsMatch(sourceObjects, stored.scope.sourceObjects)) {
         return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('thePreviewPlanSGitRepositoryIdentityHasChanged') } }
       }
-      const local = await captureSnapshot(
+      const local = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'local.index'),
         objectDirectory,
@@ -1580,7 +1594,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       ) {
         return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedAfterPlanningRecalculateThePlan') } }
       }
-      const isolated = await captureSnapshot(
+      const isolated = await this.captureSnapshot(
         stored.scope.isolatedGitRoot,
         join(tempRoot, 'isolated.index'),
         objectDirectory,
@@ -1590,13 +1604,13 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         return { status: 'error', error: { code: 'stale_isolated', message: hostMessage('isolatedChangedAfterPlanningRecalculateThePlan') } }
       }
 
-      const persistentLocal = await captureSnapshot(
+      const persistentLocal = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'persistent-local.index'),
         null,
         null,
       )
-      const persistentIsolated = await captureSnapshot(
+      const persistentIsolated = await this.captureSnapshot(
         stored.scope.isolatedGitRoot,
         join(tempRoot, 'persistent-isolated.index'),
         null,
@@ -1644,7 +1658,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       }
 
       await this.options.beforeFinalLocalValidation?.()
-      const finalLocal = await captureSnapshot(
+      const finalLocal = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'final-local.index'),
         objectDirectory,
@@ -1657,7 +1671,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (stored.patch.length > 0) {
         await runGit(stored.scope.localGitRoot, ['apply', '--binary', '--whitespace=nowarn'], { input: stored.patch })
       }
-      const previewedLocal = await captureSnapshot(
+      const previewedLocal = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'previewed-local.index'),
         null,
@@ -1691,7 +1705,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(localGitRoot)
-      const current = await captureSnapshot(localGitRoot, join(tempRoot, 'current.index'), objectDirectory, sourceObjects)
+      const current = await this.captureSnapshot(localGitRoot, join(tempRoot, 'current.index'), objectDirectory, sourceObjects)
       const rollback = await prepareRollbackAssessment(tempRoot, sourceObjects, objectDirectory, localGitRoot, current, input.receipt)
       const finalize = await prepareFinalizeAssessment(tempRoot, sourceObjects, objectDirectory, localGitRoot, current, input.receipt)
       return {
@@ -1723,7 +1737,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(localGitRoot)
-      const current = await captureSnapshot(
+      const current = await this.captureSnapshot(
         localGitRoot,
         join(tempRoot, 'current.index'),
         objectDirectory,
@@ -1751,7 +1765,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       // final Local CAS. From the snapshot below to git apply there is no callback/yield seam.
       await input.beforeWrite?.()
       await this.options.beforeFinalLocalValidation?.()
-      const finalLocal = await captureSnapshot(
+      const finalLocal = await this.captureSnapshot(
         localGitRoot,
         join(tempRoot, 'final-local.index'),
         objectDirectory,
@@ -1770,7 +1784,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       let rolledBack: CheckoutSnapshot
       try {
         await this.options.afterLocalWriteBeforeVerification?.()
-        rolledBack = await captureSnapshot(
+        rolledBack = await this.captureSnapshot(
           localGitRoot,
           join(tempRoot, 'rolled-back.index'),
           null,
@@ -1837,7 +1851,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       const objectDirectory = join(tempRoot, 'objects')
       await mkdir(objectDirectory, { recursive: true })
       const sourceObjects = await sourceObjectDirectory(localGitRoot)
-      const current = await captureSnapshot(
+      const current = await this.captureSnapshot(
         localGitRoot,
         join(tempRoot, 'current.index'),
         objectDirectory,
@@ -1859,7 +1873,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
       if (!assessment.commitRequired) {
         await this.options.beforeFinalLocalValidation?.()
-        const finalLocal = await captureSnapshot(
+        const finalLocal = await this.captureSnapshot(
           localGitRoot,
           join(tempRoot, 'final-empty.index'),
           objectDirectory,
@@ -1943,7 +1957,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         }
         throw error
       }
-      const finalLocal = await captureSnapshot(
+      const finalLocal = await this.captureSnapshot(
         localGitRoot,
         join(tempRoot, 'final-local.index'),
         objectDirectory,
@@ -1975,7 +1989,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       if (!writeError) {
         try {
           await this.options.afterLocalWriteBeforeVerification?.()
-          const committed = await captureSnapshot(
+          const committed = await this.captureSnapshot(
             localGitRoot,
             join(tempRoot, 'committed.index'),
             null,
@@ -2043,7 +2057,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       let restored = false
       if (rollbackErrors.length === 0) {
         try {
-          const restoredLocal = await captureSnapshot(
+          const restoredLocal = await this.captureSnapshot(
             localGitRoot,
             join(tempRoot, 'restored.index'),
             null,
@@ -2119,7 +2133,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theFinishPlanSGitRepositoryIdentityHasChanged') } }
       }
 
-      const local = await captureSnapshot(
+      const local = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'local.index'),
         objectDirectory,
@@ -2132,7 +2146,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       ) {
         return { status: 'error', error: { code: 'stale_local', message: hostMessage('localChangedAfterPlanningRecalculateThePlan') } }
       }
-      const isolated = await captureSnapshot(
+      const isolated = await this.captureSnapshot(
         stored.scope.isolatedGitRoot,
         join(tempRoot, 'isolated.index'),
         objectDirectory,
@@ -2165,7 +2179,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
         return { status: 'error', error: { code: 'invalid_plan', message: hostMessage('theFileSetChangedDuringFinishRevalidation') } }
       }
 
-      const persistentIsolated = await captureSnapshot(
+      const persistentIsolated = await this.captureSnapshot(
         stored.scope.isolatedGitRoot,
         join(tempRoot, 'persistent-isolated.index'),
         null,
@@ -2185,7 +2199,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
 
       if (merge.changedFiles.length === 0) {
         await this.options.beforeFinalLocalValidation?.()
-        const finalLocal = await captureSnapshot(
+        const finalLocal = await this.captureSnapshot(
           stored.scope.localGitRoot,
           join(tempRoot, 'final-local.index'),
           objectDirectory,
@@ -2276,7 +2290,7 @@ class DefaultSessionCheckoutApplyEngine implements SessionCheckoutApplyEngine {
       )
 
       await this.options.beforeFinalLocalValidation?.()
-      const finalLocal = await captureSnapshot(
+      const finalLocal = await this.captureSnapshot(
         stored.scope.localGitRoot,
         join(tempRoot, 'final-local-validation.index'),
         objectDirectory,

@@ -1,3 +1,4 @@
+import { type ProjectSkillStore, trackedSkillPaths } from '../adapters/project-skills.js'
 import { hostMessage } from '../i18n/host.js'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
@@ -32,7 +33,7 @@ interface GitOutput { stdout: Buffer; truncated: boolean }
 
 async function git(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv, maxBytes: number): Promise<GitOutput> {
   return await new Promise<GitOutput>((resolveResult, reject) => {
-    const child = spawn('git', ['-c', 'core.quotePath=false', ...args], {
+    const child = spawn('git', ['-c', 'core.quotePath=false', ...(process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []), ...args], {
       cwd,
       env: { ...env, GIT_TERMINAL_PROMPT: '0' },
       windowsHide: true,
@@ -116,7 +117,7 @@ function changedPathSet(entries: readonly ChangedEntry[]): string[] {
   return sortedUnique(entries.flatMap(entry => entry.previousPath === undefined ? [entry.path] : [entry.previousPath, entry.path]))
 }
 
-export function createGitWorktreeReviewDiffReader(): WorktreeReviewDiffReader {
+export function createGitWorktreeReviewDiffReader(projectSkills?: ProjectSkillStore): WorktreeReviewDiffReader {
   return {
     async read(input) {
       const expected = sortedUnique(input.changedFiles)
@@ -140,6 +141,22 @@ export function createGitWorktreeReviewDiffReader(): WorktreeReviewDiffReader {
         }
         await git(input.managedRoot, ['read-tree', input.baseOid], env, 16 * 1024)
         await git(input.managedRoot, ['add', '-A', '--', '.'], env, 16 * 1024)
+        if (await projectSkills?.paths(input.managedRoot)) {
+          const index = await git(input.managedRoot, ['ls-files', '--stage', '-z'], process.env, 4 * 1024 * 1024)
+          const head = await git(input.managedRoot, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], process.env, 4 * 1024 * 1024)
+          if (index.truncated || head.truncated) throw new Error('Skill tracking inventory exceeds the safe read budget')
+          const carried = await projectSkills!.state(input.managedRoot, trackedSkillPaths(index.stdout, head.stdout))
+          let batch: string[] = []
+          let length = 0
+          for (const path of carried?.paths ?? []) {
+            if (length + path.length > 4000 && batch.length) {
+              await git(input.managedRoot, ['update-index', '--force-remove', '--', ...batch], env, 16 * 1024)
+              batch = []; length = 0
+            }
+            batch.push(path); length += path.length + 3
+          }
+          if (batch.length) await git(input.managedRoot, ['update-index', '--force-remove', '--', ...batch], env, 16 * 1024)
+        }
         const names = await git(
           input.managedRoot,
           ['diff', '--cached', '--name-status', '-z', '--find-renames', input.baseOid, '--', '.'],
