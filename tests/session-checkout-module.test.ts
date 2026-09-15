@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { WorktreeCreationFailure } from '../src/creation-failure.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -80,6 +81,7 @@ function createContext(options: {
   projectSubdirectory?: string
   applyEngine?: SessionCheckoutApplyEngine
   crashAfterWorktreeCreate?: boolean
+  rolledBackCreationCall?: number
   createWorktreeFailures?: number
   createWorktreeFailureLeavesFile?: boolean
   removeWorktreeFailures?: number
@@ -227,6 +229,7 @@ function createContext(options: {
   let createWorktreeFailures = options.createWorktreeFailures ?? 0
   dependencies.git.createDetachedWorktree = async (localRoot, managedRoot, baseOid) => {
     createWorktreeCallCount += 1
+    if (createWorktreeCallCount === options.rolledBackCreationCall) throw new WorktreeCreationFailure('creation timed out and rolled back', true)
     if (createWorktreeFailures > 0) {
       createWorktreeFailures -= 1
       mkdirSync(join(managedRoot, 'web'), { recursive: true })
@@ -768,9 +771,21 @@ describe('SessionCheckoutModule', () => {
     })
   })
 
+  test('Given a confirmed creation rollback When bind fails Then original Local remains usable and a manual retry succeeds without hidden retries', async () => {
+    const context = createContext({ rolledBackCreationCall: 1 })
+    await expect(context.module.bind('session-1', { kind: 'isolated' })).rejects.toMatchObject({ code: 'git_operation_failed' })
+    expect(context.getCreateWorktreeCallCount()).toBe(1)
+    await expect(context.module.inspect('session-1')).rejects.toMatchObject({ code: 'target_unselected' })
+    expect(git(context.projectRoot, 'status', '--porcelain')).toBe('')
+    const retry = await context.module.bind('session-1', { kind: 'isolated' })
+    expect(retry.checkout.phase).toBe('ready')
+    expect(context.getCreateWorktreeCallCount()).toBe(2)
+  })
+
   test('Given a cleaned delivered owner Session When it begins the next iteration Then the same Session and cwd receive a new checkout from latest Local HEAD', async () => {
     const context = createContext({
-      checkoutIds: ['checkout-first', 'operation-first', 'checkout-second', 'operation-second'],
+      checkoutIds: ['checkout-first', 'operation-first', 'checkout-failed', 'operation-failed', 'checkout-second', 'operation-second'],
+      rolledBackCreationCall: 2,
     })
     const launch = await context.module.createIsolatedTarget('session-1', 'target-session-1')
     context.addProject('target-workspace-1', 'Target Workspace', launch.managedRoot)
@@ -795,7 +810,11 @@ describe('SessionCheckoutModule', () => {
     git(context.projectRoot, 'commit', '-m', 'local advances before iteration 2')
     const latestLocalHead = git(context.projectRoot, 'rev-parse', 'HEAD')
 
-    const next = await context.module.beginNextIteration('target-session-1', finished.target.revision)
+    await expect(context.module.beginNextIteration('target-session-1', finished.target.revision)).rejects.toMatchObject({ code: 'git_operation_failed' })
+    const restored = await context.module.inspect('target-session-1')
+    expect(restored.checkout.id).toBe(finished.target.checkout.id)
+    expect(restored.delivery?.state).toBe('delivered')
+    const next = await context.module.beginNextIteration('target-session-1', restored.revision)
 
     expect(next).toMatchObject({
       checkout: { kind: 'isolated', phase: 'ready' },
@@ -812,7 +831,7 @@ describe('SessionCheckoutModule', () => {
     expect(persisted.managedCheckouts[launch.target.checkout.id]).toMatchObject({
       phase: 'discarded', delivery: { state: 'delivered', iteration: 1 },
     })
-  }, 30_000)
+  }, 60_000)
 
   test('Given a cleaned delivered owner Session When the immutable cwd path reappears Then the next iteration refuses to overwrite it', async () => {
     const context = createContext()
@@ -1815,6 +1834,30 @@ describe('SessionCheckoutModule', () => {
 
 
 
+
+  test('Given an interrupted evidenced creation When restart Recover or Discard is requested Then neither adopts nor deletes the residue', async () => {
+    const context = createContext()
+    const target = await context.module.bind('session-1', { kind: 'isolated' })
+    const managedRoot = await context.module.resolveManagedRoot(target.checkout.id)
+    const path = join(context.configDir, 'managed-checkouts.json')
+    const registry = JSON.parse(readFileSync(path, 'utf8'))
+    const record = registry.managedCheckouts[target.checkout.id]
+    const identity = { device: 'test', inode: 'test', birthtimeNs: 'test' }
+    record.phase = 'preparing'
+    record.journal = { operation: 'create', operationId: 'interrupted', step: 'creating_worktree', startedAt: Date.now(),
+      creation: { root: managedRoot, commonDir: join(context.repositoryRoot, '.git'), lockReason: 'dsh-create-test',
+        rootIdentity: identity, parentIdentity: identity, commonIdentity: identity } }
+    registry.revision++
+    writeFileSync(path, JSON.stringify(registry))
+    const restarted = context.restart()
+    await restarted.reconcile()
+    for (const action of ['recover', 'discard'] as const) {
+      const current = await restarted.inspect('session-1')
+      const result = await restarted.operate({ action, sessionId: 'session-1', expectedRevision: current.revision })
+      expect(result).toMatchObject({ status: 'error', code: 'recovery_unsafe' })
+      expect(existsSync(join(managedRoot, 'tracked.txt'))).toBe(true)
+    }
+  })
 
   test('Given preparing journal 且 worktree 已完整创建 When 重启后 Recover Then 恢复 ready 而不覆盖文件', async () => {
     const context = createContext({ crashAfterWorktreeCreate: true })

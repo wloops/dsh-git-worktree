@@ -162,6 +162,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { createDshGitPort } from './adapters/git.js'
+import { DEFAULT_GIT_TIMEOUT_MS, MAX_GIT_TIMEOUT_MS, validateGitTimeouts, type GitTimeoutOptions } from './adapters/git-options.js'
 import { createNodeFilesPort } from './adapters/files.js'
 import { AtomicJsonCheckoutRegistry } from './adapters/registry.js'
 import { mountWorkspaceProviderLifecycle } from './workspace-provider-lifecycle.js'
@@ -183,7 +184,7 @@ const name = 'git-worktree'
 // first ctx.tools access then fails with "cannot get property without inject".
 export const inject = { tools: {}, commands: {}, subprocess: {}, loader: { await: false } }
 
-const Config = z.object({
+export const Config = z.object({
   /**
    * Plugin state directory (registry, disabled-hooks root). Defaults to
    * `$DSH_HOME/plugins/dsh-git-worktree` (`~/.dsh` when `DSH_HOME` is unset).
@@ -191,6 +192,8 @@ const Config = z.object({
    * are optional inputs).
    */
   stateDir: z.string(),
+  gitTimeoutMs: z.number().min(1_000).max(MAX_GIT_TIMEOUT_MS).step(1).default(DEFAULT_GIT_TIMEOUT_MS),
+  worktreeAddTimeoutMs: z.number().min(1_000).max(MAX_GIT_TIMEOUT_MS).step(1).default(300_000),
 })
 
 function resolveStateDir(config: { stateDir?: string }): string {
@@ -206,7 +209,8 @@ const RETENTION_MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000
  * tools, human acceptance command, dynamic target context, startup recovery,
  * and the retention-expiry timer.
  */
-export async function apply(ctx: Context, config: { stateDir?: string } = {}): Promise<void> {
+export async function apply(ctx: Context, config: { stateDir?: string } & GitTimeoutOptions = {}): Promise<void> {
+  validateGitTimeouts(config)
   await mountWorkspaceProviderLifecycle(ctx)
   const stateDir = resolveStateDir(config)
   mkdirSync(stateDir, { recursive: true })
@@ -214,7 +218,7 @@ export async function apply(ctx: Context, config: { stateDir?: string } = {}): P
   mkdirSync(hooksPath, { recursive: true })
 
   const lookup = createDshLookupPort(ctx)
-  const git = createDshGitPort(ctx, { hooksPath })
+  const git = createDshGitPort(ctx, { hooksPath, gitTimeoutMs: config.gitTimeoutMs, worktreeAddTimeoutMs: config.worktreeAddTimeoutMs })
   const files = createNodeFilesPort()
   const registry = new AtomicJsonCheckoutRegistry(join(stateDir, 'managed-checkouts.json'))
   const module = createSessionCheckoutModule({

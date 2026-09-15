@@ -66,7 +66,7 @@ export interface SessionCheckoutGitPort {
   /** Top-level of the Git checkout containing the directory; does not require a HEAD. */
   findContainingWorktreeRoot(root: string): Promise<string | null>
   status(root: string): Promise<{ dirty: boolean }>
-  createDetachedWorktree(localRoot: string, managedRoot: string, baseOid: string): Promise<void>
+  createDetachedWorktree(localRoot: string, managedRoot: string, baseOid: string, saveEvidence?: (evidence: WorktreeCreationEvidence) => void): Promise<void>
   /** Deletion after the host verified checkout identity and the full fingerprint including untracked. */
   removeWorktree(localRoot: string, managedRoot: string): Promise<void>
   retainApplyBase(localRoot: string, checkoutId: string, oid: string): Promise<void>
@@ -117,9 +117,24 @@ interface ManagedCheckoutJournalBase {
   startedAt: number
 }
 
+export interface WorktreeCreationEvidence {
+  root: string
+  rootIdentity: DirectoryIdentity
+  parentIdentity: DirectoryIdentity
+  commonDir: string
+  commonIdentity: DirectoryIdentity
+  lockReason: string
+  gitDir?: string
+  gitIdentity?: DirectoryIdentity
+  metadataFingerprint?: string
+  indexFingerprint?: string
+  quarantinePath?: string
+}
+
 export interface ManagedCheckoutCreateJournal extends ManagedCheckoutJournalBase {
   operation: 'create'
   step: 'creating_worktree'
+  creation?: WorktreeCreationEvidence
 }
 
 export interface ManagedCheckoutMutationJournal extends ManagedCheckoutJournalBase {

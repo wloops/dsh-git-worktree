@@ -349,7 +349,11 @@ async function runGit(
   options: { env?: NodeJS.ProcessEnv; input?: Buffer | string; allowedExitCodes?: number[] } = {},
 ): Promise<GitResult> {
   return await new Promise<GitResult>((resolveResult, reject) => {
-    const child = spawn('git', ['-c', 'core.quotePath=false', ...args], {
+    // Review/delivery must support the same Windows paths as initial creation.
+    const child = spawn('git', [
+      ...(process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
+      '-c', 'core.quotePath=false', ...args,
+    ], {
       cwd,
       env: {
         ...process.env,

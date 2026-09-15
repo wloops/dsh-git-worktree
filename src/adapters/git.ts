@@ -1,3 +1,5 @@
+import { createWorktree } from './worktree-creation.js'
+import { gitTimeoutMs, validateGitTimeouts, type GitTimeoutOptions } from './git-options.js'
 import { initialCommitActions, type GitCommitProtocol } from './initial-commit.js'
 import { hostMessage } from '../i18n/host.js'
 /**
@@ -19,19 +21,12 @@ import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
 import type { GitCheckoutSnapshot, SessionCheckoutGitPort } from '../ports.js'
 import { SessionCheckoutError } from '../index.js'
 
-/** Ordinary git commands keep a 10s cap; worktree removal gets 5 minutes on Windows. */
-const GIT_COMMAND_TIMEOUT_MS = 30_000
-const WORKTREE_REMOVE_TIMEOUT_MS = 5 * 60_000
+/** Termination grace is separate from the command deadline. */
+const GIT_TERMINATION_GRACE_MS = 1_000
 /** Collected-output cap per stream; git output is small but removals can warn. */
 const GIT_COLLECT_BYTES = 1 << 20
 
-function gitTimeoutMs(args: readonly string[]): number {
-  return args[0] === 'worktree' && args[1] === 'remove'
-    ? WORKTREE_REMOVE_TIMEOUT_MS
-    : GIT_COMMAND_TIMEOUT_MS
-}
-
-export interface GitPortOptions {
+export interface GitPortOptions extends GitTimeoutOptions {
   /** Directory holding the empty `core.hooksPath` target; created by the caller. */
   hooksPath: string
 }
@@ -40,6 +35,23 @@ interface GitCommandResult {
   code: number
   stdout: string
   stderr: string
+  /** Only true after the subprocess service confirmed whole-tree quiescence. */
+  quiescent?: boolean
+}
+
+async function settleCreationTree(handle: SubprocessHandle): Promise<boolean> {
+  if (typeof handle.waitForExit !== 'function' || typeof handle.terminate !== 'function') return false
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  timeout.unref?.()
+  try {
+    handle.terminate()
+    return await handle.waitForExit(controller.signal)
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 /**
@@ -47,17 +59,21 @@ interface GitCommandResult {
  * the caller decides whether a non-zero exit is an error. Never
  * shell-interpreted; argv passes verbatim.
  */
-async function runGit(ctx: Context, cwd: string, args: string[], options: GitPortOptions, input?: string | GitCommitProtocol): Promise<GitCommandResult> {
-  const graceMs = gitTimeoutMs(args)
+async function runGit(ctx: Context, cwd: string, args: string[], options: GitPortOptions, input?: string | GitCommitProtocol, creation?: { deadline: number }): Promise<GitCommandResult> {
+  const graceMs = creation ? creation.deadline - Date.now() : gitTimeoutMs(args, options)
+  if (creation && graceMs <= 0) return { code: -1, stdout: '', stderr: hostMessage('gitTimedOutMsAndWasTerminated', { p0: args.join(' '), p1: 0 }), quiescent: true }
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), graceMs)
   timeout.unref?.()
+  let handle: SubprocessHandle | undefined
   try {
-    const handle: SubprocessHandle = ctx.subprocess.spawn({
+    handle = ctx.subprocess.spawn({
       argv: [
         'git',
         '--no-pager',
         '--no-optional-locks',
+        // Worktree prefixes can exceed MAX_PATH even when the source checkout fits.
+        ...(process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
         '-c', 'core.quotePath=false',
         '-c', 'core.fsmonitor=false',
         '-c', `core.hooksPath=${options.hooksPath}`,
@@ -69,7 +85,7 @@ async function runGit(ctx: Context, cwd: string, args: string[], options: GitPor
         stdout: { maxBytes: GIT_COLLECT_BYTES },
         stderr: { maxBytes: GIT_COLLECT_BYTES },
       },
-      graceMs: GIT_COMMAND_TIMEOUT_MS,
+      graceMs: GIT_TERMINATION_GRACE_MS,
       signal: controller.signal,
       env: {
         // Repository routing must come from the authorized cwd, never ambient Git
@@ -106,21 +122,35 @@ async function runGit(ctx: Context, cwd: string, args: string[], options: GitPor
       }
     }
     const outcome = await handle.done
+    let quiescent: boolean | undefined
+    if (creation) {
+      let completed = false
+      if (outcome.exitCode === 0 && !outcome.signal && !controller.signal.aborted && typeof handle.waitForExit === 'function') {
+        try { completed = await handle.waitForExit(controller.signal) } catch { /* Preserve unless termination is confirmed below. */ }
+      }
+      if (completed && !controller.signal.aborted) quiescent = true
+      else {
+        quiescent = await settleCreationTree(handle)
+        if (outcome.exitCode === 0) return { code: -1, stdout: '', stderr: hostMessage('repositoryInspectionFailed'), quiescent }
+      }
+      if (!quiescent) return { code: -1, stdout: '', stderr: hostMessage('repositoryInspectionFailed'), quiescent: false }
+    }
+    clearTimeout(timeout)
     const stdoutRead = handle.collected.stdout?.readFrom(0)
     const stderrRead = handle.collected.stderr?.readFrom(0)
     const stdout = stdoutRead?.text ?? ''
     const stderr = stderrRead?.text ?? ''
     if (stdoutRead?.lossy || stderrRead?.lossy) {
-      return { code: -1, stdout: '', stderr: hostMessage('repositoryInspectionFailed') }
+      return { code: -1, stdout: '', stderr: hostMessage('repositoryInspectionFailed'), quiescent }
     }
     if (outcome.signal === 'SIGTERM' || outcome.signal === 'SIGKILL' || controller.signal.aborted) {
-      return { code: -1, stdout, stderr: hostMessage('gitTimedOutMsAndWasTerminated', { p0: args.join(' '), p1: graceMs }) }
+      return { code: -1, stdout, stderr: hostMessage('gitTimedOutMsAndWasTerminated', { p0: args.join(' '), p1: graceMs }), quiescent }
     }
-    return { code: outcome.exitCode ?? -1, stdout: stdout.trim(), stderr: stderr.trim() }
+    return { code: outcome.exitCode ?? -1, stdout: stdout.trim(), stderr: stderr.trim(), quiescent }
   } catch (error) {
     if (error instanceof SessionCheckoutError) throw error
-    // Synchronous spawn failure (git missing from PATH): report as a failed command.
-    return { code: -1, stdout: '', stderr: error instanceof Error ? error.message : String(error) }
+    const quiescent = creation && handle ? await settleCreationTree(handle) : false
+    return { code: -1, stdout: '', stderr: error instanceof Error ? error.message : String(error), quiescent }
   } finally {
     clearTimeout(timeout)
   }
@@ -176,6 +206,7 @@ async function hasGitMetadata(root: string): Promise<boolean> {
 
 /** Build the `ctx.subprocess`-backed git port. */
 export function createDshGitPort(ctx: Context, options: GitPortOptions): SessionCheckoutGitPort {
+  validateGitTimeouts(options)
   const runSessionGit = (cwd: string, args: string[], input?: string | GitCommitProtocol) => runGit(ctx, cwd, args, options, input)
   const runSessionGitChecked = (cwd: string, args: string[]) => runGitChecked(ctx, cwd, args, options)
 
@@ -234,8 +265,13 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
       const output = await runSessionGitChecked(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
       return { dirty: output.length > 0 }
     },
-    createDetachedWorktree: async (localRoot, managedRoot, baseOid) => {
-      await runSessionGitChecked(localRoot, ['worktree', 'add', '--detach', managedRoot, baseOid])
+    createDetachedWorktree: async (localRoot, managedRoot, baseOid, saveEvidence) => {
+      const deadline = Date.now() + gitTimeoutMs(['worktree', 'add'], options)
+      await createWorktree(localRoot, managedRoot, baseOid,
+        (cwd, args, creating) => runGit(ctx, cwd, args, options, undefined, creating ? { deadline }
+          : args[0] === 'worktree' && ['move', 'remove'].includes(args[1] ?? '')
+            ? { deadline: Date.now() + gitTimeoutMs(args, options) } : undefined),
+        saveEvidence)
     },
     removeWorktree: async (localRoot, managedRoot) => {
       // Git treats a reviewed-but-uncommitted final snapshot as modified/untracked;

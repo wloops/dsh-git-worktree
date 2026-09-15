@@ -38,7 +38,8 @@ test.each([1, 3])('bounds real Git queries for a one-file preview and a %i-workt
       const child = spawn('git', options.argv.slice(1), { cwd: options.cwd, env: { ...process.env, ...options.env } })
       let stdout = '', stderr = ''
       child.stdout.on('data', data => { stdout += data }); child.stderr.on('data', data => { stderr += data })
-      return { stdin: child.stdin, done: new Promise(resolve => child.on('close', exitCode => resolve({ exitCode }))), collected: {
+      const done = new Promise(resolve => child.on('close', exitCode => resolve({ exitCode })))
+      return { stdin: child.stdin, done, terminate: () => { if (child.exitCode === null) child.kill() }, waitForExit: async () => { await done; return true }, collected: {
         stdout: { readFrom: () => ({ text: stdout }) }, stderr: { readFrom: () => ({ text: stderr }) },
       } }
     } } } as unknown as Context

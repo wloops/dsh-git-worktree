@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile, readFile, rename, realpath } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import type { Context } from '@deepseek-ai/cordis'
 import { createDshGitPort } from '../src/adapters/git.js'
@@ -37,7 +37,8 @@ async function fixture() {
     child.stdout.on('data', data => { stdout += data })
     child.stderr.on('data', data => { stderr += data })
     if (options.stdio.stdin !== 'pipe') child.stdin.end()
-    return { done: new Promise(resolve => child.on('close', exitCode => resolve({ exitCode }))), stdin: child.stdin, collected: {
+    const done = new Promise<{ exitCode: number | null }>(resolve => child.on('close', exitCode => resolve({ exitCode })))
+    return { done, terminate: () => { if (child.exitCode === null) child.kill() }, waitForExit: async () => { await done; return true }, stdin: child.stdin, collected: {
       stdout: { readFrom: () => ({ text: stdout }) },
       stderr: { readFrom: () => ({ text: stderr }) },
     } }
@@ -244,3 +245,63 @@ describe('production Git adapter: unborn repositories', () => {
   })
 
 })
+
+
+it.skipIf(process.platform !== 'win32')('creates long-path Windows checkouts on the first attempt and next iteration without persistent config changes', async () => {
+  const { root, repo, port } = await fixture()
+  git(repo, ['config', 'user.name', 'Test'])
+  git(repo, ['config', 'user.email', 'test@example.test'])
+  git(repo, ['config', 'core.longpaths', 'false'])
+  git(repo, ['config', 'core.autocrlf', 'false'])
+  const relative = 'deep/'.repeat(12) + 'snapshot_' + 'x'.repeat(235 - repo.length - 60 - 9) + '.txt'
+  await mkdir(dirname(join(repo, relative)), { recursive: true })
+  await writeFile(join(repo, relative), 'long path content\n')
+  await writeFile(join(repo, 'short.txt'), 'base\n')
+  expect(git(repo, ['add', '.']).status).toBe(0)
+  expect(git(repo, ['commit', '-m', 'seed']).status).toBe(0)
+  const configBefore = await readFile(join(repo, '.git', 'config'), 'utf8')
+  const indexBefore = await readFile(join(repo, '.git', 'index'))
+  const headBefore = git(repo, ['rev-parse', 'HEAD']).stdout
+  // Negative control: the source fits, but a longer worktree prefix fails without the command override.
+  const control = join(root, 'negative-control-' + 'x'.repeat(70))
+  expect(git(repo, ['worktree', 'add', '--detach', '--no-checkout', control, 'HEAD']).status).toBe(0)
+  expect(git(control, ['read-tree', 'HEAD']).status).toBe(0)
+  const failed = git(control, ['checkout-index', '--all'])
+  expect(failed.status).not.toBe(0)
+  expect(failed.stderr).toMatch(/Filename too long/i)
+
+  let targetRoot: string | undefined
+  const dependencies = createNodeSessionCheckoutDependencies({ configDir: join(root, 'config'), lookup: {
+    getSession: id => id === 'source' ? { id, projectId: 'project' } : id === 'target' && targetRoot ? { id, projectId: 'managed' } : undefined,
+    getProject: id => id === 'project' ? { id, name: 'Project', root: repo } : id === 'managed' && targetRoot ? { id, name: 'Managed', root: targetRoot } : undefined,
+    getUnboundTargetPolicy: () => 'unselected',
+  } })
+  dependencies.git = port
+  const module = createSessionCheckoutModule(dependencies)
+  const launch = await module.createIsolatedTarget('source', 'target')
+  targetRoot = launch.managedRoot
+  expect(join(targetRoot, relative).length).toBeGreaterThan(260)
+  expect(await readFile(join(targetRoot, relative), 'utf8')).toBe('long path content\n')
+  expect(git(repo, ['rev-parse', 'HEAD']).stdout).toBe(headBefore)
+  expect(await readFile(join(repo, '.git', 'index'))).toEqual(indexBefore)
+  expect(await readFile(join(repo, relative), 'utf8')).toBe('long path content\n')
+  expect(await readFile(join(repo, 'short.txt'), 'utf8')).toBe('base\n')
+  await writeFile(join(targetRoot, 'short.txt'), 'iteration one\n')
+  const ready = await module.markReadyForReview('target', { summary: 'long path test', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: first iteration' })
+  if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+  const finished = await module.operate({ action: 'finish', sessionId: 'target', expectedRevision: ready.revision,
+    expectedReviewId: ready.delivery.review.reviewId, commitMessage: 'test: first iteration', retention: 'cleanup' })
+  if (finished.status !== 'finished') throw new Error(JSON.stringify(finished))
+  expect(finished.cleanup).toBe('discarded')
+  const indexAfterDelivery = await readFile(join(repo, '.git', 'index'))
+  const headAfterDelivery = git(repo, ['rev-parse', 'HEAD']).stdout
+  const next = await module.beginNextIteration('target', finished.target.revision)
+  expect(next.checkout.phase).toBe('ready')
+  expect(await readFile(join(repo, '.git', 'index'))).toEqual(indexAfterDelivery)
+  expect(git(repo, ['rev-parse', 'HEAD']).stdout).toBe(headAfterDelivery)
+  expect(next.delivery).toMatchObject({ state: 'working', iteration: 2 })
+  expect(await readFile(join(targetRoot, relative), 'utf8')).toBe('long path content\n')
+  expect(await readFile(join(targetRoot, 'short.txt'), 'utf8')).toBe('iteration one\n')
+  expect(await readFile(join(repo, '.git', 'config'), 'utf8')).toBe(configBefore)
+  expect(git(repo, ['status', '--porcelain']).stdout).toBe('')
+}, 120_000)

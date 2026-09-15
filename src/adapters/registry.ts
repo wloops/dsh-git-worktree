@@ -197,7 +197,17 @@ function isJournal(value: unknown): boolean {
     || typeof value.step !== 'string'
     || typeof value.startedAt !== 'number'
   ) return false
-  if (value.operation === 'create') return value.step === 'creating_worktree'
+  if (value.operation === 'create') {
+    if (value.step !== 'creating_worktree') return false
+    if (value.creation === undefined) return true // Older journals never gain new deletion authority.
+    const evidence = value.creation
+    const identity = (item: unknown) => isRecord(item) && ['device', 'inode', 'birthtimeNs'].every(key => typeof item[key] === 'string')
+    return isRecord(evidence)
+      && ['root', 'commonDir', 'lockReason'].every(key => typeof evidence[key] === 'string' && evidence[key].length > 0)
+      && ['rootIdentity', 'parentIdentity', 'commonIdentity'].every(key => identity(evidence[key]))
+      && ['gitDir', 'quarantinePath', 'metadataFingerprint', 'indexFingerprint'].every(key => evidence[key] === undefined || typeof evidence[key] === 'string')
+      && (evidence.gitIdentity === undefined || identity(evidence.gitIdentity))
+  }
   const validOperation = value.operation === 'apply'
     || value.operation === 'preview'
     || value.operation === 'checkpoint'

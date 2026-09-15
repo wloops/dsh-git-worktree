@@ -28,6 +28,25 @@ stateDiagram-v2
     Discarded --> [*]
 ```
 
+## Git deadlines and failed creation
+
+On Windows, plugin Git commands use command-scoped `core.longpaths=true` for creation, checkout, status, review, and delivery. This supports longer Worktree prefixes without modifying global or repository Git configuration. LFS is not automatically skipped; service access failures still require separate resolution.
+
+The existing `dsh-git-worktree` plugin configuration accepts two millisecond values:
+
+| Setting | Default | Valid range |
+| --- | --- | --- |
+| `gitTimeoutMs` | `120000` (2 minutes) | Integer from 1000 to 3600000 |
+| `worktreeAddTimeoutMs` | `300000` (5 minutes) | Integer from 1000 to 3600000 |
+
+The creation deadline is shared by registration and checkout, not restarted for each step. Ordinary Git commands use `gitTimeoutMs`; removal retains its five-minute deadline. Process-tree termination and safety checks can take additional time after the deadline. No additional environment variables are required.
+
+A failed attempt is removed only after its process tree has exited and the plugin can verify directory identity, Git metadata ownership, and the original bytes of remaining files. Successful rollback restores the previous session binding and permits an explicit retry, without silently repeating the entire creation deadline or changing Local files or commits.
+
+Unconfirmed termination, replaced paths, unknown files or metadata, `initializing` / `index.lock` residue, submodules, conversion rules, or unverifiable original bytes (including converted line endings) preserve the scene for recovery instead. Sparse checkouts retain Git's native file selection, but automatic rollback on failure is not guaranteed. Older residue does not gain new deletion authority. Incomplete creations using the new protocol cannot be blindly adopted or removed through Recover or Discard.
+
+Do not troubleshoot by globally pruning worktrees, deleting unknown locks, or recursively deleting directories. Preserve the error and remaining files, then verify ownership before any manual recovery.
+
 ## Create a Worktree Session
 
 ### New Session

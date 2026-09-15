@@ -25,6 +25,8 @@ import type {
   WorktreeCheckpointView,
 } from './types.js'
 import { SessionCheckoutError } from './index.js'
+import { WorktreeCreationFailure } from './creation-failure.js'
+import type { WorktreeCreationEvidence } from './ports.js'
 import { checkpointGenerationForRecord } from './checkpoint.js'
 import {
   createManagedWorktreePathCandidates,
@@ -415,6 +417,42 @@ export function createSessionCheckoutModule(
       revision: record.revision,
       delivery,
     }
+  }
+
+  function saveCreationEvidence(checkoutId: string, operationId: string, evidence: WorktreeCreationEvidence): void {
+    const registry = dependencies.registry.read()
+    const record = registry.managedCheckouts[checkoutId]
+    if (!record || record.phase !== 'preparing' || record.journal?.operation !== 'create' || record.journal.operationId !== operationId) {
+      throw new SessionCheckoutError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'))
+    }
+    record.journal.creation = evidence
+    registry.revision += 1
+    dependencies.registry.write(registry)
+  }
+
+  function finishFailedCreation(sessionId: string, checkoutId: string, error: unknown, previous?: SessionBindingRecord): boolean {
+    const registry = dependencies.registry.read()
+    const record = registry.managedCheckouts[checkoutId]
+    if (!(error instanceof WorktreeCreationFailure)) {
+      if (record?.journal?.operation !== 'create' || !record.journal.creation) return false
+      error = new WorktreeCreationFailure(error instanceof Error ? error.message : String(error), false)
+    }
+    const failure = error as WorktreeCreationFailure
+    const reported = new SessionCheckoutError(failure.rolledBack ? 'git_operation_failed' : 'recovery_required', failure.message)
+    if (!record) throw reported
+    if (!failure.rolledBack) {
+      markRecoveryRequired(record)
+      throw reported
+    }
+    const binding = registry.sessionBindings[sessionId]
+    if (binding?.target.kind === 'isolated' && binding.target.checkoutId === checkoutId) {
+      if (previous) registry.sessionBindings[sessionId] = { ...previous, revision: Math.max(previous.revision, binding.revision) + 1 }
+      else delete registry.sessionBindings[sessionId]
+    }
+    delete registry.managedCheckouts[checkoutId]
+    registry.revision += 1
+    dependencies.registry.write(registry)
+    throw reported // A failed checkout is not a reason to silently repeat the entire creation deadline.
   }
 
   function markRecoveryRequired(record: ManagedCheckoutRecord): ManagedCheckoutRecord {
@@ -985,6 +1023,7 @@ export function createSessionCheckoutModule(
       if (
         current.predecessorCheckoutId
         && current.journal?.operation === 'create'
+        && !current.journal.creation
         && (current.phase === 'preparing' || current.phase === 'recovery_required')
         && !dependencies.files.exists(current.managedGitRoot)
         && !dependencies.files.exists(current.managedRoot)
@@ -3175,6 +3214,11 @@ export function createSessionCheckoutModule(
       await releasePreviewArtifactsBestEffort(record, previewId)
       record = rolledBack
     }
+    // An interrupted creation may still own a Git registration at a quarantined path.
+    // Missing original cwd is not proof that its process tree or residue has gone away.
+    if (record.journal?.operation === 'create' && record.journal.creation) {
+      return operationError('recovery_unsafe', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'))
+    }
     // Harness plugin has no inherited collaborator checkout ownership.
     if (record.phase === 'recovery_required' && !dependencies.files.exists(record.managedRoot)) {
       await releaseApplyBaseBestEffort(record)
@@ -3249,6 +3293,9 @@ export function createSessionCheckoutModule(
       return operationError('stale_target', hostMessage('theSessionTargetHasChangedRefreshAndRetry'), await inspectIsolated(binding))
     }
     const recoverCreate = record.journal?.operation === 'create'
+    if (record.journal?.operation === 'create' && record.journal.creation) {
+      return operationError('recovery_unsafe', hostMessage('theIsolatedCheckoutIdentityCannotBeVerifiedRecoveryIs'))
+    }
     if ((record.journal !== null && !recoverCreate) || record.phase === 'mutating') {
       return operationError(
         'recovery_unsafe',
@@ -3756,7 +3803,8 @@ export function createSessionCheckoutModule(
     dependencies.registry.write(registry)
 
     try {
-      await dependencies.git.createDetachedWorktree(snapshot.root, predecessor.managedGitRoot, snapshot.headOid)
+      await dependencies.git.createDetachedWorktree(snapshot.root, predecessor.managedGitRoot, snapshot.headOid,
+        evidence => saveCreationEvidence(checkoutId, record.journal!.operationId, evidence))
       const canonicalManagedGitRoot = await dependencies.files.canonicalize(predecessor.managedGitRoot)
       const canonicalManagedRoot = await dependencies.files.canonicalize(predecessor.managedRoot)
       const containerAfterCreate = await dependencies.files.inspectDirectoryIdentity(managedContainer)
@@ -3791,6 +3839,7 @@ export function createSessionCheckoutModule(
       dependencies.registry.write(readyRegistry)
       return inspectIsolated(binding)
     } catch (error) {
+      finishFailedCreation(sessionId, checkoutId, error, previousBinding)
       let partialCheckout: GitCheckoutSnapshot | null = null
       try {
         if (dependencies.files.exists(join(predecessor.managedGitRoot, '.git'))) {
@@ -4016,7 +4065,8 @@ export function createSessionCheckoutModule(
       dependencies.registry.write(preparingRegistry)
 
       try {
-        await dependencies.git.createDetachedWorktree(localGitRoot, managedGitRoot, snapshot.headOid)
+        await dependencies.git.createDetachedWorktree(localGitRoot, managedGitRoot, snapshot.headOid,
+          evidence => saveCreationEvidence(checkoutId, record.journal!.operationId, evidence))
         const canonicalManagedGitRoot = await dependencies.files.canonicalize(managedGitRoot)
         const canonicalManagedRoot = await dependencies.files.canonicalize(managedRoot)
         const created = await dependencies.git.inspect(canonicalManagedRoot)
@@ -4042,6 +4092,7 @@ export function createSessionCheckoutModule(
         dependencies.registry.write(readyRegistry)
         return inspectIsolated(binding)
       } catch (error) {
+        finishFailedCreation(sessionId, checkoutId, error, replacedDeliveredBinding)
         let partialCheckout: GitCheckoutSnapshot | null = null
         try {
           // 仓库内布局下，残余目录会被 git 识别为上层主仓库 checkout；
