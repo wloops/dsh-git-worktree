@@ -4,9 +4,20 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-20
+
+`0.9.2` 修复 Managed Worktree 未携带项目级 Skill 及其资源的问题：首次创建和交付后的下一轮创建都会获取一次 Local 快照，并让 `.claude/skills` 与既有 `.dsh/skills`、`.agents/skills` 一起在隔离 Session 中可用，同时保持辅助文件与正常 Git 交付隔离。
+
 ### Fixed
 
-- 创建首次及下一轮 Managed Worktree 时一次性携带项目 `.dsh/skills`、`.agents/skills` 和 `.claude/skills` 的本地文件与资源，并接入 `.claude` Skill 加载；携带的辅助文件不自动混入交付，已跟踪改动与显式暂存保留正常 Git 语义。冲突、链接或复制中断时保留现场，不覆盖不同内容或反向同步 Local。
+- 创建首次及下一轮 Managed Worktree 时一次性携带项目 `.dsh/skills`、`.agents/skills` 和 `.claude/skills` 的本地文件与资源，并接入 `.claude` Skill 加载；携带的辅助文件不自动混入交付，已跟踪改动与显式暂存保留正常 Git 语义。
+- Local 中已跟踪 Skill 存在未提交修改、删除或基线冲突时保守拒绝，不静默覆盖；复制中断、不同内容、未知资源或链接会保留现场，不反向同步 Local，也不自动清理可能有价值的内容。
+- Skill 快照复制改用 Node 文件 API，拒绝符号链接、junction 与项目外链接，并限制文件数、总大小、目录项和目录深度；无需增加原生复制工具依赖。
+
+### Compatibility
+
+- 新增 `@deepseek-ai/dsh-fs` peer，并使用与现有开发基线一致的 `0.1.2-rc.1`；`.claude` Skill 通过上游 filesystem Skill provider 加载。
+- 现有 Managed Worktree 不自动补拷 Skill；在首次创建或完成交付后的下一轮创建时获取新快照。无需迁移 Worktree registry、Review、Recovery 或 Session 数据。
 
 ## [0.9.1] - 2026-09-15
 
@@ -354,6 +365,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.9.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.7.5...v0.8.0

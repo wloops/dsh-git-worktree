@@ -34,6 +34,7 @@ When an agent edits the current project directly, its changes can mix with your 
 - **See related tasks together**: current and historical Worktrees are grouped under their Host-provided project navigation owner; ambiguous tasks conservatively remain where they are.
 - **Inspect review details in one place**: open a read-only view from the review bar for changed files, validation records, and version details without searching tool messages.
 - **Start safely from an empty repository**: after explicit confirmation, an unborn repository can receive an empty initial commit that excludes user files before the isolated Worktree is created.
+- **Carry project Skills**: the first Worktree and each next iteration receive one snapshot of `.dsh/skills`, `.agents/skills`, and `.claude/skills`, while auxiliary files stay separate from Git delivery.
 - **Continue in the same conversation**: after delivery, begin another task without opening a new conversation.
 
 > The current version manages Git Worktrees within one project. It does not yet provide a global cross-project manager.
@@ -77,10 +78,10 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 
 Before upgrading an existing Harness installation, handle Host data migration: `0.1.2-rc.1` removes the optional SQLite Session backend, so use an older Harness version to export that data first. Code Mode is now named PTC mode, while existing conversation records remain readable. Launch applications and install this plugin through a `dsh` Profile.
 
-After upgrading Harness from an earlier release, if the web UI shows **Failed to load plugins**, choose a fixed version from the [compatibility matrix](docs/COMPATIBILITY.md#english) and restart Harness; the example below uses the current `0.9.0`. Releases through `0.7.2` depend on the discontinued `dsh-client-runtime`; `0.7.3` can also form a `conversation` / `uiWorkspace` activation cycle in the rc.1 Web Client.
+After upgrading Harness from an earlier release, if the web UI shows **Failed to load plugins**, choose a fixed version from the [compatibility matrix](docs/COMPATIBILITY.md#english) and restart Harness; the example below uses the current `0.9.2`. Releases through `0.7.2` depend on the discontinued `dsh-client-runtime`; `0.7.3` can also form a `conversation` / `uiWorkspace` activation cycle in the rc.1 Web Client.
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.9.0
+dsh plugin --profile web add dsh-git-worktree@0.9.2
 ```
 
 ### Install
@@ -92,7 +93,7 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific version:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.9.1
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.9.2
 ```
 
 Open a Git Workspace and enable **Worktree** when creating a Session. An existing Local Session can also let the model call `worktree_create`.

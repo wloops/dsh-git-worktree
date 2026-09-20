@@ -34,6 +34,7 @@
 - **集中查看任务**：同一项目的当前及历史 Worktree 会按 Host 导航归属聚合到侧边栏，归属不明确时保守保留原位置。
 - **验收详情集中查看**：从验收条打开只读详情，查看文件列表、验证记录与版本信息，不必翻找聊天工具记录。
 - **空仓库安全起步**：无提交仓库可在明确确认后创建不包含用户文件的空首次提交，再建立隔离 Worktree。
+- **携带项目 Skills**：首次及下一轮 Worktree 创建时一次性携带 `.dsh/skills`、`.agents/skills` 和 `.claude/skills`，辅助文件与 Git 交付隔离。
 - **原对话继续下一轮**：任务交付后，无需新开对话即可继续下一项修改。
 
 > 当前版本管理单个项目中的 Git Worktree，暂不提供跨项目的全局管理界面。
@@ -77,10 +78,10 @@ flowchart LR
 
 从旧 Harness 升级时请先处理 Host 数据迁移：`0.1.2-rc.1` 已移除可选 SQLite Session 后端，旧数据需使用旧版 Harness 导出；Code Mode 已更名为 PTC mode，但现有会话记录仍可读取。应用和本插件统一通过 `dsh` Profile 启动与安装。
 
-从旧版 Harness 升级后，如果 Web 界面提示 **Failed to load plugins**，请按[兼容矩阵](docs/COMPATIBILITY.md#中文)选择修复版本并重启 Harness；下方以当前 `0.9.0` 为例。`0.7.2` 及更早版本依赖已停止发布的 `dsh-client-runtime`；`0.7.3` 在 rc.1 Web Client 中还可能形成 `conversation` / `uiWorkspace` 循环等待。
+从旧版 Harness 升级后，如果 Web 界面提示 **Failed to load plugins**，请按[兼容矩阵](docs/COMPATIBILITY.md#中文)选择修复版本并重启 Harness；下方以当前 `0.9.2` 为例。`0.7.2` 及更早版本依赖已停止发布的 `dsh-client-runtime`；`0.7.3` 在 rc.1 Web Client 中还可能形成 `conversation` / `uiWorkspace` 循环等待。
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.9.0
+dsh plugin --profile web add dsh-git-worktree@0.9.2
 ```
 
 ### 安装
@@ -92,7 +93,7 @@ dsh plugin --profile web add dsh-git-worktree
 也可以安装指定版本：
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.9.1
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.9.2
 ```
 
 安装后打开 Git Workspace，在新建 Session 时启用 **Worktree**；已有 Local Session 也可以让模型调用 `worktree_create` 创建隔离 Session。
