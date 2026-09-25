@@ -873,7 +873,10 @@ describe('Client entry integration', () => {
     const provided = new Map<string, unknown>()
     const disposers: Array<() => void> = []
     const remote = {
-      gitWorktree: fixture.adapter,
+      gitWorktree: {
+        ...fixture.adapter,
+        sidebarTopology: async () => ({ ok: true, value: await fixture.adapter.sidebarTopology() }),
+      },
       $mount: vi.fn(async () => () => undefined),
     }
     const slots = {

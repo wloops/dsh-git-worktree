@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest'
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,9 @@ import { WorktreeCreationFailure } from '../src/creation-failure.js'
 const roots: string[] = []
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }) })
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-create-'))
+  // Keep fixture paths physical: macOS /var resolves to /private/var, while
+  // creation deliberately rejects redirected parent paths before claiming them.
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-create-')))
   roots.push(root)
   const repo = join(root, 'repo'), target = join(root, 'target')
   await mkdir(repo)

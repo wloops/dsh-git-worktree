@@ -91,14 +91,15 @@ function createContext(options: {
   outerRepository?: boolean
   checkoutIds?: string[]
 } = {}): TestContext {
-  const root = mkdtempSync(join(tmpdir(), 'domi-checkout-测试 空格-'))
+  // Compare physical paths consistently with the canonical roots persisted by the Host.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'domi-checkout-测试 空格-')))
   temporaryRoots.push(root)
   const repositoryRoot = join(root, '本地 project')
   const projectRoot = options.projectSubdirectory
     ? join(repositoryRoot, options.projectSubdirectory)
     : repositoryRoot
   const configDir = options.outerRepository
-    ? mkdtempSync(join(tmpdir(), 'domi-checkout-config-'))
+    ? realpathSync(mkdtempSync(join(tmpdir(), 'domi-checkout-config-')))
     : join(root, 'config')
   if (options.outerRepository) temporaryRoots.push(configDir)
   const sessions = new Map<string, TestSession>([

@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- strict Remote codec 同时提供旧版 `schema` 与新版 `create()`；会话导航优先使用 `uiWorkspace.openSession`，旧版回退到 `sessions.open`。新版只从唯一的 `retainedBy.mainView` 判定当前 Session，归属歧义时拒绝危险操作。
+- strict Remote codec 同时提供旧版 `schema` 与新版 `create()`；会话导航优先使用 `uiWorkspace.openSession`，旧版回退到 `sessions.open`。新版只从唯一的 `retainedBy.mainView` 判定当前 Session，归属歧义时拒绝危险操作；旧版快照缺少 `byId` 时仍可按 `current` 安全读取。
 - `0.1.7-rc.2` 源码 Host 中，预会话迁移通过 `sessions.using()` 持有目标 Session 引用直至草稿交接与导航结束，避免创建后 binding 尚未 retain 便被借用而回滚。
 - 隔离开发命令修复源码 CLI、空 Profile 初始化和 pnpm 选择；默认 Workspace、缓存及安装环境与正式 Profile 隔离。
 - 受管侧栏收紧状态标记间距，在新版官方 Browser 派生中保留安全的悬停固定操作，并屏蔽可能破坏受管归属的行操作。

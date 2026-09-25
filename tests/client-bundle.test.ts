@@ -75,7 +75,10 @@ describe('built Client ModuleLoader artifact', () => {
     }
     const fixture = createWorktreeConsoleAdapterFixture()
     const expected = await fixture.adapter.current({ sessionId: 'agent-1' })
-    const call = vi.fn(async () => ({ ok: true as const, value: expected }))
+    const call = vi.fn(async (_url: string, method: string) => ({
+      ok: true as const,
+      value: method === 'gitWorktree/sidebarTopology' ? await fixture.adapter.sidebarTopology() : expected,
+    }))
     const ctx = new Context()
     await ctx.plugin(TypertRegistry)
     ctx.provide('connection', {
@@ -102,6 +105,7 @@ describe('built Client ModuleLoader artifact', () => {
     ctx.provide('sessions', {
       list: source({ ids: [], byId: {}, current: undefined, phase: 'ready' }),
       clear() {},
+      open() {},
       searchResultLimit: 100,
     } as never)
     ctx.provide('locale', { register: vi.fn() } as never)

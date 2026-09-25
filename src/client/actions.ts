@@ -120,7 +120,7 @@ export function navigateToSession(
 
 /** Resolve the sole visible main Session across the legacy selection and new retainedBy contract. */
 export function selectedSessionId(snapshot: ReturnType<ClientSessions['list']['getSnapshot']>): string | undefined {
-  const retained = Object.entries(snapshot.byId)
+  const retained = Object.entries(snapshot.byId ?? {})
     .filter(([, summary]) => (summary?.retainedBy?.mainView ?? 0) > 0)
     .map(([id]) => id)
   if (retained.length > 1) return undefined

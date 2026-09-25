@@ -25,7 +25,7 @@ function git(cwd: string, args: string[], input?: string) {
   return spawnSync('git', args, { cwd, input, encoding: 'utf8', env: testEnvironment() })
 }
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-unborn-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-unborn-')))
   roots.push(root)
   const repo = join(root, 'repo')
   await mkdir(repo)

@@ -150,7 +150,7 @@ export function createWorktreeConsoleAdapterFixture(stateful = false): WorktreeC
   const adapter: WorktreeConsoleAdapter = {
     async sidebarTopology() {
       record('sidebarTopology', {})
-      return outcome({ projects: [] })
+      return outcome({ projects: [], workspaceClientFlavor: 'legacy' })
     },
     async current(request: WorktreeConsoleCurrentRequest): Promise<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>> {
       record('current', request)

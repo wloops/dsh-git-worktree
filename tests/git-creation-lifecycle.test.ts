@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,8 @@ import { createDshGitPort } from '../src/adapters/git.js'
 const roots: string[] = []
 afterEach(async () => { vi.useRealTimers(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }) })
 it.each([true, false, 'reject', 'successful-child'] as const)('waits for the entire tree before handling a timed-out partial checkout (quiescence=%s)', async quiescence => {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-create-timer-'))
+  // The parent identity check requires a physical path (macOS /var is a symlink).
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-create-timer-')))
   roots.push(root)
   const repo = join(root, 'repo'), target = join(root, 'target')
   await mkdir(repo)
