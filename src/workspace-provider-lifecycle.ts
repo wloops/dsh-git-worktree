@@ -1,5 +1,6 @@
 import type { Context, FiberState } from '@deepseek-ai/cordis'
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
+import { hostWorkspaceClientFlavor, type WorkspaceClientFlavor } from './host-compat.js'
 
 export const WORKSPACE_PROVIDER_CONDITION = "!!get('worktreeWorkspaceProvider') && [...loader.entries()].some(entry => entry.options?.name === 'dsh-git-worktree' && !entry.disabled)"
 
@@ -19,7 +20,14 @@ const UNLOADING: FiberState = 5
  * Restarting the official entry through Loader operations publishes real module
  * events without saving any disabled flag or changing the user's profile.
  */
-export async function mountWorkspaceProviderLifecycle(ctx: Context): Promise<void> {
+export async function mountWorkspaceProviderLifecycle(
+  ctx: Context,
+  flavor: WorkspaceClientFlavor = hostWorkspaceClientFlavor(),
+): Promise<void> {
+  if (flavor === 'unsupported') {
+    ctx.logger.warn('No pinned Workspace Browser for this Host generation; leaving the official Workspace provider active.')
+    return
+  }
   const loader = ctx.loader
   const owned = (): Entry[] => [...loader.entries()].filter(entry => {
     const disabled = entry.options.disabled as unknown

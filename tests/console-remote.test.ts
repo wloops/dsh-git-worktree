@@ -84,6 +84,22 @@ describe('manual strict Worktree Console Remote contribution', () => {
     }
   })
 
+  it('supplies the same strict schema through both legacy and lazy codec contracts', () => {
+    for (const descriptor of WORKTREE_CONSOLE_DESCRIPTORS) {
+      for (const codec of [...descriptor.parameters.map(parameter => parameter.codec), descriptor.result]) {
+        expect(codec.mode).toBe('strict')
+        if (codec.mode !== 'strict') throw new Error('expected strict codec')
+        const factory = (codec as typeof codec & { create: () => typeof codec.schema }).create
+        expect(typeof factory).toBe('function')
+        expect(factory()).toBe(codec.schema)
+      }
+    }
+    const agent = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'current')!.parameters[0]!.codec
+    if (agent.mode !== 'strict') throw new Error('expected strict agent codec')
+    const factory = (agent as typeof agent & { create: () => typeof agent.schema }).create
+    expect(() => factory().parse('')).toThrow()
+  })
+
   it('keeps Sidebar topology path-free and callable without a current Agent Session', async () => {
     const descriptor = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'sidebarTopology')!
     expect(descriptor.parameters.map(parameter => parameter.name)).toEqual(['locale'])
@@ -283,6 +299,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
     const ctx = new Context()
     await ctx.plugin(TypertRegistry)
     const topology = { ok: true as const, value: { projects: [] } }
+    const expectedTopology = { ok: true as const, value: { projects: [], workspaceClientFlavor: 'legacy' } }
     const seenLanguages: string[] = []
     const control = { sidebarTopology: vi.fn(async () => {
       seenLanguages.push(currentHostLanguage())
@@ -293,10 +310,10 @@ describe('manual strict Worktree Console Remote contribution', () => {
     ctx.typert.register(TYPERT)
 
     await expect(ctx.typertGateway.invoke({ namespace: 'gitWorktree', method: 'sidebarTopology', args: {} }))
-      .resolves.toEqual(topology)
+      .resolves.toEqual(expectedTopology)
     expect(control.sidebarTopology).toHaveBeenCalledTimes(1)
     await expect(ctx.typertGateway.invoke({ namespace: 'gitWorktree', method: 'sidebarTopology', args: { locale: 'en' } }))
-      .resolves.toEqual(topology)
+      .resolves.toEqual(expectedTopology)
     expect(seenLanguages).toEqual(['zh', 'en'])
     await expect(ctx.typertGateway.invoke({ namespace: 'gitWorktree', method: 'sidebarTopology', args: { locale: 'fr' } }))
       .rejects.toThrow()

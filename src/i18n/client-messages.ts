@@ -98,6 +98,10 @@ export const clientMessages = {
     "zh": "当前没有选中的 Session。",
     "en": "No Session is currently selected."
   },
+  "harness.session.navigation.unavailable": {
+    "zh": "当前 Harness 未提供可用的会话导航服务，无法切换到 Worktree。",
+    "en": "Harness does not provide a compatible Session navigation service. Cannot open this Worktree."
+  },
   "the.current.session.is.not.ready": {
     "zh": "当前 Session 尚未就绪。",
     "en": "The current Session is not ready."

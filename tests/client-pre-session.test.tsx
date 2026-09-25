@@ -139,6 +139,49 @@ function successFixture() {
 afterEach(() => cleanup())
 
 describe('Pre-session Worktree preparation', () => {
+  test('retains the catalogued target through draft handoff on a Host that does not bind on create', async () => {
+    const fixture = successFixture()
+    const targetCtx = { id: 'retained-target-context' }
+    const binding = { ctx: targetCtx, session: { command: vi.fn() } }
+    fixture.services.sessions.binding = vi.fn((id: string) => id === 'source-session'
+      ? { ctx: { id: 'source-context' }, session: { command: vi.fn() } }
+      : undefined)
+    fixture.services.sessions.using = vi.fn(async (id, options, operation) => {
+      expect(id).toBe('target-session')
+      expect(options).toEqual({ source: 'controllerOperation' })
+      fixture.events.push('retain:ready')
+      const inputFor = fixture.services.conversation!.input.for as ReturnType<typeof vi.fn>
+      inputFor.mockImplementation((ctx: unknown) => {
+        expect(ctx).toBe(targetCtx)
+        return fixture.targetInput
+      })
+      try { return await operation({ binding }) }
+      finally { fixture.events.push('retain:release') }
+    })
+    const controller = createPreSessionWorktreeController(fixture.adapter, fixture.services)
+    await expect(controller.prepare({
+      sessionId: 'source-session',
+      input: { draft: 'keep this draft', imageIds: ['image-1'], occurrences: [], phase: 'plain' },
+      inputActions: fixture.sourceActions,
+    })).resolves.toEqual(fixture.target)
+    expect(fixture.events.indexOf('retain:ready')).toBeLessThan(fixture.events.indexOf('target:draft:keep this draft'))
+    expect(fixture.events.indexOf('source:draft:')).toBeLessThan(fixture.events.indexOf('retain:release'))
+    expect(fixture.events).toContain('session:open:target-session')
+  })
+
+  test('keeps the source draft when opening the retained target fails', async () => {
+    const fixture = successFixture()
+    fixture.services.sessions.using = vi.fn(async () => { throw new Error('target open failed') })
+    const controller = createPreSessionWorktreeController(fixture.adapter, fixture.services)
+    await expect(controller.prepare({
+      sessionId: 'source-session',
+      input: { draft: 'keep this draft', imageIds: ['image-1'], occurrences: [], phase: 'plain' },
+      inputActions: fixture.sourceActions,
+    })).rejects.toThrow('target open failed')
+    expect(fixture.sourceActions.setDraft).not.toHaveBeenCalled()
+    expect(fixture.services.workspaces.delete).toHaveBeenCalled()
+  })
+
   test('moves a blank Local draft into the Host-allocated target before opening it', async () => {
     const fixture = successFixture()
     const controller = createPreSessionWorktreeController(fixture.adapter, fixture.services)
@@ -169,6 +212,36 @@ describe('Pre-session Worktree preparation', () => {
       'block:clear:source-session',
     ])
     expect(fixture.sourceActions.submit).not.toHaveBeenCalled()
+  })
+
+  test('hands the draft to UI Workspace on the new navigation contract', async () => {
+    const fixture = successFixture()
+    delete fixture.services.sessions.open
+    fixture.services.uiWorkspace = { openSession: vi.fn((id: string) => { fixture.events.push(`uiWorkspace:open:${id}`) }) }
+    const controller = createPreSessionWorktreeController(fixture.adapter, fixture.services)
+
+    await expect(controller.prepare({
+      sessionId: 'source-session',
+      input: { draft: 'new navigator', imageIds: [], occurrences: [], phase: 'plain' },
+      inputActions: fixture.sourceActions,
+    })).resolves.toEqual(fixture.target)
+    expect(fixture.services.uiWorkspace.openSession).toHaveBeenCalledWith('target-session')
+    expect(fixture.events.indexOf('uiWorkspace:open:target-session')).toBeLessThan(fixture.events.indexOf('source:draft:'))
+  })
+
+  test('does not create a checkout when Harness has no compatible navigator', async () => {
+    const fixture = successFixture()
+    delete fixture.services.sessions.open
+    const controller = createPreSessionWorktreeController(fixture.adapter, fixture.services)
+
+    await expect(controller.prepare({
+      sessionId: 'source-session',
+      input: { draft: 'preserve me', imageIds: [], occurrences: [], phase: 'plain' },
+      inputActions: fixture.sourceActions,
+    })).rejects.toThrow(/会话导航服务/)
+    expect(fixture.adapter.create).not.toHaveBeenCalled()
+    expect(fixture.sourceActions.setDraft).not.toHaveBeenCalled()
+    expect(fixture.services.conversation.blocks.set).not.toHaveBeenCalled()
   })
 
   test('keeps the migrated target usable when retiring the empty source launcher fails', async () => {

@@ -5,7 +5,7 @@ import type {
   WorktreeConsoleCreateResponse,
   WorktreeConsoleTargetDetails,
 } from '../../console-contract.js'
-import type { PreSessionWorktreeServices } from '../actions.js'
+import { navigateToSession, type PreSessionWorktreeServices } from '../actions.js'
 
 export interface PreSessionDraftState {
   readonly draft: string
@@ -92,6 +92,10 @@ export class PreSessionWorktreeController {
     if (request.input.occurrences.length > 0) {
       throw new PreSessionWorktreeError(t("the.draft.contains.unserialized.references.remove.the.reference"))
     }
+    // Abort before creating a checkout or moving draft bytes if no UI can own the target.
+    if (!this.services.uiWorkspace?.openSession && !this.services.sessions.open) {
+      throw new PreSessionWorktreeError(t('harness.session.navigation.unavailable'))
+    }
 
     const previousBlock = this.services.conversation.blocks.storeFor(request.sessionId).getSnapshot()
     this.services.conversation.blocks.set(request.sessionId, { reason: t("creating.isolated.worktree") })
@@ -125,25 +129,34 @@ export class PreSessionWorktreeController {
         )
       }
 
-      const targetBinding = this.services.sessions.binding(created.targetSessionId)
-      if (targetBinding?.ctx === undefined) {
-        throw new PreSessionWorktreeError(t("the.target.session.was.created.but.harness.has"))
+      const targetSessionId = created.targetSessionId
+      const handoff = (targetBinding: ReturnType<PreSessionWorktreeServices['sessions']['binding']>): void => {
+        if (targetBinding?.ctx === undefined) {
+          throw new PreSessionWorktreeError(t("the.target.session.was.created.but.harness.has"))
+        }
+        const targetInput = adaptHarnessInputActions(this.services.conversation.input.for(targetBinding.ctx))
+        if (!sourceStillMatches(request)) {
+          throw new PreSessionWorktreeError(t("the.local.draft.or.attachments.changed.after.confirmation"))
+        }
+        // From the final source CAS through target writes, navigation and source
+        // clear there is no await. A failed target archived after accepting images
+        // would release browser-owned bytes that the source still references.
+        targetInput.setDraft(request.input.draft)
+        if (!targetInput.addImages(request.input.imageIds)) {
+          throw new PreSessionWorktreeError(t("the.target.session.is.temporarily.refusing.draft.attachments"))
+        }
+        navigateToSession(this.services, targetSessionId)
+        request.inputActions.setDraft('')
+        for (const imageId of request.input.imageIds) request.inputActions.removeImage(imageId)
       }
-      const targetInput = adaptHarnessInputActions(this.services.conversation.input.for(targetBinding.ctx))
-      if (!sourceStillMatches(request)) {
-        throw new PreSessionWorktreeError(t("the.local.draft.or.attachments.changed.after.confirmation"))
+      // create() only catalogues the identity on newer Hosts. Hold an official
+      // Session reference until navigation takes mainView ownership; older Hosts
+      // without using() still expose their immediately available binding.
+      if (this.services.sessions.using) {
+        await this.services.sessions.using(created.targetSessionId, { source: 'controllerOperation' }, reference => handoff(reference.binding))
+      } else {
+        handoff(this.services.sessions.binding(created.targetSessionId))
       }
-      // From the final source CAS through target writes, navigation and source
-      // clear there is no await. This ordering matters for image IDs: a failed
-      // target archived after accepting them would release browser-owned bytes
-      // that the preserved source still references.
-      targetInput.setDraft(request.input.draft)
-      if (!targetInput.addImages(request.input.imageIds)) {
-        throw new PreSessionWorktreeError(t("the.target.session.is.temporarily.refusing.draft.attachments"))
-      }
-      this.services.sessions.open(created.targetSessionId)
-      request.inputActions.setDraft('')
-      for (const imageId of request.input.imageIds) request.inputActions.removeImage(imageId)
       // The source is now an empty launcher. Retire it so Harness's New Session
       // reuse cannot route a concurrent task back into this reserved source.
       // A failed retirement must not roll back the already-safe target handoff:

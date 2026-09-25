@@ -1,24 +1,25 @@
 #!/usr/bin/env node
 
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   createDefaultOptions,
   createDshLaunch,
+  devCacheRoot,
   discoverHarnessRoot,
   ensureDevFixture,
   installLocalSnapshot,
   parseDevDshArgs,
+  prepareIsolatedWorkspacePatch,
   removeLocalSnapshot,
   runProcess,
   smokeLocalSnapshot,
 } from './dev-dsh-lib.mjs'
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-const cacheRoot = join(tmpdir(), 'dsh-git-worktree-dev')
+const cacheRoot = devCacheRoot()
 const defaults = {
-  ...createDefaultOptions(projectRoot, cacheRoot),
+  ...createDefaultOptions(projectRoot, cacheRoot, Boolean(process.env.DSH_HOME)),
   harnessRoot: discoverHarnessRoot(projectRoot),
 }
 
@@ -31,13 +32,13 @@ Usage:
   pnpm run dev:dsh:smoke -- [--profile web] [--harness <path>]
   pnpm run dev:dsh:remove -- [--profile web] [--harness <path>]
 
-The install path is a local tarball under the OS temporary directory. Nothing is
-published to npm or pushed to Git. Nearby Harness source checkouts are scanned
-and a candidate with node_modules/tsx is preferred; an arbitrary checkout can be
-selected with DSH_HARNESS_ROOT or --harness. Every profile and launch command
-then uses that source CLI instead of a globally installed dsh executable. An
-explicit checkout without dependencies fails early with its pnpm install command.
-Without --repo, a marker-protected disposable Git repository is created at:
+Nothing is published to npm or pushed to Git. Nearby Harness source checkouts
+are scanned; use DSH_HARNESS_ROOT or --harness for a specific checkout. Install
+and build that source checkout first. The source's own pnpm version is selected
+automatically. Set DSH_HOME to a fresh temporary directory to isolate the web
+Profile, archive, and default Workspace; this also patches the Host's Documents
+root to that home. Without --repo, a marker-protected disposable Git repository
+is created at:
   ${defaults.repo}
 `)
 }
@@ -80,11 +81,13 @@ try {
         workspaceRoot: fixture.path,
         profile: options.profile,
         port: options.port,
+        ...(process.env.DSH_HOME ? { isolationPatchPath: prepareIsolatedWorkspacePatch(cacheRoot) } : {}),
       })
       console.log(`Starting DSH at http://127.0.0.1:${options.port}`)
       console.log(launch.source
         ? `Using Harness source checkout: ${options.harnessRoot}`
         : 'Using the installed dsh executable.')
+      if (process.env.DSH_HOME) console.log(`Isolated default Workspace patch: ${launch.args[launch.args.indexOf('--patch') + 1]}`)
       console.log('Press Ctrl+C to stop. No npm/GitHub publication is performed.\n')
       runProcess(launch.command, launch.args, { cwd: launch.cwd })
     }

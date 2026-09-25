@@ -1,4 +1,4 @@
-import type { InvocationDescriptor, InvocationParameterDescriptor, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
+import type { InvocationDescriptor, InvocationParameterDescriptor, TypertCodec, TypertRemoteContribution, TypertSchema } from '@deepseek-ai/dsh-typert-protocol'
 import {
   booleanSchema,
   optionalLanguageSchema,
@@ -33,12 +33,18 @@ const PACKAGE = 'dsh-git-worktree'
 const SERVICE = 'gitWorktree'
 const AGENT_WIRE_TYPE = '@deepseek-ai/dsh-session/types#SessionId'
 
+// Older Harness reads schema; newer strict gateways materialize it via create().
+// Both fields must reference the same schema to preserve the wire contract.
+function strictCodec(typeSymbol: string, schema: TypertSchema): TypertCodec & { create: () => TypertSchema } {
+  return { mode: 'strict', typeSymbol, schema, create: () => schema }
+}
+
 const agentParameter: InvocationParameterDescriptor = {
   name: 'agent',
   wire: 'agentId',
   source: 'lookup',
   lookup: 'agent',
-  codec: { mode: 'strict', typeSymbol: AGENT_WIRE_TYPE, schema: sessionIdSchema },
+  codec: strictCodec(AGENT_WIRE_TYPE, sessionIdSchema),
 }
 
 function json(name: string, schema: { parse(value: unknown): unknown }, typeSymbol: string, acceptsUndefined = false): InvocationParameterDescriptor {
@@ -47,7 +53,7 @@ function json(name: string, schema: { parse(value: unknown): unknown }, typeSymb
     wire: name,
     source: 'json',
     ...(acceptsUndefined ? { acceptsUndefined: true as const } : {}),
-    codec: { mode: 'strict', typeSymbol, schema },
+    codec: strictCodec(typeSymbol, schema),
   }
 }
 
@@ -65,7 +71,7 @@ function descriptor(
     method,
     invocation: { kind: 'direct' },
     parameters: [...(withAgent ? [agentParameter, ...parameters] : parameters), json('locale', optionalLanguageSchema, 'string | undefined', true)],
-    result: { mode: 'strict', typeSymbol: `${PACKAGE}/console-contract#${resultType}`, schema: resultSchema },
+    result: strictCodec(`${PACKAGE}/console-contract#${resultType}`, resultSchema),
   }
 }
 

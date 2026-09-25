@@ -8,6 +8,8 @@ import contribution, { type GitWorktreeRemote } from '../../console-remote/remot
 import { apply as applyToolViews, inject as toolViewInject } from '../index.js'
 import { registerManagedWorkspaceSidebar } from '../workspace-sidebar/index.js'
 import { inject as officialWorkspaceInject } from 'virtual:dsh-official-workspace-client'
+import { apply as applyNextWorkspace, inject as nextWorkspaceInject } from 'virtual:dsh-official-workspace-client-next'
+import { apply as applyAlphaWorkspace, inject as alphaWorkspaceInject } from 'virtual:dsh-official-workspace-client-alpha'
 import { createWorktreeConsoleRemoteAdapter } from './adapter.js'
 
 export { createWorktreeConsoleRemoteAdapter } from './adapter.js'
@@ -39,16 +41,42 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
   const adapter = createWorktreeConsoleRemoteAdapter(remote, getLanguage)
   ctx.provide('worktreeConsole', adapter)
 
-  // Host lifecycle selects this replacement only while the plugin is active.
-  // Provide Workspace before uiConversation to avoid a Client boot cycle.
-  registerManagedWorkspaceSidebar(
-    ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0],
-    adapter,
-  )
+  const mountTools = (workspaceCtx: Context): void => {
+    // Conversation-dependent views are below their UI Workspace provider;
+    // a sibling fiber could not safely assume the navigation service exists.
+    workspaceCtx.inject(toolViewInject, child => {
+      applyToolViews(child as unknown as Parameters<typeof applyToolViews>[0], adapter)
+    })
+  }
 
-  // The remaining Worktree views consume conversation/connection. Keeping
-  // them in a child fiber prevents those services from blocking uiWorkspace.
-  ctx.inject(toolViewInject, child => {
-    applyToolViews(child as unknown as Parameters<typeof applyToolViews>[0], adapter)
-  })
+  // All three official Browser generations declare the same top-level Slot.
+  // Pick exactly one based on the Host-resolved package version, not timing of
+  // Client services (shortcuts is absent in alpha and late to start in rc.2).
+  const topology = await adapter.sidebarTopology()
+  if (!topology.ok) throw new Error('Could not identify the installed Host Workspace generation.')
+  const flavor = topology.value.workspaceClientFlavor
+  if (flavor === 'legacy') {
+    if (typeof (ctx.get('sessions') as { open?: unknown }).open !== 'function') {
+      throw new Error('Legacy Workspace Browser requires sessions.open().')
+    }
+    registerManagedWorkspaceSidebar(
+      ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0], adapter,
+    )
+    mountTools(ctx)
+  } else if (flavor === 'alpha' || flavor === 'next') {
+    const [required, applyWorkspace] = flavor === 'alpha'
+      ? [alphaWorkspaceInject, applyAlphaWorkspace] as const
+      : [nextWorkspaceInject, applyNextWorkspace] as const
+    ctx.inject(required, child => {
+      registerManagedWorkspaceSidebar(
+        child as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0],
+        adapter,
+        applyWorkspace,
+      )
+      mountTools(child)
+    })
+  } else {
+    // Host lifecycle leaves the official provider enabled in this case.
+    mountTools(ctx)
+  }
 }

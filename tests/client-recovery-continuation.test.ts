@@ -17,7 +17,7 @@ import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.
 
 function runtime(
   target: WorktreeConsoleTargetDetails,
-  initial: { running?: boolean; openState?: 'cold' | 'loading' | 'open' | 'error'; removed?: boolean } = {},
+  initial: { running?: boolean; openState?: 'cold' | 'loading' | 'open' | 'error'; removed?: boolean; newSelection?: boolean } = {},
 ) {
   let sessionSnapshot = {
     running: initial.running ?? false,
@@ -34,9 +34,12 @@ function runtime(
       create: vi.fn(), open: vi.fn(),
       list: {
         getSnapshot: () => ({
-          current: currentSessionId,
+          current: initial.newSelection ? undefined : currentSessionId,
           ids: [target.ownerSessionId],
-          byId: { [target.ownerSessionId]: { cwd: target.managedRoot! } },
+          byId: { [target.ownerSessionId]: {
+            cwd: target.managedRoot!,
+            retainedBy: initial.newSelection ? { mainView: currentSessionId === target.ownerSessionId ? 1 : 0 } : undefined,
+          } },
         }),
         subscribe: listener => {
           listListeners.add(listener)
@@ -125,7 +128,7 @@ afterEach(() => {
 })
 
 describe('Worktree recovery continuation', () => {
-  test('explicit conflict continuation waits for an idle open owner Session and sends exactly once', async () => {
+  test.each([false, true])('explicit conflict continuation waits for an idle open owner Session and sends exactly once (new selection: %s)', async newSelection => {
     const fixture = createWorktreeConsoleAdapterFixture()
     const request = conflictRequest(8, 'single-flight')
     const working = authorizedTarget({
@@ -136,7 +139,7 @@ describe('Worktree recovery continuation', () => {
       capabilities: { ...fixture.target.capabilities, preflight: false, preview: false, resumeRevision: false, finalize: false },
     }, request)
     fixture.adapter.inspect = vi.fn(async () => ({ ok: true as const, value: { target: working } }))
-    const client = runtime(working, { running: true })
+    const client = runtime(working, { running: true, newSelection })
 
     enqueueWorktreeRecovery({ adapter: fixture.adapter, services: client.services, request, isActive: () => true })
     enqueueWorktreeRecovery({ adapter: fixture.adapter, services: client.services, request, isActive: () => true })
@@ -149,6 +152,21 @@ describe('Worktree recovery continuation', () => {
       { type: 'text', text: expect.stringMatching(/managed Worktree.*Local HEAD.*src\/index\.ts/s) },
     ], 'queue', expect.any(AbortSignal))
     expect(getWorktreeRecoverySnapshot('target-session')).toMatchObject({ status: 'sent', request })
+  })
+
+  test('sends only for the mainView-retained owner on newer Hosts and cancels after selection changes', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const request = conflictRequest(8, 'new-selection')
+    const working = authorizedTarget({ ...fixture.target, state: 'working' as const, revision: 8, review: undefined }, request)
+    fixture.adapter.inspect = vi.fn(async () => ({ ok: true as const, value: { target: working } }))
+    const client = runtime(working, { running: true, newSelection: true })
+
+    enqueueWorktreeRecovery({ adapter: fixture.adapter, services: client.services, request, isActive: () => true })
+    await vi.waitFor(() => expect(getWorktreeRecoverySnapshot('target-session')).toMatchObject({ status: 'queued' }))
+    client.setCurrentSession('another-session')
+    client.setSessionSnapshot({ running: false })
+    await vi.waitFor(() => expect(getWorktreeRecoverySnapshot('target-session')).toMatchObject({ status: 'cancelled' }))
+    expect(client.prompt).not.toHaveBeenCalled()
   })
 
   test('fails closed when the exact checkout/revision/kind no longer matches Host authority', async () => {

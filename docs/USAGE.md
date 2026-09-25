@@ -284,22 +284,15 @@ pnpm run build
 pnpm run check:publish
 ```
 
-端到端运行：
+用已安装依赖并完成构建的 Harness 源码做**隔离**联调（在插件仓库目录执行）：
 
 ```bash
-pnpm run dev:dsh
+DSH_HOME="$(mktemp -d -t dsh-worktree-test)" pnpm run dev:dsh -- --harness /Users/dev/Projects/open/deepseek-harness
 ```
 
-常用变体：
+该命令自动选用 Harness 源码所需的 pnpm、初始化空 `web` Profile、打包并安装当前插件；同时将默认 Workspace 与一次性 Git 测试仓库放在隔离 `DSH_HOME` 内。打开命令打印的本地 Web 地址即可测试，`Ctrl+C` 停止。要在相同 Profile 上复查安装，保留同一个 `DSH_HOME` 值，再执行 `pnpm run dev:dsh:smoke -- --harness /Users/dev/Projects/open/deepseek-harness`。未设置 `DSH_HOME` 时会使用 DSH 的常规 Profile，隔离联调不要省略它。源码首次使用前应在 Harness 仓库完成依赖安装和构建。
 
-```bash
-pnpm run dev:dsh:install
-pnpm run dev:dsh:smoke
-pnpm run dev:dsh -- --repo G:/path/to/repo --port 4090 --profile web
-pnpm run dev:dsh:remove
-```
-
-`dev:dsh` 只构建和安装当前 checkout，不会发布 npm 包或 push Git refs。
+其他选项：`--repo <测试仓库>`、`--port <端口>`、`--profile web`；`pnpm run dev:dsh:install` 仅安装，`pnpm run dev:dsh:remove` 从指定 Profile 卸载。`dev:dsh` 不会发布 npm 包或 push Git refs。
 
 ## 进一步阅读
 

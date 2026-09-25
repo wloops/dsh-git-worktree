@@ -1,4 +1,5 @@
 import { withHostLanguage, languageFromSettings } from '../i18n/host.js'
+import { hostWorkspaceClientFlavor } from '../host-compat.js'
 import type { Language } from '../i18n/core.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -28,8 +29,9 @@ export class WorktreeConsoleService extends TypertRemoteService {
   }
 
   @Remote
-  sidebarTopology(locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>> {
-    return withHostLanguage(locale ?? languageFromSettings(this.hostContext), () => this.controlPlane.sidebarTopology())
+  async sidebarTopology(locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>> {
+    const outcome = await withHostLanguage(locale ?? languageFromSettings(this.hostContext), () => this.controlPlane.sidebarTopology())
+    return outcome.ok ? { ok: true, value: { ...outcome.value, workspaceClientFlavor: hostWorkspaceClientFlavor() } } : outcome
   }
 
   @Remote

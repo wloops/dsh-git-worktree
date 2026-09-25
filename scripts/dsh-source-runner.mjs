@@ -11,4 +11,10 @@ if (!workspaceRoot || !cliEntry) {
 // the application cwd so newly created DSH Sessions use the intended fixture.
 process.chdir(workspaceRoot)
 process.argv = [process.execPath, cliEntry, ...args]
-await import(pathToFileURL(cliEntry).href)
+const cli = await import(pathToFileURL(cliEntry).href)
+// Recent Harness CLIs guard their entry with import.meta.main; importing the
+// module from this cwd-preserving runner does not make it the Node main module.
+if (typeof cli.runCli !== 'function') {
+  throw new Error('Harness source CLI must export runCli() for the development runner.')
+}
+await cli.runCli()

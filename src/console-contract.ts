@@ -204,6 +204,8 @@ export interface WorktreeSidebarProject {
 
 export interface WorktreeSidebarTopologyResponse {
   projects: WorktreeSidebarProject[]
+  /** Server-pinned Host package generation; unknown generations must not mount a guessed Client Browser. */
+  workspaceClientFlavor?: 'legacy' | 'alpha' | 'next' | 'unsupported'
 }
 
 /** targetSessionId is allocated on the Host; the browser never chooses ownership identity. */

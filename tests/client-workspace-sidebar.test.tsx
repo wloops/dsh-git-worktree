@@ -148,6 +148,41 @@ describe('Managed Workspace sidebar', () => {
     expect(context.locale.register).toHaveBeenCalledWith('workspace', {})
   })
 
+  test('blocks official shortcut mutations until topology is verified, then only protects owners', async () => {
+    let deliver!: (value: Awaited<ReturnType<WorktreeConsoleAdapter['sidebarTopology']>>) => void
+    const port = adapter()
+    const originalTopology = await port.sidebarTopology()
+    port.sidebarTopology = vi.fn(() => new Promise(resolve => { deliver = resolve }))
+    let guard!: { ready: boolean; blockSession(id: string): boolean; blockWorkspace(id: string): boolean }
+    let Browser!: typeof InspectBrowser
+    const context = {
+      get: (name: string) => name === '__dshGitWorktreeManagedGuard' ? guard : undefined,
+      slots: {
+        inject: (_name: string, callback: () => unknown) => { callback() },
+        register: (descriptor: Record<string, unknown>, component: typeof InspectBrowser) => {
+          if (descriptor.name === 'sidebar.workspaces') Browser = component
+          return () => {}
+        },
+      },
+    }
+    registerManagedWorkspaceSidebar(context, port, (proxy: any) => {
+      guard = proxy.get('__dshGitWorktreeManagedGuard')
+      proxy.slots.inject('sidebar.workspaces', () => proxy.slots.register({ name: 'sidebar.workspaces' }, InspectBrowser))
+    })
+    const view = render(<Browser {...browserProps()} />)
+    expect(guard.ready).toBe(false)
+    expect(guard.blockSession(localSession)).toBe(true)
+    expect(guard.blockWorkspace(localWorkspace)).toBe(true)
+    deliver(originalTopology)
+    await waitFor(() => expect(guard.ready).toBe(true))
+    expect(guard.blockSession(ownerSession)).toBe(true)
+    expect(guard.blockWorkspace(managedWorkspace)).toBe(true)
+    expect(guard.blockSession(localSession)).toBe(false)
+    expect(guard.blockWorkspace(localWorkspace)).toBe(false)
+    view.unmount()
+    expect(guard.ready).toBe(false)
+  })
+
   test('projects one owner Session, allows rename/archive, and silently blocks second-session operations', async () => {
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const props = browserProps()

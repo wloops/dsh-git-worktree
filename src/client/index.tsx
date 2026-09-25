@@ -39,6 +39,7 @@ function servicesOf(ctx: ClientContextLike): PreSessionWorktreeServices {
     locale: ctx.get('locale'),
     workspaces: ctx.get('workspaces') as PreSessionWorktreeServices['workspaces'],
     sessions: ctx.get('sessions') as PreSessionWorktreeServices['sessions'],
+    uiWorkspace: ctx.get('uiWorkspace') as PreSessionWorktreeServices['uiWorkspace'],
     conversation: ctx.get('conversation') as PreSessionWorktreeServices['conversation'],
   }
 }

@@ -5,6 +5,7 @@ import {
   openAuthorizedWorktreeTarget,
   openExistingSession,
   openIsolatedTarget,
+  finalizeCurrentSession,
   prefillSessionDraft,
 } from '../src/client/actions.js'
 
@@ -44,6 +45,52 @@ function services(
 }
 
 describe('Worktree Client navigation', () => {
+  test('accepts only the unique mainView-retained Session for finalization on new Hosts', async () => {
+    const client = services() as WorktreeClientServices
+    const command = vi.fn(async () => ({ ok: true, value: { matched: true } }))
+    client.sessions.list = {
+      getSnapshot: () => ({ ids: ['owner', 'other'], byId: {
+        owner: { cwd: '/fixture/owner', retainedBy: { mainView: 1 } },
+        other: { cwd: '/fixture/other', retainedBy: { mainView: 0 } },
+      } }),
+      subscribe: () => () => {},
+    }
+    client.sessions.binding = vi.fn(() => ({ session: { command } }))
+    await finalizeCurrentSession(client, 'review-id', 2, 'cleanup')
+    expect(client.sessions.binding).toHaveBeenCalledWith('owner')
+    expect(command).toHaveBeenCalledWith('/worktree finalize review-id 2 cleanup')
+  })
+
+  test('does not finalize when the new Host retains more than one main Session', async () => {
+    const client = services()
+    client.sessions.list = {
+      getSnapshot: () => ({ ids: ['first', 'second'], byId: {
+        first: { retainedBy: { mainView: 1 } },
+        second: { retainedBy: { mainView: 1 } },
+      } }),
+      subscribe: () => () => {},
+    }
+    client.sessions.binding = vi.fn()
+    await expect(finalizeCurrentSession(client, 'review-id', 1, 'cleanup')).rejects.toThrow(/没有选中的 Session/)
+    expect(client.sessions.binding).not.toHaveBeenCalled()
+  })
+
+  test('uses UI Workspace selection on newer Harness after verifying the target cwd', async () => {
+    const client = services({ 'target-session': { cwd: '/fixture/target' } })
+    client.uiWorkspace = { openSession: vi.fn() }
+    delete client.sessions.open
+    expect(openExistingSession(client, 'target-session', '/fixture/target')).toBe(true)
+    expect(client.uiWorkspace.openSession).toHaveBeenCalledWith('target-session')
+    expect(openExistingSession(client, 'target-session', '/fixture/other')).toBe(false)
+    expect(client.uiWorkspace.openSession).toHaveBeenCalledTimes(1)
+  })
+
+  test('refuses to claim a target opened when neither generation provides navigation', () => {
+    const client = services({ 'target-session': { cwd: '/fixture/target' } })
+    delete client.sessions.open
+    expect(() => openExistingSession(client, 'target-session', '/fixture/target')).toThrow(/会话导航服务/)
+  })
+
   test('opens an existing target Session without recreating its Workspace', async () => {
     const client = services({
       'target-session': { cwd: '/fixture/project-worktrees/checkout-1' },

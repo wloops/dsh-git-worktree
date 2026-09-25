@@ -1,7 +1,7 @@
 import { defaultClientTranslator, translatorForServices, type ClientTranslator } from '../i18n.js'
 import { useCallback, useSyncExternalStore } from 'react'
 import type { WorktreeConsoleAdapter, WorktreeConsoleTargetDetails } from '../../console-contract.js'
-import type { WorktreeClientServices } from '../actions.js'
+import { selectedSessionId, type WorktreeClientServices } from '../actions.js'
 
 export interface WorktreeApplyConflictRecoveryRequest {
   kind: 'worktree_apply_conflict'
@@ -225,8 +225,13 @@ function targetMatchesRequest(target: WorktreeConsoleTargetDetails, request: Wor
 }
 
 function activeSessionState(entry: RecoveryEntry): 'active' | 'pending' | 'mismatch' {
-  const current = entry.services.sessions.list.getSnapshot().current
-  if (current === undefined) return 'pending'
+  const sessions = entry.services.sessions.list.getSnapshot()
+  const current = selectedSessionId(sessions)
+  if (current === undefined) {
+    // New Controllers expose main-view retention instead of a `current` field.
+    // A projected owner without that retention is positively deselected, not pending.
+    return sessions.byId[entry.snapshot.request.sessionId]?.retainedBy !== undefined ? 'mismatch' : 'pending'
+  }
   return current === entry.snapshot.request.sessionId ? 'active' : 'mismatch'
 }
 
@@ -240,7 +245,7 @@ function sessionReady(
   if (binding.session.sessionId !== request.sessionId) return false
   const sessions = entry.services.sessions.list.getSnapshot()
   const summary = sessions.byId[request.sessionId]
-  if (sessions.current !== request.sessionId) return false
+  if (selectedSessionId(sessions) !== request.sessionId) return false
   if (summary?.cwd === undefined || target.managedRoot === null || !samePath(summary.cwd, target.managedRoot)) return false
   const snapshot = binding.session.getSnapshot()
   return snapshot.openState === 'open' && !snapshot.running && !snapshot.removed

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtempSync } from 'node:fs'
@@ -8,11 +8,13 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   createDefaultOptions,
   createDshLaunch,
+  devCacheRoot,
   discoverHarnessRoot,
   ensureDevFixture,
   executable,
   installLocalSnapshot,
   parseDevDshArgs,
+  prepareIsolatedWorkspacePatch,
   removeLocalSnapshot,
   runProcess,
   smokeLocalSnapshot,
@@ -28,7 +30,9 @@ function createHarnessRoot(root: string, options: { ready?: boolean } = {}): str
   writeFileSync(join(root, 'apps', 'cli', 'src', 'bin.ts'), '')
   if (options.ready !== false) {
     mkdirSync(join(root, 'node_modules', 'tsx'), { recursive: true })
+    mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true })
     writeFileSync(join(root, 'node_modules', 'tsx', 'package.json'), '{"name":"tsx"}')
+    writeFileSync(join(root, 'node_modules', '.bin', executable('pnpm')), 'fixture pnpm binary')
   }
   return root
 }
@@ -52,6 +56,31 @@ describe('local DSH development workflow', () => {
     })
   })
 
+  test('Given an isolated DSH home When selecting the dev cache Then older Profile archives remain outside cleanup', () => {
+    const home = join(tmpdir(), 'isolated-dsh-home')
+    expect(devCacheRoot({ DSH_HOME: home })).toBe(join(home, 'dev-dsh-cache'))
+    expect(devCacheRoot({})).toBe(join(tmpdir(), 'dsh-git-worktree-dev'))
+  })
+
+  test('Given an isolated DSH home When booting a fresh Web workspace Then Documents stay within the isolated home', () => {
+    const cacheRoot = join(mkdtempSync(join(tmpdir(), 'dsh-isolated-workspace-')), 'dev-dsh-cache')
+    const patchPath = prepareIsolatedWorkspacePatch(cacheRoot)
+    expect(patchPath).toBe(join(cacheRoot, 'workspace-isolation.patch.yml'))
+    expect(readFileSync(patchPath, 'utf8')).toBe(
+      `- id: workspace-controller\n  config:\n    documentsDirectory: ${JSON.stringify(join(cacheRoot, 'Documents'))}\n`,
+    )
+    expect(createDefaultOptions('/plugin', cacheRoot, true).repo).toBe(
+      join(cacheRoot, 'Documents', 'deepseek-harness', 'default-workspace'),
+    )
+    const launch = createDshLaunch({
+      projectRoot: join(tmpdir(), 'dsh-plugin-root'),
+      workspaceRoot: join(tmpdir(), 'dsh-fixture'),
+      profile: 'web', port: 4088,
+      isolationPatchPath: patchPath,
+    })
+    expect(launch.args).toEqual(['--profile', 'web', '--patch', patchPath, '--port', '4088', '--no-open'])
+  })
+
   test('Given explicit development options When parsing Then profile, repository and port are preserved', () => {
     const root = join(tmpdir(), 'dsh-plugin-root')
     const defaults = createDefaultOptions(root, join(tmpdir(), 'dsh-git-worktree-dev'))
@@ -71,6 +100,17 @@ describe('local DSH development workflow', () => {
       repoExplicit: true,
       harnessRoot: join(tmpdir(), 'DeepSeek', 'deepseek-harness'),
     })
+  })
+
+  test('Given a guarded source CLI When the runner imports it Then the exported command runs once in the fixture', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-source-runner-'))
+    const cli = join(root, 'cli.mjs')
+    const output = join(root, 'command.json')
+    writeFileSync(cli, `import { writeFileSync } from 'node:fs';\nexport async function runCli() { writeFileSync(${JSON.stringify(output)}, JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) })) }\nif (import.meta.main) await runCli();\n`)
+    execFileSync(process.execPath, [join(process.cwd(), 'scripts', 'dsh-source-runner.mjs'), root, cli, 'plugin', '--profile', 'web'])
+    const command = JSON.parse(readFileSync(output, 'utf8')) as { cwd: string; args: string[] }
+    expect(realpathSync(command.cwd)).toBe(realpathSync(root))
+    expect(command.args).toEqual(['plugin', '--profile', 'web'])
   })
 
   test('Given a Harness source checkout When planning launch Then DSH keeps the fixture as process cwd', () => {
@@ -97,6 +137,17 @@ describe('local DSH development workflow', () => {
     expect(launch.cwd).toBe(projectRoot)
   })
 
+  test('Given a prepared Harness source with its pinned pnpm When launching Then use that pnpm instead of the caller version', () => {
+    const harnessRoot = createHarnessRoot(mkdtempSync(join(tmpdir(), 'dsh-pinned-pnpm-')))
+    const binary = join(harnessRoot, 'node_modules', '.bin', executable('pnpm'))
+    mkdirSync(join(harnessRoot, 'node_modules', '.bin'), { recursive: true })
+    writeFileSync(binary, 'fixture pnpm binary')
+    expect(createDshLaunch({
+      projectRoot: join(tmpdir(), 'dsh-plugin-root'), harnessRoot,
+      workspaceRoot: join(tmpdir(), 'dsh-fixture'), profile: 'web', port: 4091,
+    }).command).toBe(binary)
+  })
+
   test('Given a platform command shim When executing it Then arguments are forwarded without a shell error', () => {
     expect(runProcess(executable('pnpm'), ['--version'], { capture: true }).stdout).toMatch(/^\d+\.\d+\.\d+/)
   })
@@ -116,8 +167,8 @@ describe('local DSH development workflow', () => {
     mkdirSync(join(projectParent, 'managed-worktrees'))
     git(localProjectRoot, ['worktree', 'add', '--detach', linkedRoot])
 
-    expect(discoverHarnessRoot(localProjectRoot, {})).toBe(readyHarnessRoot)
-    expect(discoverHarnessRoot(linkedRoot, {})).toBe(readyHarnessRoot)
+    expect(realpathSync(discoverHarnessRoot(localProjectRoot, {})!)).toBe(realpathSync(readyHarnessRoot))
+    expect(realpathSync(discoverHarnessRoot(linkedRoot, {})!)).toBe(realpathSync(readyHarnessRoot))
   })
 
   test('Given DSH_HARNESS_ROOT points anywhere When discovery runs Then the explicit source checkout wins', () => {
@@ -155,8 +206,8 @@ describe('local DSH development workflow', () => {
 
     expect(result.created).toBe(true)
     expect(git(fixture, ['status', '--porcelain'])).toBe('')
-    expect(git(fixture, ['rev-parse', '--show-toplevel']).replaceAll('\\', '/').toLowerCase())
-      .toBe(fixture.replaceAll('\\', '/').toLowerCase())
+    expect(realpathSync(git(fixture, ['rev-parse', '--show-toplevel'])).replaceAll('\\', '/').toLowerCase())
+      .toBe(realpathSync(fixture).replaceAll('\\', '/').toLowerCase())
     expect(readFileSync(join(fixture, 'tracked.txt'), 'utf8')).toBe('base\n')
     expect(existsSync(join(fixture, '.dsh-git-worktree-fixture.json'))).toBe(true)
   })
@@ -240,6 +291,49 @@ describe('local DSH development workflow', () => {
       [expect.stringContaining('dsh'), '--profile', 'web', '--dump-config'],
     ])
     expect(calls.flatMap(({ args }) => args)).not.toContain('publish')
+  })
+
+  test('Given a fresh isolated DSH home When installing Then the official web profile is initialized before adding the snapshot', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-dev-first-profile-'))
+    const harnessRoot = createHarnessRoot(join(root, 'harness'))
+    const dshHome = join(root, 'isolated-home')
+    const manifestPath = join(dshHome, 'profiles', 'web', 'package.json')
+    mkdirSync(join(root, 'node_modules'))
+    mkdirSync(join(root, 'lib'))
+    writeFileSync(join(root, 'lib', 'index.js'), 'export {}')
+    writeFileSync(join(root, 'cordis.patch.yml'), '[]\n')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'dsh-git-worktree', version: '0.1.2', scripts: {}, files: ['lib', 'cordis.patch.yml'],
+    }))
+    const cacheRoot = join(root, 'cache')
+    const events: string[] = []
+    const runner = (command: string, args: string[], options?: { cwd?: string }) => {
+      if (command.includes('pnpm') && args[0] === 'pack') {
+        writeFileSync(args[args.indexOf('--out') + 1]!, 'tarball')
+      }
+      const dshArgs = sourceDshArgs(args)
+      if (dshArgs?.includes('--dump-config')) {
+        events.push(existsSync(manifestPath) ? 'read-profile' : 'initialize-profile')
+        if (!existsSync(manifestPath)) {
+          mkdirSync(join(dshHome, 'profiles', 'web'), { recursive: true })
+          writeFileSync(manifestPath, JSON.stringify({ dependencies: {} }))
+        }
+        return { stdout: readFileSync(manifestPath, 'utf8').includes('dsh-git-worktree')
+          ? '# == dsh-git-worktree\n' : '# == ui-workspace\n' }
+      }
+      if (dshArgs?.includes('add')) {
+        expect(existsSync(manifestPath)).toBe(true)
+        events.push('add-snapshot')
+        writeFileSync(manifestPath, JSON.stringify({ dependencies: { 'dsh-git-worktree': `file:${dshArgs.at(-1)}` } }))
+      }
+      return { stdout: '' }
+    }
+    const installed = installLocalSnapshot({
+      projectRoot: root, harnessRoot, profile: 'web', cacheRoot,
+      environment: { DSH_HOME: dshHome }, now: () => 1234, run: runner,
+    })
+    expect(existsSync(installed.archivePath)).toBe(true)
+    expect(events).toEqual(['initialize-profile', 'add-snapshot', 'read-profile'])
   })
 
   test('Given a Harness source checkout When installing, smoking and removing Then every DSH command uses the source CLI', () => {

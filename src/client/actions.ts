@@ -45,11 +45,18 @@ export interface ClientSessions {
   list: SnapshotStore<{
     current?: string
     ids: string[]
-    byId: Record<string, { cwd?: string } | undefined>
+    byId: Record<string, { cwd?: string; retainedBy?: { mainView?: number } } | undefined>
   }>
-  /** Harness resolves only after the new Session is projected into list/binding. */
+  /** Creates a catalogued Session identity; newer Hosts require retaining it before borrowing a binding. */
   create(input: { workspaceId: string; sessionId: string }): Promise<string>
-  open(sessionId: string): void
+  /** Newer Session Controller retains the target through initial open and the callback's handoff. */
+  using?<T>(
+    sessionId: string,
+    options: { source: 'controllerOperation' },
+    operation: (reference: { binding: ClientSessionBinding }) => T | Promise<T>,
+  ): Promise<T>
+  /** Legacy Session Controller navigation (removed when UI Workspace owns selection). */
+  open?(sessionId: string): void
   binding(sessionId: string): ClientSessionBinding | undefined
 }
 
@@ -59,6 +66,8 @@ export interface ClientWorkspaces {
 }
 
 export interface WorktreeClientServices {
+  /** UI Workspace owns navigation on Harness 0.1.6 and newer. */
+  uiWorkspace?: { openSession(sessionId: string): void }
   locale?: unknown
   sessions: ClientSessions
   workspaces: ClientWorkspaces
@@ -99,15 +108,35 @@ function samePath(left: string, right: string): boolean {
     : normalizedLeft === normalizedRight
 }
 
+/** Prefer the UI owner of navigation; refuse to silently lose a target selection. */
+export function navigateToSession(
+  services: Pick<WorktreeClientServices, 'sessions' | 'uiWorkspace' | 'locale'>,
+  sessionId: string,
+): void {
+  if (services.uiWorkspace?.openSession) services.uiWorkspace.openSession(sessionId)
+  else if (services.sessions.open) services.sessions.open(sessionId)
+  else throw new Error(translatorForServices(services)('harness.session.navigation.unavailable'))
+}
+
+/** Resolve the sole visible main Session across the legacy selection and new retainedBy contract. */
+export function selectedSessionId(snapshot: ReturnType<ClientSessions['list']['getSnapshot']>): string | undefined {
+  const retained = Object.entries(snapshot.byId)
+    .filter(([, summary]) => (summary?.retainedBy?.mainView ?? 0) > 0)
+    .map(([id]) => id)
+  if (retained.length > 1) return undefined
+  if (snapshot.current && retained.length === 1 && retained[0] !== snapshot.current) return undefined
+  return snapshot.current || retained[0]
+}
+
 /** Open a Session only when the Harness list proves both its identity and cwd. */
 export function openExistingSession(
-  services: Pick<WorktreeClientServices, 'sessions' | 'locale'>,
+  services: Pick<WorktreeClientServices, 'sessions' | 'locale' | 'uiWorkspace'>,
   sessionId: string,
   expectedCwd: string,
 ): boolean {
   const summary = services.sessions.list.getSnapshot().byId[sessionId]
   if (summary?.cwd === undefined || !samePath(summary.cwd, expectedCwd)) return false
-  services.sessions.open(sessionId)
+  navigateToSession(services, sessionId)
   return true
 }
 
@@ -184,7 +213,7 @@ export async function openIsolatedTarget(
   }
   if (!await waitForProjectedSessionPath(services, sessionId, payload.managedRoot, isActive)) return
   if (!isActive()) return
-  services.sessions.open(sessionId)
+  navigateToSession(services, sessionId)
 }
 
 /**
@@ -241,7 +270,7 @@ export async function finalizeCurrentSession(
 ): Promise<void> {
   const t = translatorForServices(services)
 
-  const sessionId = services.sessions.list.getSnapshot().current
+  const sessionId = selectedSessionId(services.sessions.list.getSnapshot())
   if (!sessionId) throw new Error(t("no.session.is.currently.selected"))
   const binding = services.sessions.binding(sessionId)
   if (!binding) throw new Error(t("the.current.session.is.not.ready"))

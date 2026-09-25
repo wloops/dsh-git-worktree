@@ -18,6 +18,7 @@ export const WORKTREE_STYLES = String.raw`
   box-sizing: border-box;
   max-width: 76px;
   min-height: 20px;
+  margin-inline-end: 4px;
   padding: 1px 6px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--dsh-wt-sidebar-accent) 24%, transparent);
@@ -29,6 +30,11 @@ export const WORKTREE_STYLES = String.raw`
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Official rows exchange time for actions on hover. Yield the badge's width
+   only when a safe action container exists, leaving alpha's badge visible. */
+[role="treeitem"]:hover:has(> [class$="_rowActions"]) > .dsh-git-worktree-sidebar-badge {
+  display: none;
 }
 .dsh-git-worktree-sidebar-icon,
 .dsh-git-worktree-sidebar-badge[data-worktree-state="working"] {

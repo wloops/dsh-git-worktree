@@ -5,6 +5,20 @@ declare module 'virtual:dsh-official-workspace-client' {
   export function apply(ctx: Context): void
 }
 
+declare module 'virtual:dsh-official-workspace-client-alpha' {
+  import type { Context } from '@deepseek-ai/cordis'
+
+  export const inject: string[]
+  export function apply(ctx: Context): void
+}
+
+declare module 'virtual:dsh-official-workspace-client-next' {
+  import type { Context } from '@deepseek-ai/cordis'
+
+  export const inject: string[]
+  export function apply(ctx: Context): void
+}
+
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
   import type { ComponentType, ReactNode } from 'react'
 

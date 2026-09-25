@@ -11,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 const FIXTURE_MARKER = '.dsh-git-worktree-fixture.json'
@@ -21,13 +21,23 @@ const FIXTURE_IDENTITY = Object.freeze({
 })
 const MODES = new Set(['run', 'install', 'remove', 'smoke'])
 
-export function createDefaultOptions(projectRoot, cacheRoot) {
+/** Isolated Profile runs must not prune archives belonging to other DSH homes. */
+export function devCacheRoot(environment = process.env) {
+  return environment.DSH_HOME
+    ? join(resolve(environment.DSH_HOME), 'dev-dsh-cache')
+    : join(tmpdir(), 'dsh-git-worktree-dev')
+}
+
+export function createDefaultOptions(projectRoot, cacheRoot, isolated = false) {
   return {
     projectRoot: resolve(projectRoot),
     cacheRoot: resolve(cacheRoot),
     profile: 'web',
     port: 3081,
-    repo: resolve(cacheRoot, 'fixture'),
+    // Match the Host's own first-use Workspace path when DSH_HOME is isolated.
+    repo: isolated
+      ? resolve(cacheRoot, 'Documents', 'deepseek-harness', 'default-workspace')
+      : resolve(cacheRoot, 'fixture'),
   }
 }
 
@@ -252,8 +262,12 @@ export function createDshInvocation(options) {
       `Harness source checkout is not prepared: ${harnessRoot}. Run pnpm --dir "${harnessRoot}" install before dev preview.`,
     )
   }
+  const pinnedPnpm = join(harnessRoot, 'node_modules', '.bin', executable('pnpm', options.platform))
+  if (!existsSync(pinnedPnpm)) {
+    throw new Error(`Harness source checkout is missing its pinned pnpm: ${pinnedPnpm}. Install the checkout's development dependencies before dev preview.`)
+  }
   return {
-    command: executable('pnpm', options.platform),
+    command: pinnedPnpm,
     args: [
       '--dir', harnessRoot,
       'exec', 'node', '--import', 'tsx/esm',
@@ -273,8 +287,22 @@ export function createDshLaunch(options) {
     harnessRoot: options.harnessRoot,
     platform: options.platform,
     cwd: options.workspaceRoot,
-    args: ['--profile', options.profile, '--port', String(options.port)],
+    args: [
+      '--profile', options.profile,
+      ...(options.isolationPatchPath ? ['--patch', options.isolationPatchPath] : []),
+      '--port', String(options.port),
+      ...(options.isolationPatchPath ? ['--no-open'] : []),
+    ],
   })
+}
+
+/** Confine Host first-use Documents workspaces as well as its Profile to DSH_HOME. */
+export function prepareIsolatedWorkspacePatch(cacheRoot) {
+  const documents = join(resolve(cacheRoot), 'Documents')
+  mkdirSync(documents, { recursive: true })
+  const patchPath = join(resolve(cacheRoot), 'workspace-isolation.patch.yml')
+  writeFileSync(patchPath, `- id: workspace-controller\n  config:\n    documentsDirectory: ${JSON.stringify(documents)}\n`)
+  return patchPath
 }
 
 function assertWindowsCommandSafe(command, args) {
@@ -471,6 +499,16 @@ export function installLocalSnapshot(options) {
     rmSync(stagingRoot, { recursive: true, force: true })
   }
   if (!existsSync(archivePath)) throw new Error(`pnpm pack did not create ${archivePath}.`)
+
+  // The official config-dump entry initializes a missing named Profile using
+  // DSH's template. Plugin add alone may leave a fresh profile without its
+  // manifest; never create or overwrite that Host-owned file ourselves.
+  if (!existsSync(profileManifestOf(options))) {
+    runDsh(options, ['--profile', options.profile, '--dump-config'], { capture: true })
+    if (!existsSync(profileManifestOf(options))) {
+      throw new Error(`DSH did not initialize profile ${options.profile} before plugin install.`)
+    }
+  }
 
   // pnpm resolves the profile's existing direct file dependency before it can
   // replace it. Repair only our own missing cache path with the new snapshot;
