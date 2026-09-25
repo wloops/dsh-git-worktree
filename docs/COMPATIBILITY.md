@@ -19,9 +19,9 @@
 
 没有逐项验证的中间版本不能由两端版本推导为连续兼容范围。当前正常工作的已验证旧组合不需要因为上游发布新版而被强制替换。
 
-### Issue #9 后续检查（2026-09-25；尚未发布）
+### Issue #9 后续检查（2026-09-25；插件 0.9.3）
 
-当前工作树在 strict Remote codec 中同时保留旧版 `schema` 和新版 `create()`；Client 会话切换优先使用新版 `uiWorkspace.openSession`，旧版回退到 `sessions.open`；新版选中会话读取唯一的 `retainedBy.mainView`，冲突则拒绝危险操作。官方 Workspace Browser 已分别从 rc.1、`0.1.6-alpha.2` 和 `0.1.7-rc.2` 精确版本/SHA 派生，按 Host 实际解析的 `dsh-agent` 包版本只注册一个 Slot 树；未知版本保留官方 Workspace，不猜测来源。受管会话/工作区在新版派生中屏蔽危险行操作、保留状态标记。**构建和单元测试不是新版 Host 的浏览器验收。**
+插件 `0.9.3` 在 strict Remote codec 中同时保留旧版 `schema` 和新版 `create()`；Client 会话切换优先使用新版 `uiWorkspace.openSession`，旧版回退到 `sessions.open`；新版选中会话读取唯一的 `retainedBy.mainView`，冲突则拒绝危险操作。官方 Workspace Browser 已分别从 rc.1、`0.1.6-alpha.2` 和 `0.1.7-rc.2` 精确版本/SHA 派生，按 Host 实际解析的 `dsh-agent` 包版本只注册一个 Slot 树；未知版本保留官方 Workspace，不猜测来源。受管会话/工作区在新版派生中屏蔽危险行操作、保留状态标记。**构建和单元测试不是新版 Host 的浏览器验收。**
 
 | Harness | 当前状态 |
 | --- | --- |
@@ -36,7 +36,7 @@
 
 1. **开发基线**：运行时接口及大多数开发依赖仍以 `0.1.2-rc.1` 为基线；另用两个别名开发依赖固定 alpha/rc.2 的官方 Browser 源码用于构建门禁，不把它们作为发布包的 Host singleton。
 2. **安装声明**：多数 DSH peer 为 `^0.1.2-rc.1`，locale peer 精确接受 `0.1.2-rc.1 || 0.1.7-rc.2`（经两版契约核对，不包含其他预发布版）。按通常的 npm semver 规则，该 caret 不自动包含不同核心版本的 `0.1.5-rc.1` 预发布版。不要把“能运行”说成“peer 已声明支持”。官方 Profile 使用 `autoInstallPeers: false` 并由 Host 提供运行时；Profile 单独执行 peer check 会报告缺失 Host peers，不等于已发生运行时故障。不要为消除警告而在 Profile 内补装另一套 DSH singleton。
-3. **Workspace 派生**：当前未发布的 Client bundle 含 rc.1、alpha.2、rc.2 三个经过版本/SHA-256 门禁的官方来源，只在 Host 包版本命中时注册相应 Browser；源码门禁和 Host 包识别都不是端到端兼容证明。
+3. **Workspace 派生**：`0.9.3` 的 Client bundle 含 rc.1、alpha.2、rc.2 三个经过版本/SHA-256 门禁的官方来源，只在 Host 包版本命中时注册相应 Browser；源码门禁和 Host 包识别都不是端到端兼容证明。
 
 只扩展了已核对的 locale 精确版本；Profile `peers check` 仍可报告 Host 提供的多个 peer 缺失，不等于 locale 版本冲突或运行时失败。完整支持声明要等未覆盖的生命周期验收后再定。
 
@@ -64,9 +64,9 @@
 
 Do not infer a continuous supported range from isolated passing versions.
 
-### Issue #9 follow-up (2026-09-25; unreleased)
+### Issue #9 follow-up (2026-09-25; plugin 0.9.3)
 
-This worktree carries both `schema` (legacy) and `create()` (new strict Typert). Client navigation prefers `uiWorkspace.openSession` and falls back to `sessions.open` on older Hosts; the selected new-generation Session comes from a unique `retainedBy.mainView`, failing closed on ambiguity. The official Workspace Browser is derived separately from exact rc.1, `0.1.6-alpha.2`, and `0.1.7-rc.2` source/SHA gates. The Host-resolved `dsh-agent` version selects exactly one authorized Slot tree; unknown generations retain the official provider. Managed rows keep Worktree status and suppress unsafe actions. **Builds and unit tests are not browser acceptance on a new Host.**
+Plugin `0.9.3` carries both `schema` (legacy) and `create()` (new strict Typert). Client navigation prefers `uiWorkspace.openSession` and falls back to `sessions.open` on older Hosts; the selected new-generation Session comes from a unique `retainedBy.mainView`, failing closed on ambiguity. The official Workspace Browser is derived separately from exact rc.1, `0.1.6-alpha.2`, and `0.1.7-rc.2` source/SHA gates. The Host-resolved `dsh-agent` version selects exactly one authorized Slot tree; unknown generations retain the official provider. Managed rows keep Worktree status and suppress unsafe actions. **Builds and unit tests are not browser acceptance on a new Host.**
 
 | Harness | Current status |
 | --- | --- |
@@ -77,7 +77,7 @@ This worktree carries both `schema` (legacy) and `create()` (new strict Typert).
 
 The isolated development command is in [Local development](USAGE.md#本地开发). In rc.2, `sessions.create()` only catalogues an identity; an initial attempt borrowed an unretained binding and was safely rolled back. The controller now uses official `sessions.using()` through draft handoff and navigation, confirmed in the real browser. Alpha.2 still needs an independent Profile run, and AI conversation / Worktree lifecycle need an API-key-enabled test environment. Unknown upstream generations are not assigned a derived Browser.
 
-**Separate three constraints:** runtime interfaces and most development dependencies retain the reproducible rc.1 baseline, with two aliased build-only official Browser sources pinned to alpha.2 and rc.2; most DSH peers declare `^0.1.2-rc.1` while locale precisely accepts `0.1.2-rc.1 || 0.1.7-rc.2` after contract checks; the unreleased Client bundle now embeds three individually version/hash-gated Browser sources and uses the Host-resolved agent package version to select only one. The caret does not normally admit a different-core `0.1.5-rc.1` prerelease. A runtime success is not peer-declared support. Official Profiles disable automatic peer installation and borrow Host runtime packages; never add private Host singletons just to silence a peer warning. Profile `peers check` still reports several Host-provided missing peers; this is not a locale version conflict or proof of runtime failure. Neither a hash gate nor package-version selection proves end-to-end forward compatibility.
+**Separate three constraints:** runtime interfaces and most development dependencies retain the reproducible rc.1 baseline, with two aliased build-only official Browser sources pinned to alpha.2 and rc.2; most DSH peers declare `^0.1.2-rc.1` while locale precisely accepts `0.1.2-rc.1 || 0.1.7-rc.2` after contract checks; the `0.9.3` Client bundle embeds three individually version/hash-gated Browser sources and uses the Host-resolved agent package version to select only one. The caret does not normally admit a different-core `0.1.5-rc.1` prerelease. A runtime success is not peer-declared support. Official Profiles disable automatic peer installation and borrow Host runtime packages; never add private Host singletons just to silence a peer warning. Profile `peers check` still reports several Host-provided missing peers; this is not a locale version conflict or proof of runtime failure. Neither a hash gate nor package-version selection proves end-to-end forward compatibility.
 
 **Migration:** rc.1 of the 0.1.5 line uses Session V3; older Hosts cannot read upgraded logs. Back up the original environment and test with an isolated `DSH_HOME`/repository. Rollback requires original data, not just an older npm package. The 0.1.2-rc.1 line also removed the optional SQLite backend; export old data with the original version first. Record resolved packages rather than the CLI version alone: a caret may resolve a later RC. This run found no rc.2 mixing. Registry tags observed on 2026-09-11 were `latest=0.1.5-rc.1`, `next=0.1.5-rc.2`.
 

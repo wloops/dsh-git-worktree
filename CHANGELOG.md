@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-25
+
+`0.9.3` 适配 Harness 新旧协议与三版官方 Workspace Browser，同时修复隔离源码开发安装及预会话草稿迁移。新版 Host 的验证仍有明确边界；本次发布不等于宣布所有 Harness 版本完整兼容。
+
+### Fixed
+
+- strict Remote codec 同时提供旧版 `schema` 与新版 `create()`；会话导航优先使用 `uiWorkspace.openSession`，旧版回退到 `sessions.open`。新版只从唯一的 `retainedBy.mainView` 判定当前 Session，归属歧义时拒绝危险操作。
+- `0.1.7-rc.2` 源码 Host 中，预会话迁移通过 `sessions.using()` 持有目标 Session 引用直至草稿交接与导航结束，避免创建后 binding 尚未 retain 便被借用而回滚。
+- 隔离开发命令修复源码 CLI、空 Profile 初始化和 pnpm 选择；默认 Workspace、缓存及安装环境与正式 Profile 隔离。
+- 受管侧栏收紧状态标记间距，在新版官方 Browser 派生中保留安全的悬停固定操作，并屏蔽可能破坏受管归属的行操作。
+
+### Compatibility
+
+- 按 Host 实际解析的 `dsh-agent` 版本选择来自 `0.1.2-rc.1`、`0.1.6-alpha.2` 或 `0.1.7-rc.2` 的精确版本/SHA-256 门禁的官方 Workspace Browser 派生；未知版本保留官方 Workspace，不猜测或强制覆盖。
+- locale peer 精确接受 `0.1.2-rc.1 || 0.1.7-rc.2`；其他 DSH peer 声明保持原范围。开发构建基线仍为 `0.1.2-rc.1`，两个新版 Browser 别名仅供来源门禁与构建。
+- `0.1.7-rc.2` 仅在隔离源码 Host/Profile 实测安装、Web 渲染、Worktree 开关、预会话创建与草稿迁移、受管侧栏状态及刷新后选中；未配置 API Key，未验收 AI 对话及 Review/恢复/清理全流程。`0.1.6-alpha.2` 尚无隔离 Profile 运行时联调，`0.1.5-rc.3` 也未联调；不声明这些组合完整兼容。升级新 Host 的 Session 数据前应备份并在隔离环境验证，回退时恢复原数据。
+- 无 Worktree registry、Review 或 Recovery 数据迁移；现有可用的旧组合无需因本次版本升级而强制替换 Host。详见 [兼容性矩阵](docs/COMPATIBILITY.md)。
+
 ## [0.9.2] - 2026-09-20
 
 `0.9.2` 修复 Managed Worktree 未携带项目级 Skill 及其资源的问题：首次创建和交付后的下一轮创建都会获取一次 Local 快照，并让 `.claude/skills` 与既有 `.dsh/skills`、`.agents/skills` 一起在隔离 Session 中可用，同时保持辅助文件与正常 Git 交付隔离。
@@ -365,6 +383,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.9.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.8.0...v0.9.0
