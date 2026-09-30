@@ -72,16 +72,16 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 ### Requirements
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness: `0.1.2-rc.1` is the development validation baseline; `0.1.5-rc.1` is user-reported working and partially verified in isolation. See the [compatibility matrix and limitations](docs/COMPATIBILITY.md#english); the newest Host is not mandatory.
+- DeepSeek Harness: this plugin follows Host version lines — `0.10.0` targets DSH `0.2.0-rc.2` (exact peer pins; verified against an isolated source Host for install, boot, the Worktree switch and pre-session creation, while AI conversation and the delivery lifecycle remain pending acceptance). For DSH `0.1.x`, stay on the `0.9.x` plugin line. See the [compatibility matrix and limitations](docs/COMPATIBILITY.md#english).
 - Harness Web Client
 - A Git Workspace
 
 Before upgrading an existing Harness installation, handle Host data migration: `0.1.2-rc.1` removes the optional SQLite Session backend, so use an older Harness version to export that data first. Code Mode is now named PTC mode, while existing conversation records remain readable. Launch applications and install this plugin through a `dsh` Profile.
 
-After upgrading Harness from an earlier release, if the web UI shows **Failed to load plugins**, choose a fixed version from the [compatibility matrix](docs/COMPATIBILITY.md#english) and restart Harness; the example below uses `0.9.2`. Releases through `0.7.2` depend on the discontinued `dsh-client-runtime`; `0.7.3` can also form a `conversation` / `uiWorkspace` activation cycle in the rc.1 Web Client.
+After upgrading Harness from an earlier release, if the web UI shows **Failed to load plugins**, first match the plugin line to your Host: DSH `0.2.x` uses `0.10.0`, DSH `0.1.x` uses `0.9.3`; then check the [compatibility matrix](docs/COMPATIBILITY.md#english) and restart Harness. Releases through `0.7.2` depend on the discontinued `dsh-client-runtime`; `0.7.3` can also form a `conversation` / `uiWorkspace` activation cycle in the rc.1 Web Client.
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.9.2
+dsh plugin --profile web add dsh-git-worktree@0.10.0
 ```
 
 ### Install
@@ -93,8 +93,10 @@ dsh plugin --profile web add dsh-git-worktree
 Or install a specific version:
 
 ```bash
-dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.9.2
+dsh plugin --profile web add github:wloops/dsh-git-worktree#v0.10.0
 ```
+
+> A freshly published release may be skipped by Harness's supply-chain guard (`minimumReleaseAge`), which falls back to the previous release and reports incompatibility with the current DSH. Install the exact version explicitly (e.g. `dsh plugin --profile web add dsh-git-worktree@0.10.0`) or retry after the guard window passes.
 
 Open a Git Workspace and enable **Worktree** when creating a Session. An existing Local Session can also let the model call `worktree_create`.
 
