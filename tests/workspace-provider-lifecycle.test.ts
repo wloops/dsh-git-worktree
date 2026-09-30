@@ -27,7 +27,7 @@ function entries(disabled: boolean): EntryOptions[] {
   ], message => { throw new Error(message) })
 }
 
-async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?: string, childEntries?: EntryOptions[], failApply = false, unsupported = false) {
+async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?: string, childEntries?: EntryOptions[], failApply = false, unsupported = false, lifecycle: { operationTimeoutMs?: number, wedge?: 'never' | 'deferred' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'workspace-provider-'))
   const paths = new Map<string, string>()
   for (const [index, name] of [OFFICIAL, WORKTREE, 'group-owner', 'fixture-include'].entries()) {
@@ -43,6 +43,7 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
     writeFileSync(childPath, JSON.stringify(childEntries))
     data = [...data, { id: 'include', name: 'fixture-include', config: { path: pathToFileURL(childPath).href } }]
   }
+  let applied = false
   const ctx = new Context()
   disposals.push(async () => { await ctx.fiber.dispose(); rmSync(dir, { recursive: true, force: true }) })
   await ctx.plugin(Loader, { baseUrl: pathToFileURL(join(dir, 'entry.js')).href })
@@ -52,7 +53,21 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
       if (name === delayedImport) await new Promise(resolve => setTimeout(resolve, 20))
       return name === 'fixture-include' ? Include : name === 'group-owner' ? Group : name === WORKTREE
         ? { inject: { loader: { await: false } }, async apply(ctx: Context) {
-          await mountWorkspaceProviderLifecycle(ctx, unsupported ? 'unsupported' : 'legacy')
+          if (lifecycle.wedge) {
+            const official = [...ctx.loader.entries()].find(entry => entry.options.name === OFFICIAL)
+            if (official) {
+              const real = official.update.bind(official)
+              const wedged = lifecycle.wedge === 'deferred'
+                ? () => new Promise<void>(resolve => {
+                  setTimeout(() => { void real({}, false, true).then(() => resolve(), () => resolve()) }, 30)
+                })
+                : () => new Promise<void>(() => {})
+              Object.assign(official, { update: wedged })
+            }
+          }
+          mountWorkspaceProviderLifecycle(ctx, unsupported ? 'unsupported' : 'legacy',
+            lifecycle.operationTimeoutMs === undefined ? {} : { operationTimeoutMs: lifecycle.operationTimeoutMs })
+          applied = true
           if (failApply) throw new Error('fixture: replacement initialization failed')
         } }
         : { apply() {} }
@@ -75,7 +90,10 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
   await ctx.plugin(ClientModuleRegistry)
   await ctx.loader.root.update(data)
   await ctx.loader.await()
-  return { ctx, graph: () => ctx.clientModules.graph().entries.map(entry => entry.id) }
+  // Election reconciliation is fire-and-forget by contract; let its Loader
+  // operations and the module-registry flush land before assertions read them.
+  await new Promise(resolve => setTimeout(resolve, 0))
+  return { ctx, applied: () => applied, graph: () => ctx.clientModules.graph().entries.map(entry => entry.id) }
 }
 
 describe('Workspace provider lifecycle (real Cordis Loader and Web module registry)', () => {
@@ -200,5 +218,27 @@ describe('Workspace provider lifecycle (real Cordis Loader and Web module regist
       expect((await boot(entries(disabled))).graph()).toEqual([disabled ? OFFICIAL : WORKTREE])
     }
     expect(readFileSync(resolve('cordis.patch.yml'), 'utf8')).toBe(original)
+  })
+
+  test('a wedged official disable never blocks replacement activation', async () => {
+    const { ctx, applied, graph } = await boot(entries(false), false, undefined, undefined, false, false,
+      { operationTimeoutMs: 20, wedge: 'never' })
+    expect(applied()).toBe(true)
+    expect(ctx.get('worktreeWorkspaceProvider')).toBe(true)
+    // In the fixture the official entry wins the boot race and activates
+    // before the election flips the expression, so its graph row lingers
+    // only while the wedged Loader operation refuses to settle; activation
+    // itself was never held hostage, which is the regression this guards.
+    expect(graph()).toEqual([OFFICIAL, WORKTREE])
+  })
+
+  test('a slow official disable lands after activation without a second provider', async () => {
+    const { ctx, graph } = await boot(entries(false), false, undefined, undefined, false, false,
+      { wedge: 'deferred' })
+    expect(graph()).toContain(WORKTREE)
+    await new Promise(resolve => setTimeout(resolve, 60))
+    const official = [...ctx.loader.entries()].find(entry => entry.options.name === OFFICIAL)!
+    expect(official.fiber).toBeUndefined()
+    expect(graph()).toEqual([WORKTREE])
   })
 })

@@ -9,6 +9,15 @@ import { assertSkillPath, assertSkillTree } from './project-skills.js'
 
 const NAME = 'worktree-project-claude'
 interface Locator { root: string; candidate: SkillCandidate }
+
+/** DSH 0.1 exposed `candidate.path`; DSH 0.2 keeps it inside `locator`. */
+function candidatePath(candidate: SkillCandidate): string | undefined {
+  const locator = candidate.locator as { path?: unknown } | undefined
+  if (typeof locator?.path === 'string') return locator.path
+  const legacyPath = (candidate as SkillCandidate & { path?: unknown }).path
+  return typeof legacyPath === 'string' ? legacyPath : undefined
+}
+
 /** Resolve against host-owned records, never a root claimed by a Skill file. */
 export function managedSkillRoot(registry: SessionCheckoutRegistryPort): (cwd: string) => Promise<string | null> {
   return async cwd => {
@@ -75,8 +84,9 @@ export class ClaudeProjectSkillProvider implements SkillProvider {
     const candidates = Array.isArray(observation) ? observation : observation.candidates
     const result: SkillCandidate[] = []
     for (const candidate of candidates) {
-      if (!candidate.path) continue
-      const path = relative(root, candidate.path).split('\\').join('/')
+      const candidateFile = candidatePath(candidate)
+      if (!candidateFile) continue
+      const path = relative(root, candidateFile).split('\\').join('/')
       await assertSkillPath(root, path)
       result.push({ ...candidate, provider: NAME, source: 'project-claude', rank: 250, locator: { root, candidate } satisfies Locator })
     }
@@ -89,9 +99,10 @@ export class ClaudeProjectSkillProvider implements SkillProvider {
     if (this.disposed || !options.cwd || this.control.signal.aborted || options.signal?.aborted) return undefined
     const root = await this.resolveRoot(options.cwd)
     const locator = candidate.locator as Locator
-    if (!root || locator?.root !== root || !locator.candidate?.path) return undefined
+    const candidateFile = locator?.candidate ? candidatePath(locator.candidate) : undefined
+    if (!root || locator?.root !== root || !candidateFile) return undefined
     await assertSkillTree(root, '.claude/skills')
-    await assertSkillPath(root, relative(root, locator.candidate.path).split('\\').join('/'))
+    await assertSkillPath(root, relative(root, candidateFile).split('\\').join('/'))
     const skill = await (await this.provider(root)).get(locator.candidate, options)
     return skill ? { ...skill, provider: NAME, source: 'project-claude' } : undefined
   }

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -299,7 +301,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
     const ctx = new Context()
     await ctx.plugin(TypertRegistry)
     const topology = { ok: true as const, value: { projects: [] } }
-    const expectedTopology = { ok: true as const, value: { projects: [], workspaceClientFlavor: 'legacy' } }
+    const expectedTopology = { ok: true as const, value: { projects: [], workspaceClientFlavor: 'modern' } }
     const seenLanguages: string[] = []
     const control = { sidebarTopology: vi.fn(async () => {
       seenLanguages.push(currentHostLanguage())

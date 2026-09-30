@@ -54,7 +54,7 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote, ge
     const descriptor = descriptors.get(method)
     if (descriptor?.result.mode !== 'strict') return malformed(method, locale)
     try {
-      return descriptor.result.schema.parse(carrier.value) as WorktreeConsoleOutcome<T>
+      return descriptor.result.create().parse(carrier.value) as WorktreeConsoleOutcome<T>
     } catch {
       return malformed(method, locale)
     }

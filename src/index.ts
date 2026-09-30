@@ -209,11 +209,13 @@ const RETENTION_MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000
 /**
  * Mount the plugin: DSH adapters, the session-checkout module, safe worktree
  * tools, human acceptance command, dynamic target context, startup recovery,
- * and the retention-expiry timer.
+ * the retention-expiry timer, and — last, without ever blocking activation —
+ * the Workspace provider election. Every Remote, tool, and command surface
+ * above must be live before that election so a wedged Loader reconciliation
+ * cannot starve the Client boot chain.
  */
 export async function apply(ctx: Context, config: { stateDir?: string } & GitTimeoutOptions = {}): Promise<void> {
   validateGitTimeouts(config)
-  await mountWorkspaceProviderLifecycle(ctx)
   const stateDir = resolveStateDir(config)
   mkdirSync(stateDir, { recursive: true })
   const hooksPath = join(stateDir, 'disabled-git-hooks')
@@ -247,6 +249,12 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
   registerTools(ctx, module)
   registerWorktreeCommand(ctx, module)
   registerSessionTargetContext(ctx, module)
+
+  // Elected last and synchronously: the service provide below flips the
+  // conditional patch so any not-yet-started official Workspace entry stays
+  // out of the Web module graph, while the fire-and-forget reconciliation
+  // stops one that raced ahead without holding activation hostage.
+  mountWorkspaceProviderLifecycle(ctx)
 
   // Startup recovery plus periodic expiry of retained worktrees. cordis's
   // typed Events map omits the runtime 'ready' event; the events service's

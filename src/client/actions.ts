@@ -45,7 +45,7 @@ export interface ClientSessions {
   list: SnapshotStore<{
     current?: string
     ids: string[]
-    byId: Record<string, { cwd?: string; retainedBy?: { mainView?: number } } | undefined>
+    byId: Record<string, { cwd?: string; retainedBy?: object } | undefined>
   }>
   /** Creates a catalogued Session identity; newer Hosts require retaining it before borrowing a binding. */
   create(input: { workspaceId: string; sessionId: string }): Promise<string>
@@ -121,7 +121,7 @@ export function navigateToSession(
 /** Resolve the sole visible main Session across the legacy selection and new retainedBy contract. */
 export function selectedSessionId(snapshot: ReturnType<ClientSessions['list']['getSnapshot']>): string | undefined {
   const retained = Object.entries(snapshot.byId ?? {})
-    .filter(([, summary]) => (summary?.retainedBy?.mainView ?? 0) > 0)
+    .filter(([, summary]) => ((summary?.retainedBy as { mainView?: number } | undefined)?.mainView ?? 0) > 0)
     .map(([id]) => id)
   if (retained.length > 1) return undefined
   if (snapshot.current && retained.length === 1 && retained[0] !== snapshot.current) return undefined

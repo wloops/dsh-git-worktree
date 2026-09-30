@@ -7,7 +7,7 @@ import type { WorktreeConsoleAdapter } from '../../console-contract.js'
 import contribution, { type GitWorktreeRemote } from '../../console-remote/remote.js'
 import { apply as applyToolViews, inject as toolViewInject } from '../index.js'
 import { registerManagedWorkspaceSidebar } from '../workspace-sidebar/index.js'
-import { inject as officialWorkspaceInject } from 'virtual:dsh-official-workspace-client'
+import { apply as applyOfficialWorkspace, inject as officialWorkspaceInject } from 'virtual:dsh-official-workspace-client'
 import { apply as applyNextWorkspace, inject as nextWorkspaceInject } from 'virtual:dsh-official-workspace-client-next'
 import { apply as applyAlphaWorkspace, inject as alphaWorkspaceInject } from 'virtual:dsh-official-workspace-client-alpha'
 import { createWorktreeConsoleRemoteAdapter } from './adapter.js'
@@ -63,6 +63,15 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
       ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0], adapter,
     )
     mountTools(ctx)
+  } else if (flavor === 'modern') {
+    ctx.inject(officialWorkspaceInject, child => {
+      registerManagedWorkspaceSidebar(
+        child as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0],
+        adapter,
+        applyOfficialWorkspace,
+      )
+      mountTools(child)
+    })
   } else if (flavor === 'alpha' || flavor === 'next') {
     const [required, applyWorkspace] = flavor === 'alpha'
       ? [alphaWorkspaceInject, applyAlphaWorkspace] as const

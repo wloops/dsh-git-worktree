@@ -86,7 +86,7 @@ export function ManagedOfficialWorkspaceBrowser({
     topology,
     archivedSessionIds: workspaceState.archivedSessionIds,
     currentSessionId: selectedSessionId(sessionState),
-  }, t), [sessionState.byId, sessionState.current, topology, workspaceState.items, workspaceState.archivedSessionIds, t])
+  }, t), [sessionState.byId, sessionState.ids, topology, workspaceState.items, workspaceState.archivedSessionIds, t])
 
   useLayoutEffect(() => {
     if (!guard) return

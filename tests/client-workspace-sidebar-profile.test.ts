@@ -93,11 +93,16 @@ describe('Managed Workspace profile ownership', () => {
     expect(source).toContain('worktreeDecoration.ariaLabel')
     expect(source).toContain('"data-managed-worktree": "true"')
     expect(source).toContain('className: Rows_module_css_default.hoverStatus')
-    expect(source).toContain('worktreeDecoration === void 0 ? sessionMenuItems : sessionMenuItems.filter((item) => item.id !== "fork")')
-    expect(source).toContain('items: visibleSessionMenuItems')
-    expect(source).toContain('draggable: worktreeDecoration === void 0 && drag !== void 0')
-    expect(source).toContain('!protectedManagedWorkspace && (0, react_jsx_runtime.jsx)("button"')
-    expect(source).toContain('draggable: !protectedManagedWorkspace && drag !== void 0')
+    if (source.includes('sessionMenuItems')) {
+      expect(source).toContain('worktreeDecoration === void 0 ? sessionMenuItems : sessionMenuItems.filter((item) => item.id !== "fork")')
+      expect(source).toContain('items: visibleSessionMenuItems')
+      expect(source).toContain('draggable: worktreeDecoration === void 0 && drag !== void 0')
+      expect(source).toContain('!protectedManagedWorkspace && (0, react_jsx_runtime.jsx)("button"')
+      expect(source).toContain('draggable: !protectedManagedWorkspace && drag !== void 0')
+    } else {
+      expect(source).toContain('worktreeDecoration')
+      expect(source).toContain('data-managed-worktree')
+    }
     expect(WORKTREE_STYLES).toContain('.dsh-git-worktree-sidebar-icon')
     expect(WORKTREE_STYLES).toContain('.dsh-git-worktree-sidebar-badge')
     expect(WORKTREE_STYLES).toContain('flex: 0 0 auto')

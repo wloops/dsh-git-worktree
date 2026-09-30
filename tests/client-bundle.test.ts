@@ -56,6 +56,8 @@ describe('built Client ModuleLoader artifact', () => {
       'locale',
       'remote',
       'remote.directoryPicker',
+      'layout',
+      'shortcuts',
     ])
     expect(clientExports.inject).not.toContain('conversation')
     expect(clientExports.inject).not.toContain('connection')
@@ -108,8 +110,10 @@ describe('built Client ModuleLoader artifact', () => {
       open() {},
       searchResultLimit: 100,
     } as never)
-    ctx.provide('locale', { register: vi.fn() } as never)
+    ctx.provide('locale', { register: vi.fn(), bind: () => () => '' } as never)
     ctx.provide('remote.directoryPicker', {} as never)
+    ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
+    ctx.provide('shortcuts', { register: vi.fn(() => () => {}) } as never)
 
     const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
     await fiber

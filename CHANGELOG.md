@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 宿主端插件启动不再被 Workspace Provider 选举阻塞：`WorktreeConsoleService`、工具、命令和 Session Target 上下文先行挂载，Provider 生命周期移到最后并以非阻塞方式执行；对 Loader 禁用/恢复官方 `ui-workspace` 条目的单次操作增加 10 秒上限与在途防重入，卡住时告警并等待下一个 Loader 事件重试，避免新版 cordis-plugin-loader 并发启动下 `entry.update()` → `fiber.dispose()` 互等导致 `remote.gitWorktree` RPC 处理器永远无法就位。新增真实 Loader 时序回归测试覆盖「官方禁用操作永不返回时宿主 apply 仍完成」与「延迟生效的禁用最终落地且不产生双 Provider」。
+
+## [0.10.0] - 2026-09-29
+
+`0.10.0` 适配 DSH `0.2.0-rc.2`，修复桌面端插件安装时因旧版 peerDependencies 声明而被拒绝的问题，并同步更新新版 Workspace、Typert、Skill 和 Client 运行时接口。
+
+### Fixed
+
+- 将 DSH Host/Client 依赖、插件兼容声明和发布版本切换到 `0.2.0-rc.2`。
+- 支持 DSH 0.2 的现代 Workspace Browser、懒加载 Typert codec 和 Skill locator，同时保留旧 codec 字段的运行时兼容。
+- 更新 DSH 0.2 客户端构建、侧边栏兼容门禁和回归测试。
+
 ## [0.9.3] - 2026-09-25
 
 `0.9.3` 适配 Harness 新旧协议与三版官方 Workspace Browser，同时修复隔离源码开发安装及预会话草稿迁移。新版 Host 的验证仍有明确边界；本次发布不等于宣布所有 Harness 版本完整兼容。

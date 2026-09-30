@@ -33,10 +33,12 @@ const PACKAGE = 'dsh-git-worktree'
 const SERVICE = 'gitWorktree'
 const AGENT_WIRE_TYPE = '@deepseek-ai/dsh-session/types#SessionId'
 
-// Older Harness reads schema; newer strict gateways materialize it via create().
-// Both fields must reference the same schema to preserve the wire contract.
-function strictCodec(typeSymbol: string, schema: TypertSchema): TypertCodec & { create: () => TypertSchema } {
-  return { mode: 'strict', typeSymbol, schema, create: () => schema }
+// DSH 0.2 materializes strict schemas through create(). Keep one schema instance
+// per descriptor so client-side validation and generated Typert metadata agree.
+function strictCodec(typeSymbol: string, schema: TypertSchema): TypertCodec {
+  // Keep the legacy `schema` field as an extra runtime property for older
+  // client adapters; DSH 0.2 consumes the canonical lazy `create()` field.
+  return { mode: 'strict', typeSymbol, create: () => schema, schema } as TypertCodec
 }
 
 const agentParameter: InvocationParameterDescriptor = {
