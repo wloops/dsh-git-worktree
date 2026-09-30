@@ -217,7 +217,8 @@ if (!clientExports || typeof clientExports.apply !== 'function' || !Array.isArra
   fail('client bundle factory did not return apply + inject')
 }
 if (!clientExports.inject.includes('remote')) fail('client bundle must inject the official Remote service before $mount')
-if (!clientExports.inject.includes('remote.directoryPicker')) fail('client bundle must wait for the official directory-picker Remote before restoring uiWorkspace')
+if (clientExports.inject.includes('remote.directoryPicker')) fail('client bundle entry must not wait for the directory-picker Remote: its provider entry waits for uiWorkspace, so requiring it here deadlocks the 0.2.x web boot')
+if (!clientSource.includes("'remote.directoryPicker'") && !clientSource.includes('"remote.directoryPicker"')) fail('client bundle must resolve the directory-picker lazily at call time through the managed context (deferred facade)')
 if (clientExports.inject.includes('conversation')) fail('client bundle root must not wait for conversation: uiConversation depends on the uiWorkspace restored by this plugin')
 if (clientExports.inject.includes('connection')) fail('client bundle root must keep connection-dependent Worktree views in the deferred child fiber')
 ok(`${clientRel} registers ${manifest.name} through the browser ModuleLoader contract without a uiWorkspace/uiConversation boot cycle`)
