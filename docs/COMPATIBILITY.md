@@ -32,6 +32,20 @@
 
 隔离联调命令见 [本地开发](USAGE.md#本地开发)。源码 Host 的 `sessions.create()` 仅登记目标身份；本轮真实创建曾因立刻借用未 retain 的 binding 而自动回滚，现经官方 `sessions.using()` 持有目标引用、完成草稿迁移与导航后复测通过。下一步仍需在 alpha.2 独立 Profile、配置好 API Key 的测试环境验证真实对话与 Worktree 生命周期；未知上游版本不会自动使用任何派生 Browser。
 
+### 0.2.0-rc.2 适配（2026-09-30；插件 0.10.0 未发布）
+
+插件 `0.10.0` 将 DSH peers 与开发依赖整体切换到 `0.2.0-rc.2`（精确版本），官方 Workspace Browser 派生门禁从 rc.1 换为 0.2.0-rc.2（版本/SHA-256 双门禁），保留 `0.1.6-alpha.2`、`0.1.7-rc.2` 两个旧代派生；运行时仍按 Host 解析的 `dsh-agent` 版本只选择一个派生。本轮修复：`remote.directoryPicker` 注入环导致的 Web 启动死锁、strict codec 缺失 `modern` flavor、四条派生 seam 与 `IconBranchOutlineRegular` 图标命名对齐 0.2.0。
+
+| 验证项 | 结果 |
+| --- | --- |
+| 隔离 `DSH_HOME` + 源码 Host（`dsh-v0.2.0-rc.2`）dev 安装（typecheck/build/pack/profile install） | 通过，多次重复 |
+| Web 启动 | 全部条目激活（修复前 12 条目 pending、插件卡 loading） |
+| 真实 Chromium（自动化驱动） | 页面渲染、会话创建、侧栏列表 |
+| Worktree 开关 → 确认 → 预会话创建 | Worktree 实际创建，托管行带「进行中」标记（`data-managed-worktree`），无渲染错误 |
+| 单元/类型 | typecheck 通过；40 个测试文件 552 passed / 1 skipped |
+
+**未验收（不声明完整运行时兼容）**：API Key 配置下的真实 AI 对话；Review/预览/交付/回滚/恢复/清理全流程；Windows；npm 安装版 Host（本轮仅源码 runner）；桌面端。插件 peers 精确锁定 `0.2.0-rc.2`：0.1.x Host 不在 0.10.0 目标内，0.1.x 用户继续使用 0.9.x 插件线（其对 0.1.x 的支持记录见上节，不因本节而撤销）。
+
 ### 三种版本约束不要混淆
 
 1. **开发基线**：运行时接口及大多数开发依赖仍以 `0.1.2-rc.1` 为基线；另用两个别名开发依赖固定 alpha/rc.2 的官方 Browser 源码用于构建门禁，不把它们作为发布包的 Host singleton。
@@ -76,6 +90,20 @@ Plugin `0.9.3` carries both `schema` (legacy) and `create()` (new strict Typert)
 | `0.1.7-rc.2` | Official Browser remains version/SHA-gated. A fresh isolated source-Host Profile installed twice without bypass, passed config smoke, and rendered in a real Web browser. A disposable Git Workspace exercised the Worktree switch, pre-session creation, draft transfer, managed-row status and selection after reload. **Without an API key, AI conversation and the full review/recovery/cleanup lifecycle remain untested; this is not a complete runtime compatibility claim.** |
 
 The isolated development command is in [Local development](USAGE.md#本地开发). In rc.2, `sessions.create()` only catalogues an identity; an initial attempt borrowed an unretained binding and was safely rolled back. The controller now uses official `sessions.using()` through draft handoff and navigation, confirmed in the real browser. Alpha.2 still needs an independent Profile run, and AI conversation / Worktree lifecycle need an API-key-enabled test environment. Unknown upstream generations are not assigned a derived Browser.
+
+### 0.2.0-rc.2 adaptation (2026-09-30; plugin 0.10.0 unreleased)
+
+Plugin `0.10.0` moves all DSH peers and dev dependencies to `0.2.0-rc.2` (exact), switches the official Workspace Browser derivation gate from rc.1 to 0.2.0-rc.2 (version/SHA-256), and retains the `0.1.6-alpha.2` and `0.1.7-rc.2` derivations; the runtime still selects exactly one derivation from the Host-resolved `dsh-agent` version. Fixed this round: the Web-boot deadlock caused by the `remote.directoryPicker` injection cycle, the `modern` flavor missing from the strict codec, and four derivation seams plus the `IconBranchOutlineRegular` icon naming aligned with 0.2.0.
+
+| Check | Result |
+| --- | --- |
+| Isolated `DSH_HOME` + source Host (`dsh-v0.2.0-rc.2`) dev install (typecheck/build/pack/profile install) | Passed, repeated multiple times |
+| Web boot | All entries activate (before the fix: 12 entries pending, plugin stuck loading) |
+| Real Chromium (automation-driven) | Page render, Session creation, sidebar list |
+| Worktree switch → confirm → pre-session creation | Worktree actually created, managed row carries the in-progress mark (`data-managed-worktree`), no render errors |
+| Unit/type | Typecheck passes; 40 test files, 552 passed / 1 skipped |
+
+**Not accepted (no complete runtime compatibility claim)**: real AI conversation with an API key; the full review/preview/delivery/rollback/recovery/cleanup lifecycle; Windows; npm-installed Host (source runner only this round); desktop. Plugin peers are pinned to exact `0.2.0-rc.2`: 0.1.x Hosts are not a 0.10.0 target; 0.1.x users stay on the 0.9.x plugin line (its 0.1.x support records above are unaffected by this section).
 
 **Separate three constraints:** runtime interfaces and most development dependencies retain the reproducible rc.1 baseline, with two aliased build-only official Browser sources pinned to alpha.2 and rc.2; most DSH peers declare `^0.1.2-rc.1` while locale precisely accepts `0.1.2-rc.1 || 0.1.7-rc.2` after contract checks; the `0.9.3` Client bundle embeds three individually version/hash-gated Browser sources and uses the Host-resolved agent package version to select only one. The caret does not normally admit a different-core `0.1.5-rc.1` prerelease. A runtime success is not peer-declared support. Official Profiles disable automatic peer installation and borrow Host runtime packages; never add private Host singletons just to silence a peer warning. Profile `peers check` still reports several Host-provided missing peers; this is not a locale version conflict or proof of runtime failure. Neither a hash gate nor package-version selection proves end-to-end forward compatibility.
 
