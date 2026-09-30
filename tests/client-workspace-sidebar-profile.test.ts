@@ -83,7 +83,7 @@ describe('Managed Workspace profile ownership', () => {
   test('derives a real Branch Icon and independent status Badge without rewriting the session title', () => {
     const source = materializeOfficialWorkspaceClientModule()
 
-    expect(source).toContain('IconBranchOutline16')
+    expect(source).toContain('IconBranchOutlineRegular')
     expect(source).toContain('__dshGitWorktree')
     expect(source).toContain('dsh-git-worktree-sidebar-icon')
     expect(source).toContain('dsh-git-worktree-sidebar-badge')

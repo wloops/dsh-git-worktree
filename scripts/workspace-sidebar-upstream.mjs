@@ -36,7 +36,9 @@ function replaceExactlyOnce(source, needle, replacement, label) {
 // DSH 0.2 removed the legacy search/menu seams; those optional decorations are
 // handled by the modern Workspace row/slot path below when the seam exists.
 function replaceIfPresent(source, needle, replacement, label) {
-  return source.includes(needle) ? replaceExactlyOnce(source, needle, replacement, label) : source
+  const hit = source.includes(needle)
+  if (process.env.WT_DEBUG_SEAMS) console.log(`[seam] ${hit ? 'HIT   ' : 'SKIP  '} (optional) ${label}`)
+  return hit ? replaceExactlyOnce(source, needle, replacement, label) : source
 }
 
 /**
@@ -84,7 +86,7 @@ export function decorateOfficialWorkspaceClient(source) {
     'modern session row decoration')
   derived = replaceIfPresent(derived,
     '\t\tfunction SessionHoverContent',
-    `\t\tfunction managedWorktreeDecoration(node, t) {\n\t\t\tconst value = node.__dshGitWorktree;\n\t\t\tif (value?.kind !== "managed-worktree" || typeof value.state !== "string") return void 0;\n\t\t\tconst label = t(\`dshGitWorktree.state.\${value.state}\`);\n\t\t\treturn {\n\t\t\t\tstate: value.state,\n\t\t\t\tlabel,\n\t\t\t\tariaLabel: \`\${t("dshGitWorktree.managed")}, \${label}, \${displayTitle(node, t)}\`\n\t\t\t};\n\t\t}\n\t\tfunction ManagedWorktreeIdentity({ decoration }) {\n\t\t\treturn (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\tclassName: "dsh-git-worktree-sidebar-icon",\n\t\t\t\t"data-worktree-state": decoration.state,\n\t\t\t\t"aria-hidden": "true",\n\t\t\t\tchildren: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, {})\n\t\t\t}), (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\tclassName: "dsh-git-worktree-sidebar-badge",\n\t\t\t\t"data-worktree-state": decoration.state,\n\t\t\t\t"aria-hidden": "true",\n\t\t\t\tchildren: decoration.label\n\t\t\t})] });\n\t\t}\n\t\t/** Hover-card body: full title, relative time, and every relevant live status. */\n\t\tfunction SessionHoverContent`,
+    `\t\tfunction managedWorktreeDecoration(node, t) {\n\t\t\tconst value = node.__dshGitWorktree;\n\t\t\tif (value?.kind !== "managed-worktree" || typeof value.state !== "string") return void 0;\n\t\t\tconst label = t(\`dshGitWorktree.state.\${value.state}\`);\n\t\t\treturn {\n\t\t\t\tstate: value.state,\n\t\t\t\tlabel,\n\t\t\t\tariaLabel: \`\${t("dshGitWorktree.managed")}, \${label}, \${displayTitle(node, t)}\`\n\t\t\t};\n\t\t}\n\t\tfunction ManagedWorktreeIdentity({ decoration }) {\n\t\t\treturn (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\tclassName: "dsh-git-worktree-sidebar-icon",\n\t\t\t\t"data-worktree-state": decoration.state,\n\t\t\t\t"aria-hidden": "true",\n\t\t\t\tchildren: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutlineRegular, {})\n\t\t\t}), (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\tclassName: "dsh-git-worktree-sidebar-badge",\n\t\t\t\t"data-worktree-state": decoration.state,\n\t\t\t\t"aria-hidden": "true",\n\t\t\t\tchildren: decoration.label\n\t\t\t})] });\n\t\t}\n\t\t/** Hover-card body: full title, relative time, and every relevant live status. */\n\t\tfunction SessionHoverContent`,
     'Managed row helper')
   derived = replaceExactlyOnce(derived,
     '\t\t\tconst statuses = sessionStatuses(node, t).filter((status) => !(node.archived && (status.state === "done" || status.state === "idle")));\n\t\t\treturn (0, react_jsx_runtime.jsxs)("div", {\n\t\t\t\tclassName: Rows_module_css_default.hoverContent,',
@@ -92,7 +94,7 @@ export function decorateOfficialWorkspaceClient(source) {
     'hover metadata')
   derived = replaceExactlyOnce(derived,
     '\t\t\t\t\t\tchildren: displayTitle(node, t)\n\t\t\t\t\t}),\n\t\t\t\t\t!node.blank',
-    '\t\t\t\t\t\tchildren: displayTitle(node, t)\n\t\t\t\t\t}),\n\t\t\t\t\tworktreeDecoration !== void 0 && (0, react_jsx_runtime.jsxs)("div", {\n\t\t\t\t\t\tclassName: Rows_module_css_default.hoverStatus,\n\t\t\t\t\t\tchildren: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, {}), (0, react_jsx_runtime.jsx)("span", { children: worktreeDecoration.ariaLabel })]\n\t\t\t\t\t}),\n\t\t\t\t\t!node.blank',
+    '\t\t\t\t\t\tchildren: displayTitle(node, t)\n\t\t\t\t\t}),\n\t\t\t\t\tworktreeDecoration !== void 0 && (0, react_jsx_runtime.jsxs)("div", {\n\t\t\t\t\t\tclassName: Rows_module_css_default.hoverStatus,\n\t\t\t\t\t\tchildren: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutlineRegular, {}), (0, react_jsx_runtime.jsx)("span", { children: worktreeDecoration.ariaLabel })]\n\t\t\t\t\t}),\n\t\t\t\t\t!node.blank',
     'hover Worktree identity')
   derived = replaceIfPresent(derived,
     '\t\t\tconst primaryStatus = statuses[0];\n\t\t\treturn (0, react_jsx_runtime.jsxs)("button", {\n\t\t\t\ttype: "button",\n\t\t\t\tclassName: clsx(Rows_module_css_default.searchResultRow, selected && Rows_module_css_default.selected),',
@@ -103,20 +105,20 @@ export function decorateOfficialWorkspaceClient(source) {
     '\t\t\t\t\t\t\tchildren: (primaryStatus.state !== "done" || result.completed) && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })\n\t\t\t\t\t\t}),\n\t\t\t\t\t\tworktreeDecoration !== void 0 && (0, react_jsx_runtime.jsx)(ManagedWorktreeIdentity, { decoration: worktreeDecoration }),\n\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.searchResultTitle,',
     'search Worktree decoration')
   derived = replaceIfPresent(derived,
-    '\t\t\tconst label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;\n\t\t\tconst active = group.expanded && group.containsCurrent;',
-    '\t\t\tconst label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;\n\t\t\tconst protectedManagedWorkspace = row.__dshGitWorktreeProtected === true;\n\t\t\tconst active = group.expanded && group.containsCurrent;',
+    '\t\t\tconst label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;\n\t\t\tconst active = containsCurrentDescendant || group.expanded && group.containsCurrent;',
+    '\t\t\tconst label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;\n\t\t\tconst protectedManagedWorkspace = row.__dshGitWorktreeProtected === true;\n\t\t\tconst active = containsCurrentDescendant || group.expanded && group.containsCurrent;',
     'Managed workspace row metadata')
   derived = replaceIfPresent(derived,
-    '\t\t\t\tclassName: clsx(Rows_module_css_default.projectRow, menuOpen && Rows_module_css_default.menuOpen),\n\t\t\t\trole: "treeitem",\n\t\t\t\t"aria-expanded": row.expanded,\n\t\t\t\tonClick: onToggle,\n\t\t\t\tdraggable: drag !== void 0,',
-    '\t\t\t\tclassName: clsx(Rows_module_css_default.projectRow, menuOpen && Rows_module_css_default.menuOpen),\n\t\t\t\trole: "treeitem",\n\t\t\t\t"aria-expanded": row.expanded,\n\t\t\t\tonClick: onToggle,\n\t\t\t\tdraggable: !protectedManagedWorkspace && drag !== void 0,',
+    '\t\t\t\tclassName: clsx(Rows_module_css_default.projectRow, menuOpen && Rows_module_css_default.menuOpen),\n\t\t\t\t"data-row-key": `workspace:${group.key}`,\n\t\t\t\trole: "treeitem",\n\t\t\t\t"aria-expanded": row.expanded,\n\t\t\t\tonClick: onToggle,\n\t\t\t\tdraggable: drag !== void 0,',
+    '\t\t\t\tclassName: clsx(Rows_module_css_default.projectRow, menuOpen && Rows_module_css_default.menuOpen),\n\t\t\t\t"data-row-key": `workspace:${group.key}`,\n\t\t\t\trole: "treeitem",\n\t\t\t\t"aria-expanded": row.expanded,\n\t\t\t\tonClick: onToggle,\n\t\t\t\tdraggable: !protectedManagedWorkspace && drag !== void 0,',
     'Managed workspace drag')
   derived = replaceIfPresent(derived,
     '\t\t\t\t\t\tchildren: [actions !== void 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {',
     '\t\t\t\t\t\tchildren: [!protectedManagedWorkspace && actions !== void 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {',
     'Managed workspace menu')
-  derived = replaceIfPresent(derived,
-    '\t\t\t\t\t\t}), (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\t\t\ttype: "button",\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t\t\t"aria-label": t("actions.newSession.aria", { name: label }),',
-    '\t\t\t\t\t\t}), !protectedManagedWorkspace && (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\t\t\ttype: "button",\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t\t\t"aria-label": t("actions.newSession.aria", { name: label }),',
+      derived = replaceIfPresent(derived,
+    '\t\t\t\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\t\t\t\ttype: "button",\n\t\t\t\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t\t\t\t"aria-keyshortcuts": newShortcut?.aria,\n\t\t\t\t\t\t\t\t"aria-label": t("actions.newSession.aria", { name: label }),',
+    '\t\t\t\t\t\t\tchildren: !protectedManagedWorkspace && (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\t\t\t\ttype: "button",\n\t\t\t\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t\t\t\t"aria-keyshortcuts": newShortcut?.aria,\n\t\t\t\t\t\t\t\t"aria-label": t("actions.newSession.aria", { name: label }),',
     'Managed workspace new Session')
   derived = replaceIfPresent(derived,
     '\t\t\tconst showStatus = statuses[0].state !== "done" || row.completed;\n\t\t\tconst [menuOpen, setMenuOpen]',
