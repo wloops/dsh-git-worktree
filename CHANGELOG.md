@@ -4,19 +4,15 @@
 
 ## [Unreleased]
 
-### Fixed
+## [0.10.0] - 2026-09-30
 
+`0.10.0` 适配 DSH `0.2.0-rc.2`，修复桌面端插件安装时因旧版 peerDependencies 声明而被拒绝的问题，并同步更新新版 Workspace、Typert、Skill 和 Client 运行时接口；同时修复新版 Host 的 Web 启动死锁、strict codec 世代判定与派生 seam 失配。
+
+### Fixed
 - 宿主端插件启动不再被 Workspace Provider 选举阻塞：`WorktreeConsoleService`、工具、命令和 Session Target 上下文先行挂载，Provider 生命周期移到最后并以非阻塞方式执行；对 Loader 禁用/恢复官方 `ui-workspace` 条目的单次操作增加 10 秒上限与在途防重入，卡住时告警并等待下一个 Loader 事件重试，避免新版 cordis-plugin-loader 并发启动下 `entry.update()` → `fiber.dispose()` 互等导致 `remote.gitWorktree` RPC 处理器永远无法就位。新增真实 Loader 时序回归测试覆盖「官方禁用操作永不返回时宿主 apply 仍完成」与「延迟生效的禁用最终落地且不产生双 Provider」。
 - 修复 0.2.0 Web 启动死锁：入口 inject 过滤 `remote.directoryPicker`（其提供者条目等待 `uiWorkspace`，原样继承官方完整列表会形成三方循环等待，插件卡 loading、12 条目 pending）；目录选择器改在托管上下文中延迟解析，调用时才读取真实服务。
 - `sidebarTopologyResponseSchema` 补充 `modern` flavor，修复 strict codec 拒绝 Host 世代判定导致无法识别已安装的 Workspace 生成。
 - 对齐 0.2.0 Workspace 派生 seam：`protectedManagedWorkspace` 定义、托管行 drag 与 new-session 抑制修正 needle，修复渲染抛 `ReferenceError` 后 slot 错误边界将整个会话列表替换为空死格；托管行徽章图标改用 `IconBranchOutlineRegular`（0.2.0 primitives 移除尺寸后缀变体）。新增 `WT_DEBUG_SEAMS=1` 派生 seam 审计开关。
-
-## [0.10.0] - 2026-09-29
-
-`0.10.0` 适配 DSH `0.2.0-rc.2`，修复桌面端插件安装时因旧版 peerDependencies 声明而被拒绝的问题，并同步更新新版 Workspace、Typert、Skill 和 Client 运行时接口。
-
-### Fixed
-
 - 将 DSH Host/Client 依赖、插件兼容声明和发布版本切换到 `0.2.0-rc.2`。
 - 支持 DSH 0.2 的现代 Workspace Browser、懒加载 Typert codec 和 Skill locator，同时保留旧 codec 字段的运行时兼容。
 - 更新 DSH 0.2 客户端构建、侧边栏兼容门禁和回归测试。

@@ -32,7 +32,7 @@
 
 隔离联调命令见 [本地开发](USAGE.md#本地开发)。源码 Host 的 `sessions.create()` 仅登记目标身份；本轮真实创建曾因立刻借用未 retain 的 binding 而自动回滚，现经官方 `sessions.using()` 持有目标引用、完成草稿迁移与导航后复测通过。下一步仍需在 alpha.2 独立 Profile、配置好 API Key 的测试环境验证真实对话与 Worktree 生命周期；未知上游版本不会自动使用任何派生 Browser。
 
-### 0.2.0-rc.2 适配（2026-09-30；插件 0.10.0 未发布）
+### 0.2.0-rc.2 适配（2026-09-30；插件 0.10.0）
 
 插件 `0.10.0` 将 DSH peers 与开发依赖整体切换到 `0.2.0-rc.2`（精确版本），官方 Workspace Browser 派生门禁从 rc.1 换为 0.2.0-rc.2（版本/SHA-256 双门禁），保留 `0.1.6-alpha.2`、`0.1.7-rc.2` 两个旧代派生；运行时仍按 Host 解析的 `dsh-agent` 版本只选择一个派生。本轮修复：`remote.directoryPicker` 注入环导致的 Web 启动死锁、strict codec 缺失 `modern` flavor、四条派生 seam 与 `IconBranchOutlineRegular` 图标命名对齐 0.2.0。
 
@@ -91,7 +91,7 @@ Plugin `0.9.3` carries both `schema` (legacy) and `create()` (new strict Typert)
 
 The isolated development command is in [Local development](USAGE.md#本地开发). In rc.2, `sessions.create()` only catalogues an identity; an initial attempt borrowed an unretained binding and was safely rolled back. The controller now uses official `sessions.using()` through draft handoff and navigation, confirmed in the real browser. Alpha.2 still needs an independent Profile run, and AI conversation / Worktree lifecycle need an API-key-enabled test environment. Unknown upstream generations are not assigned a derived Browser.
 
-### 0.2.0-rc.2 adaptation (2026-09-30; plugin 0.10.0 unreleased)
+### 0.2.0-rc.2 adaptation (2026-09-30; plugin 0.10.0)
 
 Plugin `0.10.0` moves all DSH peers and dev dependencies to `0.2.0-rc.2` (exact), switches the official Workspace Browser derivation gate from rc.1 to 0.2.0-rc.2 (version/SHA-256), and retains the `0.1.6-alpha.2` and `0.1.7-rc.2` derivations; the runtime still selects exactly one derivation from the Host-resolved `dsh-agent` version. Fixed this round: the Web-boot deadlock caused by the `remote.directoryPicker` injection cycle, the `modern` flavor missing from the strict codec, and four derivation seams plus the `IconBranchOutlineRegular` icon naming aligned with 0.2.0.
 
