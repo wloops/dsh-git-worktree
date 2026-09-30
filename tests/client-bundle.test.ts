@@ -55,12 +55,14 @@ describe('built Client ModuleLoader artifact', () => {
       'workspaces',
       'locale',
       'remote',
-      'remote.directoryPicker',
       'layout',
       'shortcuts',
     ])
     expect(clientExports.inject).not.toContain('conversation')
     expect(clientExports.inject).not.toContain('connection')
+    // The modern picker provider entry waits for `uiWorkspace`; requiring it at
+    // entry scope would deadlock the web boot (provider cycle).
+    expect(clientExports.inject).not.toContain('remote.directoryPicker')
   })
 
   test('restores uiWorkspace before conversation, then mounts Worktree surfaces and withdraws them with the fiber', async () => {
@@ -156,6 +158,81 @@ describe('built Client ModuleLoader artifact', () => {
     await fiber.dispose()
     expect((ctx.remote as unknown as Record<string, unknown>).gitWorktree).toBeUndefined()
     expect(document.querySelector('style[data-dsh-git-worktree]')).toBeNull()
+  })
+
+  test('boots a modern Host whose picker provider waits for uiWorkspace, then resolves picker calls lazily', async () => {
+    const nodeRequire = createRequire(import.meta.url)
+    const gatewayPath = nodeRequire.resolve('@deepseek-ai/dsh-api-gateway/client')
+    const gateway = executeBundle(readFileSync(gatewayPath, 'utf8')).factory(nodeRequire) as {
+      apply(ctx: Context): void
+      inject: string[]
+    }
+    const worktree = executeBundle(readFileSync(resolve('lib/client.js'), 'utf8'))
+      .factory(specifier => platformRequire(nodeRequire, specifier)) as {
+      apply(ctx: Context): void
+      inject: string[]
+    }
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const expected = await fixture.adapter.current({ sessionId: 'agent-1' })
+    const modernTopology = await fixture.adapter.sidebarTopology()
+    // The 0.2.x directory-picker provider entry is pending on uiWorkspace, so
+    // this context deliberately never provides `remote.directoryPicker` up front.
+    const call = vi.fn(async (_url: string, method: string) => ({
+      ok: true as const,
+      value: method === 'gitWorktree/sidebarTopology'
+        ? { ...modernTopology, value: { ...modernTopology.value, workspaceClientFlavor: 'modern' } }
+        : expected,
+    }))
+    const ctx = new Context()
+    await ctx.plugin(TypertRegistry)
+    ctx.provide('connection', {
+      rpc: { call },
+      registerGenerationSource: () => () => {},
+      start: () => ({ stop() {} }),
+    } as never)
+    await ctx.plugin({ inject: gateway.inject, apply: gateway.apply })
+    const register = vi.fn()
+    ctx.provide('slots', {
+      inject(_name: string, callback: () => unknown) { callback() },
+      register: vi.fn((...args: unknown[]) => { register(...args); return () => {} }),
+      provideRoot() {},
+      entries: () => [],
+      subscribe: () => () => {},
+    } as never)
+    const source = <T,>(snapshot: T) => ({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+    })
+    ctx.provide('workspaces', {
+      list: source({ items: [], archivedSessionIds: [], phase: 'ready' }),
+    } as never)
+    ctx.provide('sessions', {
+      list: source({ ids: [], byId: {}, current: undefined, phase: 'ready' }),
+      clear() {},
+      open() {},
+      searchResultLimit: 100,
+    } as never)
+    ctx.provide('locale', { register: vi.fn(), bind: () => () => '' } as never)
+    ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
+    ctx.provide('shortcuts', { register: vi.fn(() => () => {}) } as never)
+
+    const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
+    await fiber
+    // Without the filtered inject this fiber could never settle: the entry
+    // would wait for `remote.directoryPicker`, which waits for `uiWorkspace`.
+    expect(ctx.uiWorkspace).toBeDefined()
+
+    // Picker actions fail cleanly while the provider entry is still absent.
+    await expect(ctx.uiWorkspace.pickDirectory()).rejects.toThrow(/not active/)
+
+    // Once the provider entry activates below uiWorkspace, the same call path
+    // reaches the real service without restarting the plugin.
+    const pick = vi.fn(async () => ({ ok: true }))
+    ctx.provide('remote.directoryPicker', { pick } as never)
+    await ctx.uiWorkspace.pickDirectory()
+    expect(pick).toHaveBeenCalledOnce()
+
+    await fiber.dispose()
   })
 })
 

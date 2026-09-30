@@ -166,6 +166,30 @@ interface SidebarRegistrationContext {
   [key: string]: unknown
 }
 
+/**
+ * Resolve the directory picker service only when an action actually needs it.
+ * On the modern Host the picker provider entry waits for `uiWorkspace`, so the
+ * managed context may not have the service while `uiWorkspace` is starting;
+ * every picker call must therefore re-read the service at invocation time.
+ */
+function deferredRemoteDirectoryPicker(ctx: SidebarRegistrationContext): unknown {
+  const resolve = (): Record<string, unknown> => {
+    const get = (ctx as { get?: (name: string) => unknown }).get
+    const picker = typeof get === 'function' ? get.call(ctx, 'remote.directoryPicker') : undefined
+    if (picker === undefined || picker === null) {
+      throw new Error('The directory picker service is not active yet.')
+    }
+    return picker as Record<string, unknown>
+  }
+  return new Proxy({}, {
+    get(_target, key) {
+      const picker = resolve()
+      const value = picker[key as string]
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(picker) : value
+    },
+  })
+}
+
 function officialContextProxy(
   ctx: SidebarRegistrationContext,
   adapter: WorktreeConsoleAdapter,
@@ -215,10 +239,24 @@ function officialContextProxy(
   return new Proxy(ctx, {
     get(target, key, receiver) {
       if (key === 'slots') return proxySlots
+      if (key === 'remote' && target.remote !== undefined && target.remote !== null) {
+        // The official apply reads `ctx.remote.directoryPicker` once while
+        // constructing `uiWorkspace`; hand back a deferred facade so that the
+        // read never fails (and never blocks) before the picker activates.
+        const remote = target.remote as Record<string, unknown>
+        return new Proxy(remote, {
+          get(remoteTarget, remoteKey, remoteReceiver) {
+            if (remoteKey === 'directoryPicker') return deferredRemoteDirectoryPicker(ctx)
+            return Reflect.get(remoteTarget, remoteKey, remoteReceiver)
+          },
+        })
+      }
       if (key === 'get' && typeof target.get === 'function') {
         return (name: string) => name === '__dshGitWorktreeManagedGuard'
           ? guard
-          : (target.get as (service: string) => unknown).call(target, name)
+          : name === 'remote.directoryPicker'
+            ? deferredRemoteDirectoryPicker(ctx)
+            : (target.get as (service: string) => unknown).call(target, name)
       }
       return Reflect.get(target, key, receiver)
     },

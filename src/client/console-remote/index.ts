@@ -15,11 +15,18 @@ import { createWorktreeConsoleRemoteAdapter } from './adapter.js'
 export { createWorktreeConsoleRemoteAdapter } from './adapter.js'
 
 /**
- * Activate on the same prerequisites as the official Workspace Client. The
- * conversation-dependent Worktree surfaces run in a child fiber below so the
- * Workspace service can break the uiConversation -> uiWorkspace boot edge.
+ * Activate on nearly the same prerequisites as the official Workspace Client.
+ * The conversation-dependent Worktree surfaces run in a child fiber below so
+ * the Workspace service can break the uiConversation -> uiWorkspace boot edge.
+ *
+ * The modern (0.2.x) official Browser additionally injects
+ * `remote.directoryPicker`, whose provider entry waits for `uiWorkspace`
+ * itself. Requiring it here would deadlock the web boot: this entry could not
+ * provide `uiWorkspace` before the picker activates, and the picker would wait
+ * for `uiWorkspace` forever. The picker is therefore resolved lazily at call
+ * time through the managed context proxy (see officialContextProxy).
  */
-export const inject = [...officialWorkspaceInject]
+export const inject = officialWorkspaceInject.filter(service => service !== 'remote.directoryPicker')
 
 interface ConsoleClientContext extends Context {
   remote: ClientRemote & { gitWorktree: GitWorktreeRemote }
@@ -64,7 +71,9 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
     )
     mountTools(ctx)
   } else if (flavor === 'modern') {
-    ctx.inject(officialWorkspaceInject, child => {
+    // Same filtered subset as the entry inject: providing `uiWorkspace` must
+    // never wait for the directory picker (see the inject comment above).
+    ctx.inject(inject, child => {
       registerManagedWorkspaceSidebar(
         child as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0],
         adapter,
