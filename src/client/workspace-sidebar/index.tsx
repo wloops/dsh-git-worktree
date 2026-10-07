@@ -12,6 +12,9 @@ import { selectedSessionId } from '../actions.js'
 import { projectManagedWorkspaceSidebar } from './model.js'
 
 const EMPTY_TOPOLOGY: WorktreeSidebarTopologyResponse = { projects: [] }
+// These official actions do not create another Session or change its Workspace
+// ownership. Keep their native menus, overlays and injected callbacks intact.
+const OWNER_SAFE_SESSION_ACTIONS = new Set(['pin', 'rename', 'archive'])
 
 /** Ephemeral presentation metadata consumed only by the gated official Browser derivative. */
 export interface ManagedWorktreeSessionDecoration {
@@ -210,10 +213,10 @@ function officialContextProxy(
           if (
             (descriptor.name === 'sidebar.workspaces.session.menu.item'
               || descriptor.name === 'sidebar.workspaces.session.row.action')
-            && descriptor.id !== 'pin'
+            && !OWNER_SAFE_SESSION_ACTIONS.has(descriptor.id as string)
           ) {
-            // The only owner-safe built-in row action is pin. Third-party actions
-            // remain available on ordinary Sessions, but never on a managed owner.
+            // Fork and unclassified actions must not bypass managed ownership.
+            // Safe official actions remain available even before topology loads.
             const Action = component
             const GuardedAction = (props: { sessionId?: string }) =>
               typeof props.sessionId === 'string' && !guard.blockSession(props.sessionId)

@@ -43,25 +43,22 @@ export function decorateAlphaWorkspaceClient(source) {
     '\t\t\t\t\tlabel: g.label,\n\t\t\t\t\t...g.__dshGitWorktreeProtected === true ? { __dshGitWorktreeProtected: true } : {},\n\t\t\t\t\tsessionCount: g.sessions.length,',
     'protected workspace row',
   )
+  // Cordis Service derives its own Context; capture the instance-local guard
+  // from the constructor argument rather than looking it up on this.ctx later.
+  replace(
+    '\t\t\t\tsuper(ctx, "uiWorkspace");\n\t\t\t\tthis.directoryPicker = directoryPicker;',
+    '\t\t\t\tsuper(ctx, "uiWorkspace");\n\t\t\t\tthis.managedWorktreeGuard = ctx.get("__dshGitWorktreeManagedGuard");\n\t\t\t\tthis.directoryPicker = directoryPicker;',
+    'instance-local managed guard',
+  )
   replace(
     '\t\t\tasync forkSession(sessionId) {\n\t\t\t\tconst navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal]);',
-    '\t\t\tasync forkSession(sessionId) {\n\t\t\t\tif (this.ctx.get("__dshGitWorktreeManagedGuard").blockSession(sessionId)) throw new Error("managed Session must be changed through its Worktree owner");\n\t\t\t\tconst navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal]);',
+    '\t\t\tasync forkSession(sessionId) {\n\t\t\t\tif (this.managedWorktreeGuard.blockSession(sessionId)) throw new Error("managed Session must be changed through its Worktree owner");\n\t\t\t\tconst navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal]);',
     'managed Session fork',
   )
   replace(
-    '\t\t\tasync archiveSession(sessionId) {\n\t\t\t\tawait this.workspaces.archiveSession(sessionId);',
-    '\t\t\tasync archiveSession(sessionId) {\n\t\t\t\tif (this.ctx.get("__dshGitWorktreeManagedGuard").blockSession(sessionId)) throw new Error("managed Session must be changed through its Worktree owner");\n\t\t\t\tawait this.workspaces.archiveSession(sessionId);',
-    'managed Session archive',
-  )
-  replace(
     '\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target === void 0) {',
-    '\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target !== void 0 && this.ctx.get("__dshGitWorktreeManagedGuard").blockWorkspace(target)) return;\n\t\t\t\tif (target === void 0) {',
+    '\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target !== void 0 && this.managedWorktreeGuard.blockWorkspace(target)) return;\n\t\t\t\tif (target === void 0) {',
     'managed Workspace new Session shortcut',
-  )
-  replace(
-    '\t\t\t\trenameSession: async (sessionId, title) => {\n\t\t\t\t\tconst result = await sessions.using(',
-    '\t\t\t\trenameSession: async (sessionId, title) => {\n\t\t\t\t\tif (ctx.get("__dshGitWorktreeManagedGuard").blockSession(sessionId)) throw new Error("managed Session must be changed through its Worktree owner");\n\t\t\t\t\tconst result = await sessions.using(',
-    'managed Session rename',
   )
   replace(
     '\t\t\t\tupdatedAt: s.updatedAt,\n\t\t\t\t...pendingInteraction === void 0 ? {} : { pendingInteraction }',
@@ -83,7 +80,12 @@ export function decorateAlphaWorkspaceClient(source) {
     'managed Session row guard',
   )
   replace('\t\t\tconst draggable = drag !== void 0 && !row.blank;', '\t\t\tconst draggable = drag !== void 0 && !row.blank && !protectedManagedSession;', 'managed Session drag')
-  replace('\t\t\t\t\t\t!row.blank && (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.rowActions,', '\t\t\t\t\t\t!row.blank && !protectedManagedSession && (0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.rowActions,', 'managed Session actions')
+  replace(
+    '\t\t\t];\n\t\t\treturn (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {',
+    '\t\t\t];\n\t\t\tconst visibleSessionMenuItems = protectedManagedSession ? sessionMenuItems.filter((item) => item.id !== "fork") : sessionMenuItems;\n\t\t\treturn (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {',
+    'managed Session safe menu items',
+  )
+  replace('\t\t\t\t\t\t\t\titems: sessionMenuItems,', '\t\t\t\t\t\t\t\titems: visibleSessionMenuItems,', 'managed Session menu')
   replace(
     '\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tref: titleRef,\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.title,',
     '\t\t\t\t\t\tprotectedManagedSession && (0, react_jsx_runtime.jsx)("span", { title: node.__dshGitWorktree.label, "aria-label": node.__dshGitWorktree.label, style: { flexShrink: 0, display: "inline-flex" }, children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, {}) }),\n\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("span", {\n\t\t\t\t\t\t\tref: titleRef,\n\t\t\t\t\t\t\tclassName: Rows_module_css_default.title,',

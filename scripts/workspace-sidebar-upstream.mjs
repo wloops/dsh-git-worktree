@@ -48,6 +48,20 @@ function replaceIfPresent(source, needle, replacement, label) {
  */
 export function decorateOfficialWorkspaceClient(source) {
   let derived = source
+  // Service derives its own Cordis Context, so retain the proxy's per-instance
+  // guard at construction. Menus and shortcuts share these service boundaries.
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t\tsuper(ctx, "uiWorkspace");\n\t\t\t\tthis.directoryPicker = directoryPicker;',
+    '\t\t\t\tsuper(ctx, "uiWorkspace");\n\t\t\t\tthis.managedWorktreeGuard = ctx.get("__dshGitWorktreeManagedGuard");\n\t\t\t\tthis.directoryPicker = directoryPicker;',
+    'instance-local managed guard')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\tasync forkSession(sessionId, onCreated) {\n\t\t\t\treturn this.sessions.fork({',
+    '\t\t\tasync forkSession(sessionId, onCreated) {\n\t\t\t\tif (this.managedWorktreeGuard.blockSession(sessionId)) throw new Error("managed Session must be changed through its Worktree owner");\n\t\t\t\treturn this.sessions.fork({',
+    'Managed Session fork from menus and shortcuts')
+  derived = replaceExactlyOnce(derived,
+    '\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target === void 0) {',
+    '\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target !== void 0 && this.managedWorktreeGuard.blockWorkspace(target)) return;\n\t\t\t\tif (target === void 0) {',
+    'Managed Workspace new Session shortcut')
   derived = replaceExactlyOnce(derived,
     '\t\tconst zh = {',
     `\t\tconst zh = {\n\t\t\t"dshGitWorktree.managed": "托管 Worktree",\n\t\t\t"dshGitWorktree.state.working": "进行中",\n\t\t\t"dshGitWorktree.state.ready_for_review": "待验收",\n\t\t\t"dshGitWorktree.state.preview_active": "预览中",\n\t\t\t"dshGitWorktree.state.preview_detached": "待恢复",\n\t\t\t"dshGitWorktree.state.recovery_required": "需要恢复",\n\t\t\t"dshGitWorktree.state.finalized": "已完成",\n\t\t\t"dshGitWorktree.state.discarded": "已放弃",`,
