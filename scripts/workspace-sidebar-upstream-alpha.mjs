@@ -93,7 +93,7 @@ export function decorateAlphaWorkspaceClient(source) {
   )
   replace(
     '\t\t\t\t\t\t\tchildren: title\n\t\t\t\t\t\t}),\n\t\t\t\t\t\trow.hasActiveSchedule && (0, react_jsx_runtime.jsx)(ActiveScheduleIndicator, { t }),',
-    '\t\t\t\t\t\t\tchildren: title\n\t\t\t\t\t\t}),\n\t\t\t\t\t\tprotectedManagedSession && (0, react_jsx_runtime.jsx)("span", { className: "dsh-git-worktree-sidebar-badge", "data-worktree-state": node.__dshGitWorktree.state, children: node.__dshGitWorktree.label }),\n\t\t\t\t\t\trow.hasActiveSchedule && (0, react_jsx_runtime.jsx)(ActiveScheduleIndicator, { t }),',
+    '\t\t\t\t\t\t\tchildren: title\n\t\t\t\t\t\t}),\n\t\t\t\t\t\tprotectedManagedSession && node.__dshGitWorktree.state !== "working" && (0, react_jsx_runtime.jsx)("span", { className: "dsh-git-worktree-sidebar-badge", "data-worktree-state": node.__dshGitWorktree.state, children: node.__dshGitWorktree.label }),\n\t\t\t\t\t\trow.hasActiveSchedule && (0, react_jsx_runtime.jsx)(ActiveScheduleIndicator, { t }),',
     'managed Session status badge',
   )
   return derived
