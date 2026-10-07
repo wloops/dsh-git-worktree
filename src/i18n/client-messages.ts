@@ -23,6 +23,8 @@ export const clientMessages = {
   "detail.conflict": {"zh": "冲突", "en": "Conflict"},
   "detail.validation": {"zh": "验证记录", "en": "Validation records"},
   "detail.noTests": {"zh": "未提供验证记录。", "en": "No validation records provided."},
+  "detail.expandList": {"zh": "展开全部 {count} 项", "en": "Show all {count} items"},
+  "detail.collapseList": {"zh": "收起", "en": "Show fewer"},
   "detail.version": {"zh": "版本信息", "en": "Version information"},
   "detail.reviewId": {"zh": "验收标识", "en": "Review ID"},
   "detail.revision": {"zh": "当前版本", "en": "Current revision"},

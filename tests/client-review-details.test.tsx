@@ -87,6 +87,85 @@ test('更多及预览操作使用 Lucide，长文本 Modal 使用独立可滚动
   expect(within(dialog).getByText(fixture.target.review!.changedFiles[0]!)).toBeTruthy()
 })
 
+test.each([0, 5, 6])('详情列表 %s 项时遵循 5 项折叠阈值', count => {
+  const { target } = createWorktreeConsoleAdapterFixture()
+  target.review!.changedFiles = Array.from({ length: count }, (_, index) => `src/file-${index}.ts`)
+  target.review!.tests = Array.from({ length: count }, (_, index) => ({ command: `test-${index}`, status: 'passed' as const }))
+  render(<ReviewDetailsModal open onClose={() => {}} target={target} />)
+  const files = screen.getByRole('list', { name: '修改文件' })
+  expect(within(files).queryAllByRole('listitem')).toHaveLength(Math.min(count, 5))
+  if (count) {
+    expect(within(screen.getByRole('list', { name: '验证记录' })).getAllByRole('listitem')).toHaveLength(Math.min(count, 5))
+  } else {
+    expect(screen.getByText('未提供验证记录。')).toBeTruthy()
+  }
+  expect(screen.queryAllByRole('button', { name: /展开全部/ })).toHaveLength(count > 5 ? 2 : 0)
+})
+
+function longReviewTarget() {
+  const { target } = createWorktreeConsoleAdapterFixture()
+  target.review!.changedFiles = Array.from({ length: 8 }, (_, index) => `src/file-${index}.ts`)
+  target.review!.tests = Array.from({ length: 7 }, (_, index) => ({ command: `test-${index}`, status: index === 6 ? 'failed' as const : 'passed' as const, summary: `result-${index}` }))
+  target.review!.validationStatus = 'failed'
+  return target
+}
+
+test('长列表独立展开和收起，保留总数、验证摘要和完整记录', () => {
+  const target = longReviewTarget()
+  render(<ReviewDetailsModal open onClose={() => {}} target={target} />)
+  expect(screen.getByText('8 个文件')).toBeTruthy()
+  expect(screen.getByText('focused tests passed')).toBeTruthy()
+  expect(document.querySelector('.dsh-wt-details-meta [data-validation="failed"]')).toBeTruthy()
+  const filesToggle = screen.getByRole('button', { name: '修改文件: 展开全部 8 项' })
+  expect(filesToggle.getAttribute('aria-expanded')).toBe('false')
+  expect(filesToggle.getAttribute('aria-controls')).toBe(screen.getByRole('list', { name: '修改文件' }).id)
+  fireEvent.click(filesToggle)
+  expect(filesToggle.getAttribute('aria-expanded')).toBe('true')
+  expect(screen.getByText('src/file-7.ts')).toBeTruthy()
+  expect(screen.queryByText('test-6')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '验证记录: 展开全部 7 项' }))
+  expect(screen.getByText('test-6')).toBeTruthy()
+  expect(screen.getByText('result-6')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '修改文件: 收起' }))
+  expect(screen.queryByText('src/file-7.ts')).toBeNull()
+  expect(screen.getByText('test-6')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '验证记录: 收起' }))
+  expect(screen.queryByText('test-6')).toBeNull()
+})
+
+test.each(['reopen', 'review', 'revision', 'checkout'] as const)('详情列表在 %s 后恢复默认折叠', change => {
+  const target = longReviewTarget()
+  const view = render(<ReviewDetailsModal open onClose={() => {}} target={target} />)
+  fireEvent.click(screen.getByRole('button', { name: '修改文件: 展开全部 8 项' }))
+  fireEvent.click(screen.getByRole('button', { name: '验证记录: 展开全部 7 项' }))
+  view.rerender(<ReviewDetailsModal open onClose={() => {}} target={{ ...target }} />)
+  expect(screen.getByText('src/file-7.ts')).toBeTruthy()
+  if (change === 'reopen') {
+    view.rerender(<ReviewDetailsModal open={false} onClose={() => {}} target={target} />)
+  } else if (change === 'review') {
+    target.review = { ...target.review!, reviewId: 'review-2' }
+  } else if (change === 'revision') {
+    target.revision++
+  } else {
+    target.checkoutId = 'checkout-2'
+  }
+  view.rerender(<ReviewDetailsModal open onClose={() => {}} target={target} />)
+  expect(screen.queryByText('src/file-7.ts')).toBeNull()
+  expect(screen.queryByText('test-6')).toBeNull()
+  expect(screen.getAllByRole('button', { name: /展开全部/ })).toHaveLength(2)
+})
+
+test('长列表切换英文后保留展开状态且提供本地化操作', () => {
+  const target = longReviewTarget()
+  const view = render(<ClientI18nProvider language="zh"><ReviewDetailsModal open onClose={() => {}} target={target} /></ClientI18nProvider>)
+  fireEvent.click(screen.getByRole('button', { name: '修改文件: 展开全部 8 项' }))
+  view.rerender(<ClientI18nProvider language="en"><ReviewDetailsModal open onClose={() => {}} target={target} /></ClientI18nProvider>)
+  expect(screen.getByText('src/file-7.ts')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Changed files: Show fewer' }))
+  expect(screen.getByRole('button', { name: 'Changed files: Show all 8 items' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Validation records: Show all 7 items' })).toBeTruthy()
+})
+
 test('待验收更多菜单每个操作均有语义图标且不重复插入', async () => {
   const fixture = createWorktreeConsoleAdapterFixture()
   render(<WorktreeReviewStatus session={{ sessionId: 'target-session' }} adapter={fixture.adapter} services={services} />)

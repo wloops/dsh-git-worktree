@@ -136,6 +136,10 @@ export const REVIEW_CONSOLE_STYLES = String.raw`
 .dsh-wt-details-notice[data-tone="warning"] { background:color-mix(in srgb, var(--wt-amber) 8%, transparent); }
 .dsh-wt-details-section { border-top:1px solid var(--wt-line); padding:16px 0; }
 .dsh-wt-details-section h3 { font-size:14px; font-weight:600; margin:0 0 12px; }
+.dsh-wt-details-list-toggle { display:inline-flex; align-items:center; gap:6px; margin-top:8px; padding:4px 0; border:0; background:transparent; color:var(--wt-muted); font:inherit; cursor:pointer; }
+.dsh-wt-details-list-toggle:hover { color:var(--wt-ink); }
+.dsh-wt-details-list-toggle:focus-visible { outline:2px solid #5a8dee; outline-offset:3px; }
+.dsh-wt-details-list-toggle[aria-expanded="true"] .dsh-wt-icon { transform:rotate(90deg); }
 .dsh-wt-details-files, .dsh-wt-details-tests { padding:0; margin:0; list-style:none; }
 .dsh-wt-details-files li { display:flex; align-items:flex-start; gap:10px; padding:8px 0; }
 .dsh-wt-details-files li > span:nth-child(2) { flex:1; min-width:0; overflow-wrap:anywhere; font-family:ui-monospace, monospace; }
