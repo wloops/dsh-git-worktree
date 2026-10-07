@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-07
+
+`0.10.1` 恢复托管会话被过度屏蔽的官方侧边栏操作，收敛行内状态展示，并让验收详情的长列表默认折叠；是无数据迁移的补丁版。
+
+### Added
+
+- 验收详情的修改文件与验证记录超过 5 项时默认只显示前 5 项，提供各自独立的展开全部/收起按钮；重新打开详情或切换验收（checkout/review/revision）时重置折叠状态，保留总数与验证状态提示；补齐中英文文案、`aria-expanded`/`aria-controls` 无障碍属性及交互样式。
+
+### Fixed
+
+- 恢复托管会话行的官方重命名、归档及归档恢复入口：`pin`、`rename`、`archive` 视为不创建 Session、不改变 Workspace 归属的安全官方操作，alpha、next、modern 三版 Client 派生同步放行其原生菜单与回调，并在 `uiWorkspace` 实例上保存 guard，避免 Cordis Context 派生丢失引用；Fork 等可能破坏托管归属的操作继续被阻止，安全操作也不再依赖拓扑加载完成。新增三版真实回调回归测试。
+- 托管会话处于 working 状态时仅隐藏行内 Worktree 文字标签，保留 Worktree 图标、官方运行指示器、完整悬停状态（modern 在官方 HoverCard，旧派生在分支原生 tooltip）及其他状态标签；新增三版行组件渲染回归，不装饰普通会话。
+
+### Documentation
+
+- README 与使用指南的安装/排错示例更新到 `0.10.0`，环境要求按 Host 版本分线（`0.10.0` 面向 DSH `0.2.0-rc.2`；`0.1.x` Host 继续使用 `0.9.x` 插件线），并说明刚发布的版本可能被 `minimumReleaseAge` 供应链防护静默回退到旧版，需显式指定精确版本安装。
+
 ## [0.10.0] - 2026-09-30
 
 `0.10.0` 适配 DSH `0.2.0-rc.2`，修复桌面端插件安装时因旧版 peerDependencies 声明而被拒绝的问题，并同步更新新版 Workspace、Typert、Skill 和 Client 运行时接口；同时修复新版 Host 的 Web 启动死锁、strict codec 世代判定与派生 seam 失配。
@@ -396,6 +413,8 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.10.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.0...v0.9.1
