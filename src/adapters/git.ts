@@ -149,7 +149,7 @@ async function runGit(ctx: Context, cwd: string, args: string[], options: GitPor
     if (outcome.signal === 'SIGTERM' || outcome.signal === 'SIGKILL' || controller.signal.aborted) {
       return { code: -1, stdout, stderr: hostMessage('gitTimedOutMsAndWasTerminated', { p0: args.join(' '), p1: graceMs }), quiescent }
     }
-    return { code: outcome.exitCode ?? -1, stdout: stdout.trim(), stderr: stderr.trim(), quiescent }
+    return { code: outcome.exitCode ?? -1, stdout: args[0] === 'status' ? stdout : stdout.trim(), stderr: stderr.trim(), quiescent }
   } catch (error) {
     if (error instanceof SessionCheckoutError) throw error
     const quiescent = creation && handle ? await settleCreationTree(handle) : false
@@ -268,16 +268,41 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
     status: async (root) => {
       const output = await runSessionGitChecked(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
       const carried = await projectSkills.scope(root)
-      return { dirty: hasDeliverableStatus(output, new Set(carried?.paths ?? []), carried?.directories) }
+      let links: string[] = []
+      if (carried) {
+        const index = await runSessionGitChecked(root, ['ls-files', '--stage', '-z'])
+        const head = await runSessionGitChecked(root, ['ls-tree', '-r', '-z', 'HEAD'])
+        links = (await projectSkills.projection(root, index, head))?.links ?? []
+      }
+      return { dirty: hasDeliverableStatus(output, new Set(carried?.paths ?? []), carried?.directories, new Set(links)) }
     },
     createDetachedWorktree: async (localRoot, managedRoot, baseOid, saveEvidence) => {
       // Only source preflight is target-independent. Do not classify creation or
       // carry failures here: those may have produced evidence or partial content.
       const skills = await (async () => {
         try {
-          const snapshot = await projectSkills.snapshot(localRoot)
-          const changed = await runSessionGitChecked(localRoot, ['diff', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
-            + await runSessionGitChecked(localRoot, ['diff', '--cached', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
+          const gitRoot = await realpath(await runSessionGitChecked(localRoot, ['rev-parse', '--show-toplevel']))
+          const metadata = [await runSessionGitChecked(localRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
+            await runSessionGitChecked(localRoot, ['rev-parse', '--absolute-git-dir'])]
+          const snapshot = await projectSkills.snapshot(gitRoot, { root: gitRoot, metadata })
+          // Link targets may live outside Skill roots. Their Local edits cannot be
+          // silently frozen while the canonical worktree starts at another base.
+          const paths = [...PROJECT_SKILL_ROOTS, ...(snapshot.sourcePaths ?? [])]
+          const changes: string[] = []
+          for (let offset = 0; offset < paths.length; offset += 50) {
+            const batch = paths.slice(offset, offset + 50)
+            changes.push(await runSessionGitChecked(gitRoot, ['--literal-pathspecs', 'diff', '--name-only', '-z', baseOid, '--', ...batch]),
+              await runSessionGitChecked(gitRoot, ['--literal-pathspecs', 'diff', '--cached', '--name-only', '-z', baseOid, '--', ...batch]))
+          }
+          const changed = changes.join('')
+          const index = await runSessionGitChecked(gitRoot, ['ls-files', '--stage', '-z'])
+          for (const link of snapshot.links ?? []) {
+            const entry = index.split('\0').find(entry => entry.slice(entry.indexOf('\t') + 1) === link.path)
+            if (entry) {
+              if (!entry.startsWith('120000 ') || !entry.includes(' 0\t')) throw new Error(`Project Skills: tracked link conflicts with index: ${link.path}`)
+              link.entry = entry
+            }
+          }
           if (changed) throw new SessionCheckoutError('git_operation_failed', `Project Skills: commit or resolve local tracked Skill changes before creating a Worktree (${changed.split('\0').filter(Boolean).join(', ')})`)
           return snapshot
         } catch (error) {
@@ -297,7 +322,8 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
       // the caller has already verified checkout identity and the full fingerprint.
       if (await projectSkills.paths(managedRoot)) {
         const index = await runSessionGitChecked(managedRoot, ['ls-files', '--stage', '-z'])
-        const head = await runSessionGitChecked(managedRoot, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'])
+        const head = await runSessionGitChecked(managedRoot, ['ls-tree', '-r', '-z', 'HEAD'])
+        await projectSkills.projection(managedRoot, index, head)
         await projectSkills.assertRemovable(managedRoot, trackedSkillPaths(index, head))
       }
       await runSessionGitChecked(localRoot, ['worktree', 'remove', '--force', managedRoot])

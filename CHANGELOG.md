@@ -4,13 +4,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Project Skills 支持同一真实 Git 仓库内的文件/目录 symlink、共享/多层目标及 Skill 根目录链接，以受限快照物化到 Managed Worktree，不链接回 Local 或共享目录；拒绝任何仓库外跳转、Git 元数据、循环、悬空和特殊文件目标。原有文件/大小/深度限制计入展开副本。
+- Internal project Skill links (including tracked/root/shared/multi-hop links) are safely snapshotted into ordinary managed files/directories. External hops, Git metadata, cycles, dangling links and special files remain errors. Materialized copies are frozen auxiliary snapshots: modifications block delivery and cleanup; edit canonical tracked sources instead. Precise host-private provenance preserves original tracked links across review/checkpoint/preview/finalize and fresh next iterations without hiding normal tracked edits.
+
 ### Fixed
 
+- 修复 tracked link 物化后的 Git 类型变化/删除及新增副本被误当交付内容；只恢复 provenance 验证通过的原链接条目，物化副本变化或暂存明确报错并保留现场，canonical tracked 目标的正常改动仍可交付。保留 porcelain 首条记录前导空格与 NUL 重命名语义。
 - 修复「打开当前工作位置」与创建卡片里可点击的 workspace 路径静默失败：客户端调用了 Workspace 控制器上从不存在的 `workspaces.openPath`（同步 `TypeError`，菜单先关闭所以用户侧无任何反馈），改为经 `remote.session.canOpenWorkspacePath()` / `openWorkspacePath()` 交付路径；宿主没有桌面打开能力时不再渲染该控件，与官方 open-in-app 一致，运行期失败改为可见提示。
 - 客户端 `inject` 声明补入 `remote` 与 `remote.session`，与官方 open-in-app 的注入约定保持一致。
 - 桌面打开能力查询只缓存成功结果；临时失败共享有限重试，避免首次断连后永久隐藏入口，不引入持续轮询。
 - 隔离三代 Workspace 派生的 CSS 去重标识与资源归属，避免不同版本样式互相压制或被官方模块清理误删；保留上游 CSS 与来源校验。此项不代表已解决 #11 的双 Provider 注册问题。
-- Project Skills 源预检失败保留原始错误和具体路径，在保守清理后停止无关的存储目录重试；不改变符号链接限制和清理安全边界。
+- Project Skills 源预检失败保留原始错误和具体路径，在保守清理后停止无关的存储目录重试；保留保守清理安全边界。
 - 补充中英文重启取证、Skill 链接排错和精确 Host/插件版本配对说明。
 
 ## [0.11.0] - 2026-10-18

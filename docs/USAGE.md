@@ -270,7 +270,7 @@ dsh plugin --profile web remove dsh-git-worktree
 
 如果当前 Git 仓库还没有任何提交，Worktree 开关会先显示预检与确认提示。确认后插件只创建空的首次提交，不会提交工作区文件或暂存内容，也不会自动配置或改写 Git 身份；状态在确认期间变化时会保守停止，可检查后重试。
 
-Project Skills 的确定性预检失败会显示具体原因及路径，例如 `Project Skills: unsupported link or special file: .claude/skills/helper`。三个 Skill 根目录及其子路径中的符号链接/junction（包括 Git 已跟踪的链接）会阻断创建；不会跟随链接，也不会通过切换存储目录重试。重复点击创建不能解决此问题。
+Project Skills 的确定性预检失败会显示具体原因及路径，例如 `Project Skills: link escapes Git repository: .claude/skills/helper`。同一真实 Git 仓库内的链接会在 Managed Worktree 中快照物化为普通文件/目录，不会链接回 Local；仓库外、Git 元数据、循环、悬空或特殊文件目标会阻断创建。不会通过切换存储目录重试此类失败，应先检查具体诊断。
 
 在仓库根目录检查链接（只检查存在的目录，不展开链接）：
 
@@ -280,7 +280,7 @@ for dir in .dsh/skills .agents/skills .claude/skills; do
 done
 ```
 
-确认链接目标及所需内容后，手动移除不需要的链接，或将链接替换为普通文件/目录；不要直接删除目标内容。对于已跟踪的 Skill，将这些改动提交后再创建。若错误提示未提交的 tracked Skill 改动、读取权限或快照安全上限，也应先处理对应原因，而不是反复重试。Windows 可用 PowerShell 的 `Get-Item -Force <路径> | Select-Object FullName,LinkType,Target` 检查报错路径是否为 junction/reparse point。
+确认报错链接的目标及所需内容后，将所需目标保留在同一 Git 仓库内，或手动将不支持的链接替换为普通文件/目录；不要直接删除目标内容。已跟踪 Skill、其已跟踪目标及中间链接的改动需先提交后再创建。若错误提示未提交的 tracked Skill 改动、读取权限或快照安全上限，也应先处理对应原因，而不是反复重试。Windows 可用 PowerShell 的 `Get-Item -Force <路径> | Select-Object FullName,LinkType,Target` 检查报错路径是否为 junction/reparse point。
 
 ### 无法预览修改
 
@@ -346,8 +346,9 @@ DSH_HOME="$(mktemp -d -t dsh-worktree-test)" pnpm run dev:dsh -- --harness /User
 `.dsh` 和 `.agents` 继续使用 Host 默认加载器；`.claude` 通过上游文件系统 Skill provider 加载，仅作用于当前插件确认的 Managed Worktree。同名 Skill 的优先级是 `.dsh`、`.agents`、`.claude`，然后全局来源。
 
 - Local 中已跟踪 Skill 存在未提交修改、删除或与创建基线冲突时，先处理这些改动再创建；不会静默覆盖。
-- 携带的辅助文件及其 Skill 目录内新生成的未跟踪资源，不自动进入验收、checkpoint、预览或最终提交。已跟踪文件仍按正常 Git 规则交付；确实要交付辅助文件时，显式 `git add`（忽略文件需 `git add -f`）。
+- 普通携带辅助文件及其 Skill 目录内新生成的未跟踪资源，不自动进入验收、checkpoint、预览或最终提交。正常已跟踪改动仍可交付；确实要交付普通辅助文件时，显式 `git add`（忽略文件需 `git add -f`），但链接物化副本适用下述例外。
 - 修改、删除携带资源或产生未知资源后，清理会保留 Worktree，避免丢失这些未交付内容。复制中断也会保留恢复现场，不自动删除。
-- 只携带上述目录，不展开符号链接/junction 或项目外链接；文件上限 5000、总大小 64 MiB、目录检查上限 10000 项与 64 层。
+- Skill 根目录链接（目标须为目录）及其内部文件/目录链接，可以指向 Git 报告的真实仓库根内的目标，支持共享目标与多层链接；`.dsh`/`.agents`/`.claude` 父目录本身不能是链接。任何仓库外跳转、`.git`/Git 元数据、循环、悬空、特殊文件或不支持的路径均拒绝。物化展开副本合计文件上限 5000、总大小 64 MiB、检查上限 10000 项、目录/链接深度 64 层。
+- 链接副本是冻结的辅助快照，不是可写别名。链接物化造成的删除/新增不会进入交付，checkpoint 与最终提交仍保留原 tracked link 条目。修改、删除、暂存物化副本，向其内部新增资源/目录或更改权限，会明确阻止验收、交付和清理。请保留 Worktree，将预期改动移至 canonical 源文件并恢复副本后重试；暂存副本不是受支持的晋升方式。独立的已跟踪 canonical 源文件仍按普通规则交付；两份都改则阻止交付，不静默选边。下一轮重新快照当前 Local。
 
 复制使用 Node 文件 API，无需新增原生插件依赖。适用于可信本地项目；复制期间不要由其他进程替换或修改相关目录。路径检查不是针对恶意并发目录替换的原子隔离保证。

@@ -1,15 +1,19 @@
 import { createHash } from 'node:crypto'
 import { createSkillDirectories, createSkillFiles, readSkillFiles } from './project-skill-io.js'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readlink, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { snapshotSkillLinks, type SkillBoundary } from './project-skill-snapshot.js'
 import { join, resolve } from 'node:path'
 
 export const PROJECT_SKILL_ROOTS = ['.dsh/skills', '.agents/skills', '.claude/skills'] as const
 const MAX_FILES = 5000
 const MAX_BYTES = 64 * 1024 * 1024
 interface Entry { path: string; hash: string; mode: number }
-interface Manifest { version: 1; root: string; identity: string; phase: 'copying' | 'ready'; files: Entry[]; directories?: string[] }
-export interface SkillSnapshot { directories?: string[]; files: Array<Entry & { content: Buffer }> }
+interface SkillLink { path: string; target: string; entry?: string }
+interface Manifest { version: 1; root: string; identity: string; phase: 'copying' | 'ready'; files: Entry[]; directories?: string[]; links?: SkillLink[] }
+export interface SkillSnapshot { directories?: string[]; files: Array<Entry & { content: Buffer }>; links?: SkillLink[]; sourcePaths?: string[] }
+const beneath = (path: string, parent: string) => path === parent || path.startsWith(`${parent}/`)
+const safeLinkPath = (path: string) => (PROJECT_SKILL_ROOTS as readonly string[]).includes(path) || safePath(path)
 export interface CarriedSkillState { paths: string[]; fingerprint: string; modified: boolean }
 const digest = (data: string | Buffer) => createHash('sha256').update(data).digest('hex')
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -91,7 +95,7 @@ async function inventory(root: string, roots: readonly string[] = PROJECT_SKILL_
     files.push({ path: relative, maxBytes: stat.size })
   }
   await identity(root)
-  for (const rootPath of roots) await walk(rootPath, 0)
+  for (const rootPath of [...new Set(roots)].filter(path => !roots.some(other => other !== path && beneath(path, other)))) await walk(rootPath, 0)
   return (await readSkillFiles(root, rootIdentity, files)).map(file => ({ ...file, hash: digest(file.content) }))
 }
 
@@ -99,7 +103,8 @@ async function inventory(root: string, roots: readonly string[] = PROJECT_SKILL_
 export class ProjectSkillStore {
   constructor(private readonly directory: string) {}
   private file(root: string): string { return join(this.directory, `${digest(resolve(root))}.json`) }
-  async snapshot(source: string): Promise<SkillSnapshot> {
+  async snapshot(source: string, boundary?: SkillBoundary): Promise<SkillSnapshot> {
+    if (boundary) return snapshotSkillLinks(source, PROJECT_SKILL_ROOTS, boundary)
     const directories: string[] = []
     return { files: await inventory(source, PROJECT_SKILL_ROOTS, new Set(), directories), directories }
   }
@@ -114,6 +119,9 @@ export class ProjectSkillStore {
     const value = JSON.parse(raw) as Manifest
     if (value.version !== 1 || value.root !== await realpath(root) || value.identity !== await identity(root)
       || (value.directories !== undefined && (!Array.isArray(value.directories) || value.directories.length > 10000 || value.directories.some(path => typeof path !== 'string' || !safePath(`${path}/.directory-check`))))
+      || (value.links !== undefined && (!Array.isArray(value.links) || value.links.length > 10000
+        || value.links.some(link => !link || !safeLinkPath(link.path) || typeof link.target !== 'string'
+          || (link.entry !== undefined && (!/^120000 [0-9a-f]{40,64} 0\t/.test(link.entry) || link.entry.slice(link.entry.indexOf('\t') + 1) !== link.path)))))
       || value.phase !== 'ready' || !Array.isArray(value.files) || value.files.length > MAX_FILES
       || value.files.some(file => !file || typeof file.path !== 'string' || !safePath(file.path)
         || !/^[0-9a-f]{64}$/.test(file.hash) || !Number.isInteger(file.mode) || file.mode < 0 || file.mode > 0o777)
@@ -122,14 +130,30 @@ export class ProjectSkillStore {
   }
   async carry(snapshot: SkillSnapshot, target: string): Promise<void> {
     if (await this.load(target)) throw failure('Skill provenance already exists for this checkout')
-    if (!snapshot.files.length && !snapshot.directories?.length) return
+    if (!snapshot.files.length && !snapshot.directories?.length && !snapshot.links?.length) return
     const root = await realpath(target)
     const rootIdentity = await identity(target)
     const pending: SkillSnapshot['files'] = []
     const existing: SkillSnapshot['files'] = []
+    const links = snapshot.links ?? []
+    const replacing: SkillLink[] = []
+    for (const link of links) {
+      if (!safeLinkPath(link.path) || !link.target || links.some(other => other !== link && beneath(link.path, other.path))) throw failure('invalid or overlapping Skill links')
+      const parent = link.path.split('/').slice(0, -1).join('/')
+      if (parent && !await inspectPath(root, parent)) {
+        if (link.entry) throw failure(`checked-out Skill link is missing: ${link.path}`)
+        continue
+      }
+      try {
+        const stat = await lstat(join(root, link.path))
+        if (!stat.isSymbolicLink() || await readlink(join(root, link.path)) !== link.target) throw failure(`checked-out Skill link conflicts with snapshot: ${link.path}`)
+        replacing.push(link)
+      } catch (error) { if (!missing(error) || link.entry) throw error }
+    }
     // Complete conflict preflight before creating any auxiliary file.
     for (const file of snapshot.files) {
       if (!safePath(file.path) || digest(file.content) !== file.hash) throw failure('invalid Skill snapshot')
+      if (links.some(link => beneath(file.path, link.path))) { pending.push(file); continue }
       if (await inspectPath(root, file.path)) {
         if (!(await lstat(join(root, file.path))).isFile()) throw failure(`local Skill conflicts with checked-out content: ${file.path}`)
         existing.push(file)
@@ -142,15 +166,22 @@ export class ProjectSkillStore {
     const directories: string[] = []
     for (const directory of snapshot.directories ?? []) {
       if (!safePath(`${directory}/.directory-check`)) throw failure('invalid Skill directory')
-      if (!await inspectPath(root, directory)) directories.push(directory)
+      if (links.some(link => beneath(directory, link.path)) || !await inspectPath(root, directory)) directories.push(directory)
       else if (!(await lstat(join(root, directory))).isDirectory()) throw failure(`Skill directory conflicts with a file: ${directory}`)
     }
-    if (!pending.length && !directories.length) return
-    const manifest: Manifest = { version: 1, root, identity: rootIdentity, phase: 'copying', directories, files: pending.map(({ content: _, ...file }) => file) }
+    if (!pending.length && !directories.length && !links.length) return
+    const manifest: Manifest = { version: 1, root, identity: rootIdentity, phase: 'copying', directories, links, files: pending.map(({ content: _, ...file }) => file) }
     await mkdir(this.directory, { recursive: true })
     const manifestPath = this.file(target)
     // Exclusive publication prevents an earlier uncertain attempt from being overwritten.
     await writeFile(manifestPath, JSON.stringify(manifest), { flag: 'wx', mode: 0o600 })
+    for (const link of replacing) {
+      if (rootIdentity !== await identity(target)) throw failure('checkout changed before Skill materialization')
+      await inspectPath(root, link.path.split('/').slice(0, -1).join('/'))
+      const path = join(root, link.path)
+      if (!(await lstat(path)).isSymbolicLink() || await readlink(path) !== link.target) throw failure(`Skill link changed before materialization: ${link.path}`)
+      await unlink(path)
+    }
     await createSkillDirectories(root, rootIdentity, directories)
     await createSkillFiles(root, rootIdentity, pending)
     const copied = await readSkillFiles(root, rootIdentity, pending.map(file => ({ path: file.path, maxBytes: file.content.length })))
@@ -165,13 +196,13 @@ export class ProjectSkillStore {
   }
   async scope(root: string): Promise<{ paths: string[]; directories: string[] } | null> {
     const manifest = await this.load(root)
-    return manifest ? { paths: manifest.files.map(file => file.path), directories: ownedSkillDirectories(manifest.files, manifest.directories) } : null
+    return manifest ? { paths: manifest.files.map(file => file.path), directories: [...ownedSkillDirectories(manifest.files, manifest.directories), ...(manifest.links ?? []).map(link => link.path)] } : null
   }
   async paths(root: string): Promise<string[] | null> { return (await this.scope(root))?.paths ?? null }
   async state(root: string, tracked: ReadonlySet<string> = new Set()): Promise<CarriedSkillState | null> {
     const manifest = await this.load(root)
     if (!manifest) return null
-    const files = manifest.files.filter(file => !tracked.has(file.path))
+    const files = manifest.files.filter(file => !tracked.has(file.path) || manifest.links?.some(link => beneath(file.path, link.path)))
     const hashes: string[] = []
     let modified = false
     const roots = [...ownedSkillDirectories(manifest.files, manifest.directories), ...files.filter(file => file.path.split('/').length === 3).map(file => file.path)]
@@ -180,7 +211,8 @@ export class ProjectSkillStore {
       modified ||= !present
       hashes.push(`${directory} ${present ? 'directory' : 'missing'}`)
     }
-    const current = await inventory(root, [...new Set(roots)], tracked)
+    const ignoredTracked = new Set([...tracked].filter(path => !manifest.links?.some(link => beneath(path, link.path))))
+    const current = await inventory(root, [...new Set([...roots, ...(manifest.links ?? []).map(link => link.path)])], ignoredTracked)
     const currentByPath = new Map(current.map(file => [file.path, file]))
     for (const file of files) {
       const observed = currentByPath.get(file.path)
@@ -199,7 +231,40 @@ export class ProjectSkillStore {
     }
     return { paths, fingerprint: digest(hashes.join('\0')), modified }
   }
+  /** Freeze aliases and restore only exact, provenance-backed tracked links in a temporary index. */
+  async projection(root: string, index: Buffer | string, head: Buffer | string): Promise<{ remove: string[]; restore: string[]; links: string[] } | null> {
+    const manifest = await this.load(root)
+    if (!manifest) return null
+    const tracked = trackedSkillPaths(index, head)
+    const state = await this.state(root, tracked)
+    const linkPaths = (manifest.links ?? []).map(link => link.path)
+    const entries = new Set(index.toString().split('\0').filter(Boolean))
+    const headEntries = new Set(head.toString().split('\0').filter(Boolean))
+    for (const link of manifest.links ?? []) {
+      const treeEntry = link.entry?.replace(' 0\t', '\t').replace('120000 ', '120000 blob ')
+      if (link.entry && (!entries.has(link.entry) || !headEntries.has(treeEntry!))) throw failure(`tracked Skill link/index changed; retain checkout and resolve explicitly: ${link.path}`)
+      if ([...headEntries].some(entry => beneath(entry.slice(entry.indexOf('\t') + 1), link.path) && entry !== treeEntry)) throw failure(`materialized Skill HEAD changed; retain checkout and resolve explicitly: ${link.path}`)
+      if ([...entries].some(entry => beneath(entry.slice(entry.indexOf('\t') + 1), link.path) && entry !== link.entry)) throw failure(`materialized Skill was staged; retain checkout and resolve explicitly: ${link.path}`)
+    }
+    await this.assertFrozenLinks(root, manifest)
+    return { remove: state?.paths ?? [], restore: (manifest.links ?? []).flatMap(link => link.entry ? [link.entry] : []), links: linkPaths }
+  }
+  private async assertFrozenLinks(root: string, manifest: Manifest): Promise<void> {
+    for (const link of manifest.links ?? []) {
+      const expected = manifest.files.filter(file => beneath(file.path, link.path))
+      const emptyDirectories: string[] = []
+      const current = await inventory(root, [link.path], new Set(), emptyDirectories)
+      const expectedDirectories = (manifest.directories ?? []).filter(path => beneath(path, link.path))
+      if (emptyDirectories.length !== expectedDirectories.length || emptyDirectories.some(path => !expectedDirectories.includes(path))) throw failure(`materialized Skill directories changed: ${link.path}`)
+      if (current.length !== expected.length || current.some(file => !expected.some(before => before.path === file.path && before.hash === file.hash && before.mode === file.mode))) throw failure(`materialized Skill snapshot changed; retain checkout and edit canonical source instead: ${link.path}`)
+      for (const directory of manifest.directories ?? []) {
+        if (beneath(directory, link.path) && (!await inspectPath(root, directory) || !(await lstat(join(root, directory))).isDirectory())) throw failure(`materialized Skill directory changed: ${directory}`)
+      }
+    }
+  }
   async assertRemovable(root: string, tracked: ReadonlySet<string>): Promise<void> {
+    const manifest = await this.load(root)
+    if (manifest) await this.assertFrozenLinks(root, manifest)
     const state = await this.state(root, tracked)
     if (!state) return
     if (state.modified) throw failure('carried Skills were modified; retain this Worktree to preserve them')
@@ -212,19 +277,22 @@ export class ProjectSkillStore {
 }
 
 export function trackedSkillPaths(indexEntries: Buffer | string, headPaths: Buffer | string = ''): Set<string> {
-  const result = new Set(headPaths.toString().split('\0').filter(Boolean))
+  const result = new Set(headPaths.toString().split('\0').filter(Boolean).map(entry => entry.includes('\t') ? entry.slice(entry.indexOf('\t') + 1) : entry))
   for (const entry of indexEntries.toString().split('\0')) {
     const tab = entry.indexOf('\t')
     if (tab >= 0) result.add(entry.slice(tab + 1))
   }
   return result
 }
-/** Only ?? records are auxiliary; tracked edits, renames and deletions stay visible. */
-export function hasDeliverableStatus(output: string, auxiliary: ReadonlySet<string>, directories: readonly string[] = []): boolean {
+/** Only auxiliary ?? and validated materialization records are hidden. */
+export function hasDeliverableStatus(output: string, auxiliary: ReadonlySet<string>, directories: readonly string[] = [], materialized: ReadonlySet<string> = new Set()): boolean {
   const entries = output.split('\0')
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]!
     if (!entry) continue
+    // Exact unchanged provenance-backed type/deletion records only. Renames,
+    // staged changes and ordinary tracked edits are never directory-excluded.
+    if ((entry.startsWith(' D ') || entry.startsWith(' T ')) && materialized.has(entry.slice(3))) continue
     if (!entry.startsWith('?? ')) return true
     const path = entry.slice(3)
     if (!auxiliary.has(path) && !directories.some(directory => path.startsWith(`${directory}/`))) return true

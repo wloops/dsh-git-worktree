@@ -250,7 +250,7 @@ Common causes include an inaccessible project root, Git failure, unknown content
 
 If the Git repository has no commits yet, the Worktree toggle first shows a preflight confirmation. On confirmation the plugin creates an empty initial commit only: working-tree files and staged content are excluded, and Git identity is never configured or rewritten automatically. If repository state changes while confirmation is open, creation stops conservatively and can be retried after inspection.
 
-A deterministic Project Skills preflight failure reports its cause and path, for example `Project Skills: unsupported link or special file: .claude/skills/helper`. Symlinks/junctions at or beneath the three Skill roots block creation, including Git-tracked links. Links are not followed, and switching storage containers is not retried for this failure. Clicking Create again will not resolve it.
+A deterministic Project Skills preflight failure reports its cause and path, for example `Project Skills: link escapes Git repository: .claude/skills/helper`. Links within the same real Git repository are snapshotted into ordinary files/directories in the Managed Worktree, never linked back to Local. External, Git-metadata, cyclic, dangling and special-file targets block creation. Switching storage containers is not retried for this failure; inspect the diagnostic before retrying.
 
 Check for links from the repository root (existing paths only, without following links):
 
@@ -260,7 +260,7 @@ for dir in .dsh/skills .agents/skills .claude/skills; do
 done
 ```
 
-Inspect the link target and required content, then manually remove an unwanted link or replace it with regular files/directories; do not delete the target content. Commit changes to tracked Skills before creating again. Likewise, resolve diagnostics about uncommitted tracked Skill changes, read permissions, or snapshot safety limits before retrying. On Windows, inspect the reported path for junctions/reparse points with PowerShell: `Get-Item -Force <path> | Select-Object FullName,LinkType,Target`.
+Inspect the reported link target and required content. Keep required targets inside the Git repository, or manually replace an unsupported link with regular files/directories; do not delete target content. Commit changes to tracked Skills and their tracked link targets/intermediate links before creating again. Likewise, resolve diagnostics about uncommitted tracked Skill changes, read permissions, or snapshot safety limits before retrying. On Windows, inspect the reported path for junctions/reparse points with PowerShell: `Get-Item -Force <path> | Select-Object FullName,LinkType,Target`.
 
 ### Preview changes is unavailable
 
@@ -333,8 +333,9 @@ The first Managed Worktree and each new iteration take a one-time copy of the Lo
 `.dsh` and `.agents` keep the Host's default loader. `.claude` uses the upstream filesystem Skill provider, scoped to verified Managed Worktrees. Same-name priority is `.dsh`, `.agents`, `.claude`, then global sources.
 
 - Resolve uncommitted tracked Skill edits, deletions, or creation-baseline conflicts before creation; different content is never silently overwritten.
-- Carried auxiliary files and newly generated untracked resources inside their Skill directories are excluded from automatic review/checkpoint/preview/final commits. Tracked changes retain normal Git semantics. Explicitly stage auxiliary files to deliver them (`git add -f` for ignored files).
+- Ordinary carried auxiliary files and newly generated untracked resources inside their Skill directories are excluded from automatic review/checkpoint/preview/final commits. Normal tracked changes remain deliverable. Explicitly stage ordinary auxiliary files to deliver them (`git add -f` for ignored files); materialized link copies are the exception below.
 - Modified/deleted carried resources or unknown resources prevent cleanup from discarding the Worktree. Interrupted copies also retain recovery evidence instead of automatically deleting it.
-- Only the three listed roots are supported. Symlinks/junctions and external links are rejected. Limits: 5000 files, 64 MiB total, 10000 inspected entries, and 64 directory levels.
+- Links at a Skill root (directory targets only) and beneath it (file/directory targets) may resolve within the Git-reported real repository root, including shared and multi-hop targets. The `.dsh`/`.agents`/`.claude` parent itself cannot be a link. Any external hop, `.git`/Git metadata, cycle, dangling link, special file or unsupported path is rejected. Limits include expanded copies: 5000 files, 64 MiB total, 10000 inspected entries, 64 directory/link levels.
+- Link copies are frozen auxiliary snapshots, not writable aliases. No link-expansion deletion/addition noise is delivered; original tracked link entries remain in Git across checkpoint and finalization. Editing/deleting/staging a materialized copy, adding resources/directories within it, or changing its mode blocks review/delivery and cleanup with a diagnostic. Retain the Worktree and move intended changes to the canonical source before retrying; staging copies is not a supported promotion workflow. Canonical tracked source files remain independent normal deliverable files; editing both copies blocks delivery rather than silently choosing one. Each next iteration snapshots current Local again.
 
 Copying uses Node file APIs and requires no new native plugin dependency. This is intended for trusted local projects: do not replace or modify these directories from another process while copying. Path checks do not provide atomic containment against malicious concurrent directory replacement.

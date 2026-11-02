@@ -41,7 +41,7 @@ export async function readSkillFiles(root: string, identity: string, files: read
   for (const file of files) {
     await checkRoot(root, identity)
     await checkPath(root, file.path)
-    const handle = await open(join(root, file.path), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    const handle = await open(join(root, file.path), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
     try {
       const stat = await handle.stat({ bigint: true })
       const pathStat = await lstat(join(root, file.path), { bigint: true })
@@ -55,6 +55,11 @@ export async function readSkillFiles(root: string, identity: string, files: read
         size += bytesRead
       }
       if (size > limit) throw new Error('Project Skills: file exceeds size limit')
+      await checkPath(root, file.path)
+      const after = await handle.stat({ bigint: true })
+      const named = await lstat(join(root, file.path), { bigint: true })
+      if (size !== Number(stat.size) || after.size !== stat.size || after.mtimeNs !== stat.mtimeNs || after.ctimeNs !== stat.ctimeNs
+        || named.isSymbolicLink() || named.dev !== stat.dev || named.ino !== stat.ino || named.mode !== stat.mode) throw new Error(`Project Skills: file changed during read: ${file.path}`)
       remaining -= size
       result.push({ path: file.path, content: buffer.subarray(0, size), mode: Number(stat.mode & 0o777n) })
     } finally { await handle.close() }

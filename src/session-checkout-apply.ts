@@ -566,9 +566,11 @@ async function captureSnapshot(
   await runGit(checkoutPath, ['add', '-A', '--', '.'], { env })
   let carried: Awaited<ReturnType<ProjectSkillStore['state']>> = null
   if (await projectSkills?.paths(checkoutPath)) {
-    const headPaths = (await runGit(checkoutPath, ['ls-tree', '-r', '--name-only', '-z', headOid])).stdout
+    const headPaths = (await runGit(checkoutPath, ['ls-tree', '-r', '-z', headOid])).stdout
+    const projection = await projectSkills!.projection(checkoutPath, indexEntries, headPaths)
     carried = await projectSkills!.state(checkoutPath, trackedSkillPaths(indexEntries, headPaths))
-    if (carried?.paths.length) await runGit(checkoutPath, ['update-index', '--force-remove', '-z', '--stdin'], { env, input: Buffer.from(carried.paths.join('\0') + '\0') })
+    if (projection?.remove.length) await runGit(checkoutPath, ['update-index', '--force-remove', '-z', '--stdin'], { env, input: Buffer.from(projection.remove.join('\0') + '\0') })
+    if (projection?.restore.length) await runGit(checkoutPath, ['update-index', '-z', '--index-info'], { env, input: Buffer.from(projection.restore.join('\0') + '\0') })
   }
   const treeOid = stdoutText(await runGit(checkoutPath, ['write-tree'], { env }))
   const primaryFingerprint = snapshotFingerprint(headOid, headRef, indexEntries, treeOid)

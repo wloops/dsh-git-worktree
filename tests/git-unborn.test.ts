@@ -2,7 +2,7 @@ import { createNodeSessionCheckoutDependencies } from './support/production-adap
 import { createSessionCheckoutModule } from '../src/session-checkout-module.js'
 import { createWorktreeConsoleControlPlane } from '../src/console-host/control-plane.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile, readFile, rename, realpath, symlink, readdir } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, readFile, rename, realpath, symlink, readdir, lstat, readlink, chmod } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -309,6 +309,20 @@ it.skipIf(process.platform !== 'win32')('creates long-path Windows checkouts on 
   expect(git(repo, ['status', '--porcelain']).stdout).toBe('')
 }, 120_000)
 
+it('keeps raw first-record working edits, NUL renames and deletions visible in production status', async () => {
+  const { repo, port } = await fixture()
+  await writeFile(join(repo, 'a.txt'), 'base'); await writeFile(join(repo, 'b.txt'), 'base')
+  git(repo, ['add', '.']); git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'base'])
+  expect(await port.status(repo)).toEqual({ dirty: false })
+  await writeFile(join(repo, 'a.txt'), 'edit')
+  expect(await port.status(repo)).toEqual({ dirty: true })
+  git(repo, ['restore', '--', 'a.txt'])
+  git(repo, ['mv', 'a.txt', 'renamed space.txt'])
+  expect(await port.status(repo)).toEqual({ dirty: true })
+  git(repo, ['reset', '--hard', 'HEAD']); await rm(join(repo, 'a.txt'))
+  expect(await port.status(repo)).toEqual({ dirty: true })
+})
+
 it('carries ignored project Skill resources on creation without making the checkout dirty', async () => {
   const { root, repo, port } = await fixture()
   git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base'])
@@ -441,7 +455,7 @@ it.skipIf(process.platform === 'win32').each(['tracked', 'untracked', 'skill-roo
   await mkdir(dirname(join(repo, link)), { recursive: true })
   await mkdir(join(repo, '.agents/skills/helper'), { recursive: true })
   await writeFile(join(repo, '.agents/skills/helper/SKILL.md'), 'keep\n')
-  await symlink(kind === 'skill-root' ? '../.agents/skills' : '../../.agents/skills/helper', join(repo, link))
+  await symlink(root, join(repo, link))
   if (kind === 'tracked') expect(git(repo, ['add', '.']).status).toBe(0)
   expect(git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base']).status).toBe(0)
   const before = git(repo, ['status', '--porcelain=v1', '-uall']).stdout
@@ -459,7 +473,7 @@ it.skipIf(process.platform === 'win32').each(['tracked', 'untracked', 'skill-roo
   hooks.beforeCommand = args => { commands.push(args) }
   const module = createSessionCheckoutModule(deps)
   await expect(module.createIsolatedTarget('source', 'target')).rejects.toMatchObject({
-    code: 'git_operation_failed', message: `Project Skills: unsupported link or special file: ${link}`,
+    code: 'git_operation_failed', message: `Project Skills: link escapes Git repository: ${link}`,
   })
   expect(snapshot).toHaveBeenCalledTimes(1)
   expect(create).toHaveBeenCalledTimes(1)
@@ -475,6 +489,127 @@ it.skipIf(process.platform === 'win32').each(['tracked', 'untracked', 'skill-roo
   expect(git(repo, ['worktree', 'list', '--porcelain']).stdout.match(/^worktree /gm)).toHaveLength(1)
   expect(git(repo, ['status', '--porcelain=v1', '-uall']).stdout).toBe(before)
   expect(await readFile(join(repo, '.agents/skills/helper/SKILL.md'), 'utf8')).toBe('keep\n')
+})
+
+it.skipIf(process.platform === 'win32').each(['tracked', 'untracked'])('materializes %s internal links without lifecycle noise and preserves canonical edits', async kind => {
+  const { root, repo, port } = await fixture()
+  git(repo, ['config', 'user.name', 'Test']); git(repo, ['config', 'user.email', 'test@example.test'])
+  await mkdir(join(repo, 'canonical/helper'), { recursive: true })
+  await writeFile(join(repo, 'canonical/helper/SKILL.md'), 'canonical v1\n')
+  await writeFile(join(repo, 'canonical/helper/data'), 'shared\n')
+  await mkdir(join(repo, 'canonical/empty'))
+  await writeFile(join(repo, 'app.txt'), 'base\n')
+  await mkdir(join(repo, '.agents/skills'), { recursive: true }); await mkdir(join(repo, '.claude'))
+  const links = [
+    ['.agents/skills/a', '../../canonical/helper'],
+    ['.agents/skills/b', 'a'],
+    ['.agents/skills/file', '../../canonical/helper/data'],
+    ['.agents/skills/absolute', join(repo, 'canonical/helper')],
+    ['.agents/skills/empty', '../../canonical/empty'],
+    ['.claude/skills', '../.agents/skills'],
+  ]
+  for (const [path, target] of links) await symlink(target!, join(repo, path!))
+  git(repo, ['add', kind === 'tracked' ? '.' : 'canonical', 'app.txt']); git(repo, ['commit', '-m', 'base'])
+  const baseOid = git(repo, ['rev-parse', 'HEAD']).stdout.trim()
+  const before = git(repo, ['status', '--porcelain=v1', '-uall']).stdout
+  const localIndex = await readFile(join(repo, '.git/index'))
+  const projectSkills = new ProjectSkillStore(join(root, 'project-skills'))
+  const engine = createSessionCheckoutApplyEngine({ projectSkills })
+  let targetRoot: string | undefined
+  const deps = createNodeSessionCheckoutDependencies({ configDir: join(root, 'config'), lookup: {
+    getSession: id => id === 'source' ? { id, projectId: 'project' } : targetRoot ? { id, projectId: 'managed' } : undefined,
+    getProject: id => ({ id, name: id, root: id === 'project' ? repo : targetRoot! }),
+    getUnboundTargetPolicy: () => 'unselected',
+  } })
+  deps.git = port; deps.applyEngine = engine
+  const module = createSessionCheckoutModule(deps)
+  targetRoot = (await module.createIsolatedTarget('source', 'target')).managedRoot
+  for (const [path] of links) expect((await lstat(join(targetRoot, path!))).isSymbolicLink()).toBe(false)
+  expect(await readFile(join(targetRoot, '.claude/skills/b/SKILL.md'), 'utf8')).toBe('canonical v1\n')
+  expect(await port.status(targetRoot)).toEqual({ dirty: false })
+  expect(git(repo, ['status', '--porcelain=v1', '-uall']).stdout).toBe(before)
+  expect(await readFile(join(repo, '.git/index'))).toEqual(localIndex)
+  for (const [path, target] of links) expect(await readlink(join(repo, path!))).toBe(target)
+  const input = { baseOid, localPath: repo, isolatedPath: targetRoot }
+  // Alias edits are explicitly blocked, never silently delivered or cleaned.
+  const alias = join(targetRoot, '.agents/skills/a/data')
+  await writeFile(alias, 'do not discard\n')
+  expect(await engine.inspectReview(input)).toMatchObject({ status: 'error', error: { message: expect.stringContaining('materialized Skill snapshot changed') } })
+  await expect(port.removeWorktree(repo, targetRoot)).rejects.toThrow(/snapshot changed/)
+  await writeFile(join(targetRoot, 'canonical/helper/data'), 'both edited\n')
+  expect(await engine.inspectReview(input)).toMatchObject({ status: 'error' })
+  await writeFile(join(targetRoot, 'canonical/helper/data'), 'shared\n')
+  await rm(alias)
+  await expect(port.status(targetRoot)).rejects.toThrow(/snapshot changed/)
+  await writeFile(alias, 'shared\n')
+  await chmod(alias, 0o755)
+  await expect(port.status(targetRoot)).rejects.toThrow(/snapshot changed/)
+  await chmod(alias, 0o644)
+  await mkdir(join(targetRoot, '.agents/skills/a/new-empty'))
+  await expect(port.status(targetRoot)).rejects.toThrow(/directories changed/)
+  await rm(join(targetRoot, '.agents/skills/a/new-empty'), { recursive: true })
+  git(targetRoot, ['add', '-A', '--', '.agents/skills/a'])
+  await expect(port.status(targetRoot)).rejects.toThrow(/index changed|was staged/)
+  git(targetRoot, ['reset', '--', '.agents/skills/a'])
+  await writeFile(join(targetRoot, 'canonical/helper/data'), 'canonical v2\n')
+  await writeFile(join(targetRoot, 'app.txt'), 'changed\n')
+  expect(await port.status(targetRoot)).toEqual({ dirty: true })
+  const review = await engine.inspectReview(input)
+  if (review.status !== 'ready') throw new Error(JSON.stringify(review))
+  expect(review.changedFiles).toEqual(['app.txt', 'canonical/helper/data'])
+  const checkpoint = await engine.checkpoint({ isolatedPath: targetRoot, expectedFingerprint: review.isolatedFingerprint, expectedHeadOid: review.isolatedHeadOid, commitMessage: 'checkpoint' })
+  expect(checkpoint.status).toBe('checkpointed')
+  expect(await port.status(targetRoot)).toEqual({ dirty: false })
+  if (kind === 'tracked') expect(git(targetRoot, ['ls-files', '--stage', '--', '.agents/skills/a']).stdout).toMatch(/^120000 /)
+  expect((await lstat(join(targetRoot, '.agents/skills/empty'))).isDirectory()).toBe(true)
+  const ready = await module.markReadyForReview('target', { summary: 'links', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'links' })
+  if (ready.delivery?.state !== 'ready_for_review') throw new Error(JSON.stringify(ready))
+  const diff = await createGitWorktreeReviewDiffReader(projectSkills).read({ managedRoot: targetRoot, baseOid, reviewId: ready.delivery.review.reviewId, revision: ready.revision, changedFiles: review.changedFiles })
+  expect(diff.files.map(file => file.path)).toEqual(['app.txt', 'canonical/helper/data'])
+  const preview = await module.operate({ action: 'preview', sessionId: 'target', expectedRevision: ready.revision })
+  if (preview.status !== 'previewed') throw new Error(JSON.stringify(preview))
+  for (const [path, target] of links) expect(await readlink(join(repo, path!))).toBe(target)
+  const saved = await module.operate({ action: 'finalize_preview', sessionId: 'target', expectedRevision: preview.target.revision, commitMessage: 'links', retention: 'cleanup' })
+  if (saved.status !== 'finished') throw new Error(JSON.stringify(saved))
+  expect(saved.cleanup).toBe('discarded')
+  await module.beginNextIteration('target', saved.target.revision)
+  expect(await readFile(join(targetRoot, '.agents/skills/a/data'), 'utf8')).toBe('canonical v2\n')
+  expect(await port.status(targetRoot)).toEqual({ dirty: false })
+})
+
+it.skipIf(process.platform === 'win32').each(['external', 'dangling', 'cycle', 'metadata', 'escape-hop', 'directory-cycle', 'special'])('rejects %s internal-link hazards before worktree mutation', async kind => {
+  const { root, repo, port } = await fixture()
+  await mkdir(join(repo, '.agents/skills'), { recursive: true })
+  git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base'])
+  const link = join(repo, '.agents/skills/link')
+  if (kind === 'external') await symlink(root, link)
+  if (kind === 'dangling') await symlink('../../missing', link)
+  if (kind === 'cycle') await symlink('link', link)
+  if (kind === 'metadata') await symlink('../../.git', link)
+  if (kind === 'escape-hop') { await symlink(root, join(repo, 'hop')); await symlink('../../hop/repo', link) }
+  if (kind === 'directory-cycle') { await mkdir(join(repo, 'shared')); await symlink('.', join(repo, 'shared/self')); await symlink('../../shared', link) }
+  if (kind === 'special') { expect(spawnSync('mkfifo', [join(repo, 'fifo')]).status).toBe(0); await symlink('../../fifo', link) }
+  const before = git(repo, ['status', '--porcelain=v1', '-uall']).stdout
+  const managed = join(root, 'managed')
+  await expect(port.createDetachedWorktree(repo, managed, git(repo, ['rev-parse', 'HEAD']).stdout.trim())).rejects.toThrow(/Project Skills:/)
+  await expect(lstat(managed)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(git(repo, ['status', '--porcelain=v1', '-uall']).stdout).toBe(before)
+})
+
+it.skipIf(process.platform === 'win32')('rejects dirty canonical tracked targets and intermediate tracked links before creating', async () => {
+  const { root, repo, port } = await fixture()
+  await mkdir(join(repo, '.agents/skills'), { recursive: true }); await mkdir(join(repo, 'canonical'))
+  await writeFile(join(repo, 'canonical/SKILL.md'), 'base')
+  await symlink('canonical', join(repo, 'intermediate'))
+  await symlink('../../intermediate', join(repo, '.agents/skills/helper'))
+  git(repo, ['add', '.']); git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'base'])
+  const head = git(repo, ['rev-parse', 'HEAD']).stdout.trim()
+  await writeFile(join(repo, 'canonical/SKILL.md'), 'local edit')
+  await expect(port.createDetachedWorktree(repo, join(root, 'target'), head)).rejects.toThrow(/tracked Skill changes.*canonical/)
+  git(repo, ['restore', '--', 'canonical/SKILL.md'])
+  await rm(join(repo, 'intermediate')); await symlink('canonical/.', join(repo, 'intermediate'))
+  await expect(port.createDetachedWorktree(repo, join(root, 'target'), head)).rejects.toThrow(/tracked Skill changes.*intermediate/)
+  expect(git(repo, ['worktree', 'list', '--porcelain']).stdout.match(/^worktree /gm)).toHaveLength(1)
 })
 
 it('preserves an evidenced checkout and Local when Skill carrying is interrupted after creation', async () => {

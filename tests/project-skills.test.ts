@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { ProjectSkillStore } from '../src/adapters/project-skills.js'
+import { ProjectSkillStore, hasDeliverableStatus, trackedSkillPaths } from '../src/adapters/project-skills.js'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
@@ -17,6 +17,25 @@ async function fixture() {
   await writeFile(join(source, path), 'original')
   return { root, source, target, state, path, store: new ProjectSkillStore(state) }
 }
+it('parses index and full HEAD NUL records without turning tracked paths into exclusions', () => {
+  const oid = 'a'.repeat(40)
+  const path = '.agents/skills/tracked/SKILL.md'
+  const link = '.claude/skills/helper'
+  expect([...trackedSkillPaths(`120000 ${oid} 0\t${link}\0`, `100644 blob ${oid}\t${path}\0`)].sort()).toEqual([path, link].sort())
+  expect([...trackedSkillPaths('', `${path}\0`)]).toEqual([path])
+})
+it('preserves first-record spaces and NUL rename records while suppressing only validated link noise', () => {
+  const link = '.agents/skills/helper'
+  const auxiliary = new Set([`${link}/SKILL.md`])
+  const links = new Set([link])
+  expect(hasDeliverableStatus(` D ${link}\0?? ${link}/SKILL.md\0`, auxiliary, [link], links)).toBe(false)
+  expect(hasDeliverableStatus(` T ${link}\0 M app.txt\0`, auxiliary, [link], links)).toBe(true)
+  expect(hasDeliverableStatus(` M ${link}\0`, auxiliary, [link], links)).toBe(true)
+  expect(hasDeliverableStatus(`D  ${link}\0`, auxiliary, [link], links)).toBe(true)
+  expect(hasDeliverableStatus(`R  ${link}/new\0${link}/old\0`, auxiliary, [link], links)).toBe(true)
+  expect(hasDeliverableStatus(`?? ${link}-outside/file\0`, auxiliary, [link], links)).toBe(true)
+})
+
 it('persists exact auxiliary provenance across restart and detects edits and deletions', async () => {
   const { source, target, state, path, store } = await fixture()
   for (const name of ['.dsh', '.claude']) {

@@ -1,4 +1,4 @@
-import { type ProjectSkillStore, trackedSkillPaths } from '../adapters/project-skills.js'
+import { type ProjectSkillStore } from '../adapters/project-skills.js'
 import { hostMessage } from '../i18n/host.js'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
@@ -143,12 +143,12 @@ export function createGitWorktreeReviewDiffReader(projectSkills?: ProjectSkillSt
         await git(input.managedRoot, ['add', '-A', '--', '.'], env, 16 * 1024)
         if (await projectSkills?.paths(input.managedRoot)) {
           const index = await git(input.managedRoot, ['ls-files', '--stage', '-z'], process.env, 4 * 1024 * 1024)
-          const head = await git(input.managedRoot, ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], process.env, 4 * 1024 * 1024)
+          const head = await git(input.managedRoot, ['ls-tree', '-r', '-z', 'HEAD'], process.env, 4 * 1024 * 1024)
           if (index.truncated || head.truncated) throw new Error('Skill tracking inventory exceeds the safe read budget')
-          const carried = await projectSkills!.state(input.managedRoot, trackedSkillPaths(index.stdout, head.stdout))
+          const projection = await projectSkills!.projection(input.managedRoot, index.stdout, head.stdout)
           let batch: string[] = []
           let length = 0
-          for (const path of carried?.paths ?? []) {
+          for (const path of projection?.remove ?? []) {
             if (length + path.length > 4000 && batch.length) {
               await git(input.managedRoot, ['update-index', '--force-remove', '--', ...batch], env, 16 * 1024)
               batch = []; length = 0
@@ -156,6 +156,12 @@ export function createGitWorktreeReviewDiffReader(projectSkills?: ProjectSkillSt
             batch.push(path); length += path.length + 3
           }
           if (batch.length) await git(input.managedRoot, ['update-index', '--force-remove', '--', ...batch], env, 16 * 1024)
+          // Restore individual link entries without touching the user's real index.
+          for (const entry of projection?.restore ?? []) {
+            const tab = entry.indexOf('\t')
+            const [mode, oid] = entry.slice(0, tab).split(' ')
+            await git(input.managedRoot, ['update-index', '--add', '--cacheinfo', mode!, oid!, entry.slice(tab + 1)], env, 16 * 1024)
+          }
         }
         const names = await git(
           input.managedRoot,
