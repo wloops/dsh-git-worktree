@@ -208,7 +208,7 @@ When the web UI shows **Failed to load plugins**, inspect the detailed error and
 - `require("@deepseek-ai/dsh-client-runtime/client") missed the module table` means the plugin is still `0.7.2` or older, while Harness `0.1.2-rc.1` and later removed `dsh-client-runtime`.
 - `dsh-git-worktree` waiting for `conversation` while the official Conversation/Sidebar plugins wait for `uiWorkspace` identifies the `0.7.3` Client activation cycle.
 
-The activation-cycle fix starts in `0.7.4`. Match exact Host versions: DSH `0.2.1-rc.2` uses plugin `0.11.0`, while DSH `0.2.0-rc.2` uses `0.10.0`; see the [compatibility matrix](COMPATIBILITY.md#english) for historical `0.1.x` support. Do not bypass peer version checks. The following example is only for the historical DSH `0.2.0-rc.2` combination; fully restart Harness after installation:
+The activation-cycle fix starts in `0.7.4`. Development DSH peers now use a minimum of `>=0.2.1-rc.2`, not one exact RC. Published `0.11.0` still requires exact `0.2.1-rc.2`; DSH `0.2.0-rc.2` can use historical plugin `0.10.0`; see the [compatibility matrix](COMPATIBILITY.md#english) for historical `0.1.x` support. Do not bypass peer version checks. The following example is only for the historical DSH `0.2.0-rc.2` combination; fully restart Harness after installation:
 
 ```bash
 dsh plugin --profile web add dsh-git-worktree@0.10.0

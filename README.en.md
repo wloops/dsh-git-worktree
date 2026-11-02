@@ -1,5 +1,7 @@
 # dsh-git-worktree
 
+> Development installation policy: DSH peers use a minimum of `>=0.2.1-rc.2`, with no speculative upper bound; requirements change when breaking changes are confirmed. Build dependencies and embedded Browser sources remain exact. Unknown Hosts retain the official Workspace rather than reusing an unverified derivative. Installation permission is not acceptance evidence. Standard SemVer includes later RCs of the same `0.2.1` core; prereleases of other future cores are not matched by default. Exact peer constraints below describe historical published releases.
+
 [![npm](https://img.shields.io/npm/v/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![CI](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml/badge.svg)](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml)

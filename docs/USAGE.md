@@ -208,7 +208,7 @@ Web 界面显示 **Failed to load plugins** 时，先检查错误详情和已安
 - 报错包含 `require("@deepseek-ai/dsh-client-runtime/client") missed the module table`：当前仍是 `0.7.2` 或更早版本，而 Harness `0.1.2-rc.1` 起已移除 `dsh-client-runtime`。
 - 报错显示 `dsh-git-worktree` 等待 `conversation`，同时官方 Conversation/Sidebar 等待 `uiWorkspace`：当前是 `0.7.3` 的 Client 启动循环依赖。
 
-上述启动环修复始于 `0.7.4`；请按精确版本匹配 Host：DSH `0.2.1-rc.2` 使用插件 `0.11.0`，DSH `0.2.0-rc.2` 使用 `0.10.0`；旧版 `0.1.x` 的支持记录详见[兼容矩阵](COMPATIBILITY.md#中文)。不要绕过 peer 版本检查。下方仅以 DSH `0.2.0-rc.2` 的历史组合为安装示例，安装后完整重启 Harness：
+上述启动环修复始于 `0.7.4`。当前开发版 DSH peers 使用最低版本 `>=0.2.1-rc.2`，不再精确锁定单个 RC；已发布的 `0.11.0` 仍精确要求 `0.2.1-rc.2`，DSH `0.2.0-rc.2` 可使用历史插件 `0.10.0`；旧版 `0.1.x` 的支持记录详见[兼容矩阵](COMPATIBILITY.md#中文)。不要绕过 peer 版本检查。下方仅以 DSH `0.2.0-rc.2` 的历史组合为安装示例，安装后完整重启 Harness：
 
 ```bash
 dsh plugin --profile web add dsh-git-worktree@0.10.0

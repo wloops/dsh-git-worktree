@@ -1,5 +1,7 @@
 # dsh-git-worktree
 
+> 当前开发版安装策略：DSH peer 使用最低版本 `>=0.2.1-rc.2`，不设置预防性上限；仅在确认破坏性变化后调整要求。开发依赖和内嵌侧栏来源继续精确锁定。未知宿主不复用旧侧栏，而保留官方 Workspace，其他插件功能按实际 API 运行。允许安装并不等于已验收；SemVer 默认仅自动包含同一 `0.2.1` 核心版本的后续 RC，未来其他核心版本的预发布不属于默认匹配。下方精确 peer 描述均为已发布历史版本的记录。
+
 [![npm](https://img.shields.io/npm/v/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![CI](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml/badge.svg)](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml)
