@@ -7,8 +7,9 @@ import type {
   WorktreeConsoleAdapter,
   WorktreeConsoleTargetDetails,
 } from '../../console-contract.js'
-import { openExistingSession, type WorktreeClientServices } from '../actions.js'
+import { openExistingSession, openHostPath, type WorktreeClientServices } from '../actions.js'
 import { requestWorktreeReviewRefresh } from '../review-console/status-events.js'
+import { useHostDesktopAvailable, useOpenFailureToast } from '../workspace-desktop.js'
 import { WorktreeManagerModal } from './WorktreeManagerModal.js'
 
 export interface TargetStatusActionProps {
@@ -38,6 +39,8 @@ function shortOid(value: string): string {
 export function TargetStatusAction({ sessionId, adapter, services }: TargetStatusActionProps) {
   const t = useClientTranslator()
   const language = useClientLanguage()
+  const desktopAvailable = useHostDesktopAvailable(services.remote)
+  const { toast, show } = useOpenFailureToast()
 
   const [target, setTarget] = useState<WorktreeConsoleTargetDetails | null>(null)
   const [loading, setLoading] = useState(true)
@@ -92,12 +95,11 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
     : null
   const accessibleLabel = expiry === null ? t("session.target.label", { target: triggerLabel }) : t("session.target.expires", { p0: triggerLabel, p1: expiry })
 
-  const reveal = (): void => {
+  const reveal = async (): Promise<void> => {
     if (!target?.managedRoot) return
     setMenuOpen(false)
-    void services.workspaces.openPath(target.managedRoot).catch(reason => {
-      if (mounted.current) setError(reason instanceof Error ? reason.message : String(reason))
-    })
+    const message = await openHostPath(services, target.managedRoot)
+    if (mounted.current && message !== null) show(message)
   }
 
   const openSource = (): void => {
@@ -209,7 +211,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
   const items: MenuEntry[] = [
     { id: 'summary', label: summary, disabled: true },
     { type: 'separator', id: 'summary-separator' },
-    ...(target?.managedRoot && target.capabilities.open ? [{ id: 'reveal', icon: <ReviewIcon name="folder" />, label: t("open.current.working.location") } satisfies MenuEntry] : []),
+    ...(target?.managedRoot && target.capabilities.open && desktopAvailable === true ? [{ id: 'reveal', icon: <ReviewIcon name="folder" />, label: t("open.current.working.location") } satisfies MenuEntry] : []),
     ...(target && target.sourceSessionId !== sessionId
       ? [{ id: 'source', icon: <ReviewIcon name="external" />, label: t("return.to.source.session") } satisfies MenuEntry]
       : []),
@@ -233,7 +235,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
         items={items}
         footer={footer}
         onSelect={(id) => {
-          if (id === 'reveal') reveal()
+          if (id === 'reveal') void reveal()
           if (id === 'source') openSource()
           if (id === 'begin_next_iteration') void beginNextIteration()
           if (id === 'manager') { setMenuOpen(false); setManagerOpen(true) }
@@ -285,6 +287,7 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
           </span>
         )}
       />
+      {toast}
     </>
   )
 }

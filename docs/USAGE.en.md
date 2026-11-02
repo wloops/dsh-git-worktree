@@ -208,7 +208,7 @@ When the web UI shows **Failed to load plugins**, inspect the detailed error and
 - `require("@deepseek-ai/dsh-client-runtime/client") missed the module table` means the plugin is still `0.7.2` or older, while Harness `0.1.2-rc.1` and later removed `dsh-client-runtime`.
 - `dsh-git-worktree` waiting for `conversation` while the official Conversation/Sidebar plugins wait for `uiWorkspace` identifies the `0.7.3` Client activation cycle.
 
-The activation-cycle fix starts in `0.7.4`. Match the plugin line to your Host: DSH `0.2.x` uses `0.10.0`, DSH `0.1.x` uses `0.9.3`; see the [compatibility matrix](COMPATIBILITY.md#english). The example uses `0.10.0`; restart Harness after installation:
+The activation-cycle fix starts in `0.7.4`. Match exact Host versions: DSH `0.2.1-rc.2` uses plugin `0.11.0`, while DSH `0.2.0-rc.2` uses `0.10.0`; see the [compatibility matrix](COMPATIBILITY.md#english) for historical `0.1.x` support. Do not bypass peer version checks. The following example is only for the historical DSH `0.2.0-rc.2` combination; fully restart Harness after installation:
 
 ```bash
 dsh plugin --profile web add dsh-git-worktree@0.10.0
@@ -230,7 +230,11 @@ Check:
 
 ### Workspace or sessions fail to open after disabling the plugin
 
-While enabled, the plugin provides the Workspace sidebar with Managed session grouping. Disabling it restores the official Workspace. After changing the enabled state, fully restart `dsh web` and reload the page; do not rely solely on hot-swapping modules already loaded in the browser.
+While enabled, the plugin provides the Workspace sidebar with Managed session grouping. Disabling it restores the official Workspace. After changing the enabled state, fully restart `dsh web` and reload the page; do not rely solely on hot-swapping modules already loaded in the browser. For desktop, fully quit Harness, not just its window. Restarting rules out stale modules; it is not a guaranteed fix for a Provider conflict or missing CSS.
+
+For a broken Workspace sidebar, capture exact Host/plugin versions, profile and enabled state, screenshot, relevant Console stacks, and whether Network `/plugins/??…` includes both the official Workspace and this plugin before changing anything. Then fully restart the same Host/profile and hard-reload the page; capture the same evidence again. Keep page-only reload results separate. Do not statically disable the official Workspace or patch bundled JS as a diagnostic shortcut. Redact tokens, paths and Session titles before sharing; a full HAR is unnecessary. A read-only Console probe and detailed steps are in [Workspace diagnostics](USAGE.md#workspace-异常重启前后取证).
+
+`style[data-dsh-git-worktree]` only proves the plugin’s own styles exist. Inventory `style[data-plugin-css]` keys, owners and byte lengths separately. Previously, embedded Workspace generations shared upstream CSS keys/ownership: the first materialized generation could suppress other rules, and official-module cleanup could delete rules still needed by the derivative. Derived styles now use generation-specific `dsh-git-worktree/workspace-<version>/…` keys and plugin ownership while preserving upstream CSS bytes/class maps. This confirmed resource defect does not establish the cause of issue #11’s dual Host Providers, nor diagnose a screenshot by itself.
 
 If an older plugin version leaves the page waiting for `uiWorkspace`, uninstall it and restart DSH to recover the interface:
 
@@ -245,6 +249,18 @@ To keep using the plugin, install a version containing this fix. Recovery does n
 Common causes include an inaccessible project root, Git failure, unknown content in the target directory, or Session/Workspace identity mismatch. The plugin never deletes a directory whose ownership it cannot prove.
 
 If the Git repository has no commits yet, the Worktree toggle first shows a preflight confirmation. On confirmation the plugin creates an empty initial commit only: working-tree files and staged content are excluded, and Git identity is never configured or rewritten automatically. If repository state changes while confirmation is open, creation stops conservatively and can be retried after inspection.
+
+A deterministic Project Skills preflight failure reports its cause and path, for example `Project Skills: unsupported link or special file: .claude/skills/helper`. Symlinks/junctions at or beneath the three Skill roots block creation, including Git-tracked links. Links are not followed, and switching storage containers is not retried for this failure. Clicking Create again will not resolve it.
+
+Check for links from the repository root (existing paths only, without following links):
+
+```bash
+for dir in .dsh/skills .agents/skills .claude/skills; do
+  if [ -e "$dir" ] || [ -L "$dir" ]; then find "$dir" -type l -print; fi
+done
+```
+
+Inspect the link target and required content, then manually remove an unwanted link or replace it with regular files/directories; do not delete the target content. Commit changes to tracked Skills before creating again. Likewise, resolve diagnostics about uncommitted tracked Skill changes, read permissions, or snapshot safety limits before retrying. On Windows, inspect the reported path for junctions/reparse points with PowerShell: `Get-Item -Force <path> | Select-Object FullName,LinkType,Target`.
 
 ### Preview changes is unavailable
 

@@ -85,7 +85,6 @@ function successFixture() {
         workspacePath = path
         return { workspaceId: 'workspace-target', path }
       }),
-      openPath: vi.fn(async () => undefined),
       archiveSession: vi.fn(async (sessionId: string) => { events.push(`session:archive:${sessionId}`) }),
       delete: vi.fn(async () => undefined),
     },

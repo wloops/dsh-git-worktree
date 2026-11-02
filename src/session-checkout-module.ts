@@ -26,7 +26,7 @@ import type {
   WorktreeCheckpointView,
 } from './types.js'
 import { SessionCheckoutError } from './index.js'
-import { WorktreeCreationFailure } from './creation-failure.js'
+import { WorktreeCreationFailure, WorktreeCreationPreflightFailure } from './creation-failure.js'
 import type { WorktreeCreationEvidence } from './ports.js'
 import { checkpointGenerationForRecord } from './checkpoint.js'
 import {
@@ -4138,6 +4138,11 @@ export function createSessionCheckoutModule(
         failedRegistry.revision += 1
         dependencies.registry.write(failedRegistry)
 
+        // Preserve the source diagnostic after the same conservative cleanup and
+        // registry rollback. A different container cannot fix source preflight.
+        if (error instanceof WorktreeCreationPreflightFailure) {
+          throw new SessionCheckoutError('git_operation_failed', error.message)
+        }
         if (createAttempt < 1) {
           return bindTarget(sessionId, choice, createAttempt + 1, requestStartedAt, sourceSessionId)
         }

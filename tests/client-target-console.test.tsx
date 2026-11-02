@@ -2,7 +2,7 @@
 
 import { ClientI18nProvider } from '../src/client/i18n.js'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentType } from 'react'
 import type { WorktreeConsoleTargetDetails } from '../src/console-contract.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
@@ -87,17 +87,27 @@ function localTarget(): WorktreeConsoleTargetDetails {
   }
 }
 
-function clientServices(): WorktreeClientServices {
+type DesktopCollaborators = {
+  canOpenWorkspacePath: ReturnType<typeof vi.fn>
+  openWorkspacePath: ReturnType<typeof vi.fn>
+}
+
+function clientServices(): WorktreeClientServices & { desktop: DesktopCollaborators } {
   let workspacePath = ''
   const byId: Record<string, { cwd?: string } | undefined> = { 'source-session': { cwd: '/fixture/project' } }
   const listeners = new Set<() => void>()
+  const desktop: DesktopCollaborators = {
+    canOpenWorkspacePath: vi.fn(async () => ({ ok: true as const, value: true })),
+    openWorkspacePath: vi.fn(async () => ({ ok: true as const, value: { opened: true as const } })),
+  }
   return {
+    desktop,
+    remote: { session: desktop },
     workspaces: {
       create: vi.fn(async ({ path }) => {
         workspacePath = path
         return { workspaceId: 'workspace-target', path }
       }),
-      openPath: vi.fn(async () => undefined),
     },
     sessions: {
       create: vi.fn(async ({ sessionId }) => {
@@ -218,7 +228,7 @@ describe('Harness-native Session Target slots', () => {
     const trigger = await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' })
     expect(trigger.querySelector('.dsh-wtc-target-chevron')?.textContent).toBe('')
     fireEvent.click(trigger)
-    expect(screen.getByRole('button', { name: '打开当前工作位置' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: '打开当前工作位置' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '返回来源 Session' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '返回来源 Session' }))
     expect(services.sessions.open).toHaveBeenCalledWith('source-session')
@@ -228,6 +238,80 @@ describe('Harness-native Session Target slots', () => {
     expect(await screen.findByRole('dialog', { name: 'Worktree 管理' })).toBeTruthy()
     expect(await screen.findByRole('heading', { name: 'Worktree 管理' })).toBeTruthy()
     expect(screen.queryByRole('tab', { name: 'Worktrees' })).toBeNull()
+  })
+
+  test('Header 只在宿主能打开桌面路径时渲染「打开当前工作位置」', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    let resolveAvailability!: (result: { ok: true; value: boolean }) => void
+    services.desktop.canOpenWorkspacePath.mockImplementation(
+      () => new Promise(resolve => { resolveAvailability = resolve }),
+    )
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={services} />)
+
+    const trigger = await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' })
+    await waitFor(() => expect(resolveAvailability).toBeDefined())
+    fireEvent.click(trigger)
+    expect(screen.getByRole('button', { name: '返回来源 Session' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '打开当前工作位置' })).toBeNull()
+
+    await act(async () => {
+      resolveAvailability({ ok: true, value: true })
+      await Promise.resolve()
+    })
+    expect(services.desktop.openWorkspacePath).not.toHaveBeenCalled()
+    expect(await screen.findByRole('button', { name: '打开当前工作位置' })).toBeTruthy()
+  })
+
+  test('宿主报告无桌面能力时该项保持隐藏', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    let resolveAvailability!: (result: { ok: true; value: boolean }) => void
+    services.desktop.canOpenWorkspacePath.mockImplementation(
+      () => new Promise(resolve => { resolveAvailability = resolve }),
+    )
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={services} />)
+
+    const trigger = await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' })
+    await waitFor(() => expect(resolveAvailability).toBeDefined())
+    await act(async () => {
+      resolveAvailability({ ok: true, value: false })
+      await Promise.resolve()
+    })
+    fireEvent.click(trigger)
+    expect(screen.getByRole('button', { name: '返回来源 Session' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '打开当前工作位置' })).toBeNull()
+  })
+
+  test('点击「打开当前工作位置」交付工作目录路径并关闭菜单', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={services} />)
+
+    const trigger = await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' })
+    fireEvent.click(trigger)
+    fireEvent.click(await screen.findByRole('button', { name: '打开当前工作位置' }))
+
+    await waitFor(() => expect(services.desktop.openWorkspacePath).toHaveBeenCalledWith({
+      path: fixture.target.managedRoot,
+    }))
+    expect(screen.queryByRole('button', { name: '打开当前工作位置' })).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  test('宿主打开失败时用可见横幅提示而不是静默失败', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    const services = clientServices()
+    services.desktop.openWorkspacePath.mockResolvedValue({
+      ok: false,
+      error: { code: 'gateway/internal', message: 'path open failed' },
+    })
+    render(<TargetStatusAction sessionId="target-session" adapter={fixture.adapter} services={services} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Session Target：Worktree · 待验收' }))
+    fireEvent.click(await screen.findByRole('button', { name: '打开当前工作位置' }))
+
+    expect((await screen.findByRole('status')).textContent).toContain('path open failed')
   })
 
   test('Header owner lifecycle 操作经过二次确认并绑定当前 revision', async () => {
@@ -1116,7 +1200,7 @@ test('manager switches plugin labels while preserving target data and actions', 
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
   view.rerender(<ClientI18nProvider language="zh"><WorktreeConsoleView sessionId="source-session" adapter={fixture.adapter} services={services} /></ClientI18nProvider>)
   expect(screen.getByText('Worktree 管理')).toBeTruthy()
-  expect(services.workspaces.openPath).not.toHaveBeenCalled()
+  expect(services.desktop.openWorkspacePath).not.toHaveBeenCalled()
   expect(services.sessions.create).not.toHaveBeenCalled()
 })
 
@@ -1240,6 +1324,7 @@ test('顶部状态和菜单使用统一 Lucide 图标，保持菜单文字及操
   expect(trigger.querySelector('.lucide-git-branch')).toBeTruthy()
   expect(trigger.querySelector('.lucide-chevron-down')).toBeTruthy()
   fireEvent.click(trigger)
+  expect(await screen.findByRole('button', { name: '打开当前工作位置' })).toBeTruthy()
   for (const name of ['打开当前工作位置', '返回来源 Session', '管理关联 Worktrees']) {
     expect(screen.getByRole('button', { name }).querySelector('svg.lucide')).toBeTruthy()
   }

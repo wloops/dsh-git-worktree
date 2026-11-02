@@ -1,8 +1,8 @@
 import { createNodeSessionCheckoutDependencies } from './support/production-adapters.js'
 import { createSessionCheckoutModule } from '../src/session-checkout-module.js'
 import { createWorktreeConsoleControlPlane } from '../src/console-host/control-plane.js'
-import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile, readFile, rename, realpath } from 'node:fs/promises'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, mkdir, rm, writeFile, readFile, rename, realpath, symlink, readdir } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -433,6 +433,48 @@ it('rejects local tracked Skill conflicts before creating and retains later auxi
   await writeFile(join(managed, auxiliary), 'must preserve\n')
   await expect(port.removeWorktree(repo, managed)).rejects.toThrow(/modified/)
   expect(await readFile(join(managed, auxiliary), 'utf8')).toBe('must preserve\n')
+})
+
+it.skipIf(process.platform === 'win32').each(['tracked', 'untracked', 'skill-root'])('reports %s Skill symlink preflight without fallback or checkout residue', async kind => {
+  const { root, repo, ctx, hooks } = await fixture()
+  const link = kind === 'skill-root' ? '.claude/skills' : '.claude/skills/helper'
+  await mkdir(dirname(join(repo, link)), { recursive: true })
+  await mkdir(join(repo, '.agents/skills/helper'), { recursive: true })
+  await writeFile(join(repo, '.agents/skills/helper/SKILL.md'), 'keep\n')
+  await symlink(kind === 'skill-root' ? '../.agents/skills' : '../../.agents/skills/helper', join(repo, link))
+  if (kind === 'tracked') expect(git(repo, ['add', '.']).status).toBe(0)
+  expect(git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base']).status).toBe(0)
+  const before = git(repo, ['status', '--porcelain=v1', '-uall']).stdout
+  const store = new ProjectSkillStore(join(root, 'skills-state'))
+  const snapshot = vi.spyOn(store, 'snapshot')
+  const deps = createNodeSessionCheckoutDependencies({ configDir: join(root, 'config'), lookup: {
+    getSession: id => id === 'source' ? { id, projectId: 'project' } : undefined,
+    getProject: id => ({ id, name: 'Project', root: repo }),
+    getUnboundTargetPolicy: () => 'unselected',
+  } })
+  deps.git = createDshGitPort(ctx, { hooksPath: join(root, 'no-hooks'), projectSkills: store })
+  const create = vi.spyOn(deps.git, 'createDetachedWorktree')
+  const ensure = vi.spyOn(deps.files, 'ensureDirectory')
+  const commands: string[][] = []
+  hooks.beforeCommand = args => { commands.push(args) }
+  const module = createSessionCheckoutModule(deps)
+  await expect(module.createIsolatedTarget('source', 'target')).rejects.toMatchObject({
+    code: 'git_operation_failed', message: `Project Skills: unsupported link or special file: ${link}`,
+  })
+  expect(snapshot).toHaveBeenCalledTimes(1)
+  expect(create).toHaveBeenCalledTimes(1)
+  expect(commands.some(args => args.includes('worktree') || args.includes('checkout-index'))).toBe(false)
+  const attemptedRoot = create.mock.calls[0]![1]
+  expect(await readdir(dirname(attemptedRoot))).toEqual([])
+  expect(ensure.mock.calls.some(([path]) => path.startsWith(deps.managedCheckoutsRoot))).toBe(false)
+  expect(deps.registry.read().managedCheckouts).toEqual({})
+  // createIsolatedTarget binds the source to Local; only the failed target
+  // binding must disappear, not that legitimate source selection.
+  expect(Object.keys(deps.registry.read().sessionBindings)).toEqual(['source'])
+  expect(deps.registry.read().sessionBindings.source?.target).toEqual({ kind: 'local' })
+  expect(git(repo, ['worktree', 'list', '--porcelain']).stdout.match(/^worktree /gm)).toHaveLength(1)
+  expect(git(repo, ['status', '--porcelain=v1', '-uall']).stdout).toBe(before)
+  expect(await readFile(join(repo, '.agents/skills/helper/SKILL.md'), 'utf8')).toBe('keep\n')
 })
 
 it('preserves an evidenced checkout and Local when Skill carrying is interrupted after creation', async () => {

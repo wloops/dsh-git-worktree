@@ -29,7 +29,7 @@ function runtime(
   let currentSessionId = target.ownerSessionId
   const prompt = vi.fn(async () => ({ ok: true as const, value: { accepted: true as const } }))
   const services: WorktreeClientServices = {
-    workspaces: { create: vi.fn(), openPath: vi.fn() },
+    workspaces: { create: vi.fn() },
     sessions: {
       create: vi.fn(), open: vi.fn(),
       list: {

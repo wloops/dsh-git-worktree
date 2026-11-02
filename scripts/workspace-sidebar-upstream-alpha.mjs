@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { ownWorkspaceStyles } from './workspace-sidebar-resources.mjs'
 import { materializeWorkspaceFactory } from './workspace-sidebar-upstream-next.mjs'
 
 export const ALPHA_WORKSPACE_VERSION = '0.1.6-alpha.2'
@@ -100,5 +101,5 @@ export function decorateAlphaWorkspaceClient(source) {
 }
 
 export function materializeAlphaWorkspaceClientModule() {
-  return materializeWorkspaceFactory(decorateAlphaWorkspaceClient(readAlphaWorkspaceClient()))
+  return materializeWorkspaceFactory(ownWorkspaceStyles(decorateAlphaWorkspaceClient(readAlphaWorkspaceClient()), ALPHA_WORKSPACE_VERSION, 3))
 }

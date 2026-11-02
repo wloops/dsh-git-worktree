@@ -11,6 +11,7 @@ import { WORKTREE_STYLES } from './styles.js'
 import { registerPreSessionWorktree, type PreSessionSlotContextLike } from './pre-session/index.js'
 import { registerTargetConsole, type TargetConsoleContextLike } from './target-console/index.js'
 import { TARGET_CONSOLE_STYLES } from './target-console/target-console.styles.js'
+import { prefetchHostDesktop } from './workspace-desktop.js'
 
 export { registerTargetConsole } from './target-console/index.js'
 
@@ -31,8 +32,13 @@ interface ClientContextLike {
   }
 }
 
-/** Required client services. */
-export const inject = ['slots', 'workspaces', 'sessions', 'conversation', 'connection', 'locale']
+/**
+ * Required client services.
+ * `remote.session` carries the Host desktop face; cordis refuses the nested
+ * `remote.session` read without this declaration, so the access would throw
+ * instead of returning undefined.
+ */
+export const inject = ['slots', 'workspaces', 'sessions', 'conversation', 'connection', 'locale', 'remote', 'remote.session']
 
 function servicesOf(ctx: ClientContextLike): PreSessionWorktreeServices {
   return {
@@ -41,12 +47,15 @@ function servicesOf(ctx: ClientContextLike): PreSessionWorktreeServices {
     sessions: ctx.get('sessions') as PreSessionWorktreeServices['sessions'],
     uiWorkspace: ctx.get('uiWorkspace') as PreSessionWorktreeServices['uiWorkspace'],
     conversation: ctx.get('conversation') as PreSessionWorktreeServices['conversation'],
+    remote: ctx.get('remote') as PreSessionWorktreeServices['remote'],
   }
 }
 
 /** Register replay-stable keyed rows and one scoped stylesheet. */
 export function apply(ctx: ClientContextLike, adapterOverride?: WorktreeConsoleAdapter): void {
   const services = servicesOf(ctx)
+  // The desktop capability is Host-wide: read it once here, before any surface mounts.
+  prefetchHostDesktop(services.remote)
   const locale = services.locale
   // Wrap only this plugin's registrations, keeping each DSH Client instance isolated.
   const localizedSlots = new Proxy(ctx.slots, {

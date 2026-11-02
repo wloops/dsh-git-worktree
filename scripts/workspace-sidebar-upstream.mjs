@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { ownWorkspaceStyles } from './workspace-sidebar-resources.mjs'
 
 export const WORKSPACE_UI_VERSION = '0.2.1-rc.2'
 export const WORKSPACE_LOCALE_VERSION = '0.2.1-rc.2'
@@ -163,7 +164,7 @@ export function decorateOfficialWorkspaceClient(source) {
 
 export function materializeOfficialWorkspaceClientModule() {
   const official = readOfficialWorkspaceClient()
-  const source = decorateOfficialWorkspaceClient(official.source)
+  const source = ownWorkspaceStyles(decorateOfficialWorkspaceClient(official.source), WORKSPACE_UI_VERSION, 4)
   const factoryToken = 'factory: (require) => {'
   const start = source.indexOf(factoryToken)
   const end = source.lastIndexOf('\n\t}\n});')

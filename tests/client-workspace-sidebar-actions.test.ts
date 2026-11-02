@@ -88,6 +88,7 @@ describe.each(variants)('$name official Session actions', variant => {
     } as never)
     ctx.provide('locale', { register: () => () => {}, bind: () => () => '' } as never)
     ctx.provide('remote', {} as never)
+    ctx.provide('remote.session', {} as never)
     ctx.provide('remote.directoryPicker', {} as never)
     ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
     ctx.provide('shortcuts', { register: () => () => {}, catalog: {} } as never)

@@ -35,6 +35,18 @@ export function Menu({ open, anchor, items, footer, onSelect, onClose }: {
   return <span>{anchor}{open ? <div role="menu">{items.map(renderEntry)}{footer?.map(renderEntry)}</div> : null}</span>
 }
 
+/** Narrow test double for the transient failure banner; copy stays queryable until unmount. */
+export function Toast({ text }: {
+  text: string
+  icon?: ReactNode
+  tone?: 'success'
+  anchor?: HTMLElement | null
+  holdMs?: number
+  onDone(): void
+}) {
+  return <div role="status">{text}</div>
+}
+
 /** Narrow test double for the Harness platform Modal used by Client fixtures. */
 export function Modal({
   open,

@@ -1468,5 +1468,7 @@ export const clientMessages = {
 "error.category.stale": {"zh":"状态已变化","en":"Stale state"},
 "error.category.conflict": {"zh":"冲突","en":"Conflict"},
 "error.category.unavailable": {"zh":"不可用","en":"Unavailable"},
-"error.category.invalid": {"zh":"无效请求","en":"Invalid request"}
+"error.category.invalid": {"zh":"无效请求","en":"Invalid request"},
+"open.workspace.path.failed": {"zh":"无法打开该工作目录：{p0}","en":"Could not open this working directory: {p0}"},
+"open.workspace.path.unavailable": {"zh":"当前 Host 未提供打开工作目录的能力。","en":"This Host does not provide a desktop opener for working directories."}
 } as const satisfies MessageCatalog

@@ -41,6 +41,15 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     className?: string
   }>
 
+  export const Toast: ComponentType<{
+    text: string
+    icon?: ReactNode
+    tone?: 'success'
+    anchor?: HTMLElement | null
+    holdMs?: number
+    onDone(): void
+  }>
+
   export const Modal: ComponentType<{
     open: boolean
     onClose(): void

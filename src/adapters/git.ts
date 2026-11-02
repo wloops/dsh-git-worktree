@@ -1,5 +1,6 @@
 import { ProjectSkillStore, PROJECT_SKILL_ROOTS, hasDeliverableStatus, trackedSkillPaths } from './project-skills.js'
 import { createWorktree } from './worktree-creation.js'
+import { WorktreeCreationPreflightFailure } from '../creation-failure.js'
 import { gitTimeoutMs, validateGitTimeouts, type GitTimeoutOptions } from './git-options.js'
 import { initialCommitActions, type GitCommitProtocol } from './initial-commit.js'
 import { hostMessage } from '../i18n/host.js'
@@ -270,10 +271,19 @@ export function createDshGitPort(ctx: Context, options: GitPortOptions): Session
       return { dirty: hasDeliverableStatus(output, new Set(carried?.paths ?? []), carried?.directories) }
     },
     createDetachedWorktree: async (localRoot, managedRoot, baseOid, saveEvidence) => {
-      const skills = await projectSkills.snapshot(localRoot)
-      const changed = await runSessionGitChecked(localRoot, ['diff', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
-        + await runSessionGitChecked(localRoot, ['diff', '--cached', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
-      if (changed) throw new SessionCheckoutError('git_operation_failed', `Project Skills: commit or resolve local tracked Skill changes before creating a Worktree (${changed.split('\0').filter(Boolean).join(', ')})`)
+      // Only source preflight is target-independent. Do not classify creation or
+      // carry failures here: those may have produced evidence or partial content.
+      const skills = await (async () => {
+        try {
+          const snapshot = await projectSkills.snapshot(localRoot)
+          const changed = await runSessionGitChecked(localRoot, ['diff', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
+            + await runSessionGitChecked(localRoot, ['diff', '--cached', '--name-only', '-z', baseOid, '--', ...PROJECT_SKILL_ROOTS])
+          if (changed) throw new SessionCheckoutError('git_operation_failed', `Project Skills: commit or resolve local tracked Skill changes before creating a Worktree (${changed.split('\0').filter(Boolean).join(', ')})`)
+          return snapshot
+        } catch (error) {
+          throw new WorktreeCreationPreflightFailure(error)
+        }
+      })()
       const deadline = Date.now() + gitTimeoutMs(['worktree', 'add'], options)
       await createWorktree(localRoot, managedRoot, baseOid,
         (cwd, args, creating) => runGit(ctx, cwd, args, options, undefined, creating ? { deadline }

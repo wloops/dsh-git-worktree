@@ -2,8 +2,10 @@ import { describe, expect, test, vi } from 'vitest'
 import type { WorktreeConsoleAdapter } from '../src/console-contract.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
 import {
+  canOpenHostPath,
   openAuthorizedWorktreeTarget,
   openExistingSession,
+  openHostPath,
   openIsolatedTarget,
   finalizeCurrentSession,
   prefillSessionDraft,
@@ -21,7 +23,6 @@ function services(
         workspacePath = path
         return { workspaceId: 'workspace-target', path }
       }),
-      openPath: vi.fn(async () => undefined),
     },
     sessions: {
       create: vi.fn(async ({ sessionId }) => {
@@ -224,5 +225,46 @@ describe('Worktree Client navigation', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('Host desktop path handoff', () => {
+  test('answers false when the Remote face or the capability method is missing', async () => {
+    expect(await canOpenHostPath({})).toBe(false)
+    expect(await canOpenHostPath({ remote: {} })).toBe(false)
+    expect(await canOpenHostPath({ remote: { session: {} } })).toBe(false)
+  })
+
+  test('folds rejected and throwing capability reads into unavailable', async () => {
+    expect(await canOpenHostPath({
+      remote: { session: { canOpenWorkspacePath: async () => ({ ok: false, error: { code: 'gateway/internal', message: 'offline' } }) } },
+    })).toBe(false)
+    expect(await canOpenHostPath({
+      remote: { session: { canOpenWorkspacePath: async () => { throw new Error('offline') } } },
+    })).toBe(false)
+    expect(await canOpenHostPath({
+      remote: { session: { canOpenWorkspacePath: async () => ({ ok: true, value: true }) } },
+    })).toBe(true)
+    expect(await canOpenHostPath({
+      remote: { session: { canOpenWorkspacePath: async () => ({ ok: true, value: false }) } },
+    })).toBe(false)
+  })
+
+  test('hands the managed root over without a reveal intent', async () => {
+    const openWorkspacePath = vi.fn(async () => ({ ok: true as const, value: { opened: true as const } }))
+    const client: WorktreeClientServices = { ...services(), remote: { session: { openWorkspacePath } } }
+
+    expect(await openHostPath(client, '/fixture/project-worktrees/checkout-1')).toBeNull()
+    expect(openWorkspacePath).toHaveBeenCalledWith({ path: '/fixture/project-worktrees/checkout-1' })
+  })
+
+  test('returns localized failure copy for Host rejection and a missing face', async () => {
+    const rejected: WorktreeClientServices = {
+      ...services(),
+      remote: { session: { openWorkspacePath: async () => ({ ok: false, error: { code: 'gateway/internal', message: 'path open failed' } }) } },
+    }
+    expect(await openHostPath(rejected, '/fixture/gone')).toContain('path open failed')
+    expect(await openHostPath({ ...services(), remote: { session: {} } }, '/fixture/gone'))
+      .toBe('当前 Host 未提供打开工作目录的能力。')
   })
 })

@@ -38,7 +38,7 @@ interface ClientHandoff {
 }
 
 function platformRequire(nodeRequire: NodeRequire, specifier: string): unknown {
-  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null }
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null, Toast: () => null }
   return nodeRequire(specifier)
 }
 
@@ -135,6 +135,7 @@ describe('built Client ModuleLoader artifact', () => {
     } as never)
     ctx.provide('locale', { register: vi.fn(), bind: () => () => '' } as never)
     ctx.provide('remote.directoryPicker', {} as never)
+    ctx.provide('remote.session', {} as never)
     ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
     ctx.provide('shortcuts', { register: vi.fn(() => () => {}) } as never)
 
@@ -231,6 +232,7 @@ describe('built Client ModuleLoader artifact', () => {
       searchResultLimit: 100,
     } as never)
     ctx.provide('locale', { register: vi.fn(), bind: () => () => '' } as never)
+    ctx.provide('remote.session', {} as never)
     ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
     ctx.provide('shortcuts', { register: vi.fn(() => () => {}) } as never)
 

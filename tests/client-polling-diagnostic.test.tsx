@@ -10,7 +10,7 @@ import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.
 
 function services(): WorktreeClientServices {
   return {
-    workspaces: { create: vi.fn(), openPath: vi.fn() },
+    workspaces: { create: vi.fn() },
     sessions: {
       create: vi.fn(), open: vi.fn(), binding: vi.fn(),
       list: {

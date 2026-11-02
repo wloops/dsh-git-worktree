@@ -1,6 +1,7 @@
 import { translatorForServices } from './i18n.js'
 /** Browser-side orchestration over Harness Workspace and Session runtime faces. */
 
+import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { WorktreeConsoleAdapter } from '../console-contract.js'
 
 export interface IsolatedTargetLocation {
@@ -62,7 +63,18 @@ export interface ClientSessions {
 
 export interface ClientWorkspaces {
   create(input: { path: string }): Promise<{ workspaceId: string; path: string }>
-  openPath(path: string): Promise<void>
+}
+
+/**
+ * Official Session Remote face that hands a Host path to the serving desktop.
+ * `Session` is the only provider: the Workspace Controller never carried an
+ * `openPath`, so capability detection and the open call both live here.
+ */
+export interface ClientWorkspaceDesktop {
+  session?: {
+    canOpenWorkspacePath?(): Promise<RemoteResult<boolean>>
+    openWorkspacePath?(request: { path: string }): Promise<RemoteResult<{ opened: true }>>
+  }
 }
 
 export interface WorktreeClientServices {
@@ -71,6 +83,8 @@ export interface WorktreeClientServices {
   locale?: unknown
   sessions: ClientSessions
   workspaces: ClientWorkspaces
+  /** Absent on browser stand-ins or Hosts whose desktop face is not mounted. */
+  remote?: ClientWorkspaceDesktop
   /** Optional public composer face used only by manual draft-prefill actions. */
   conversation?: {
     input: {
@@ -277,4 +291,44 @@ export async function finalizeCurrentSession(
   const result = await binding.session.command(`/worktree finalize ${reviewId} ${revision} ${retention}`)
   if (!result.ok) throw new Error(t("finalize.command.failed", { p0: result.error.code, p1: result.error.message }))
   if (!result.value.matched) throw new Error(t("host.did.not.recognize.the.worktree.command"))
+}
+
+/**
+ * Ask the Host whether it can hand a path to a native desktop.
+ * An absent face answers false: the Control is not rendered rather than
+ * offered as a button that would fail on a headless Host.
+ */
+export async function canOpenHostPath(services: Pick<WorktreeClientServices, 'remote'>): Promise<boolean> {
+  return (await readHostDesktopCapability(services)) === true
+}
+
+/** Only a successful Host answer is definitive; transport/provider failures are unknown. */
+export async function readHostDesktopCapability(services: Pick<WorktreeClientServices, 'remote'>): Promise<boolean | undefined> {
+  try {
+    const session = services.remote?.session
+    if (typeof session?.canOpenWorkspacePath !== 'function') return undefined
+    const result = await session.canOpenWorkspacePath()
+    return result.ok ? result.value === true : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Hand one verified managed root to the Host desktop.
+ * Resolves the already-localized failure copy, or null once the Host
+ * acknowledged the handoff; the caller owns where that copy becomes visible.
+ */
+export async function openHostPath(services: WorktreeClientServices, path: string): Promise<string | null> {
+  const t = translatorForServices(services)
+  const session = services.remote?.session
+  if (typeof session?.openWorkspacePath !== 'function') return t("open.workspace.path.unavailable")
+  try {
+    // No `action`: for a directory the plain open already targets the managed
+    // root, while `reveal` would open its parent instead.
+    const result = await session.openWorkspacePath({ path })
+    return result.ok ? null : t("open.workspace.path.failed", { p0: result.error.message })
+  } catch (reason) {
+    return t("open.workspace.path.failed", { p0: reason instanceof Error ? reason.message : String(reason) })
+  }
 }

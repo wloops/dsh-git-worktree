@@ -1,8 +1,9 @@
 import { ReviewIcon } from './review-console/ReviewIcon.js'
 import { useClientTranslator } from './i18n.js'
 import { useState } from 'react'
-import { openIsolatedTarget, type WorktreeClientServices } from './actions.js'
+import { openHostPath, openIsolatedTarget, type WorktreeClientServices } from './actions.js'
 import { parseCreateTool, type ToolCallViewPropsLike } from './model.js'
+import { useHostDesktopAvailable, useOpenFailureToast } from './workspace-desktop.js'
 
 interface Props extends ToolCallViewPropsLike {
   services: WorktreeClientServices
@@ -12,12 +13,20 @@ type OpenState = 'idle' | 'opening' | 'error'
 
 export function WorktreeCreateRow({ block, services }: Props) {
   const t = useClientTranslator()
+  const desktopAvailable = useHostDesktopAvailable(services.remote)
+  const { toast, show } = useOpenFailureToast()
 
   const model = parseCreateTool(block, t)
   const [openState, setOpenState] = useState<OpenState>('idle')
   const [openError, setOpenError] = useState<string | null>(null)
   const payload = model.payload
   const state = model.lifecycle === 'running' ? 'running' : model.lifecycle === 'ok' ? 'ok' : 'error'
+
+  const reveal = async (): Promise<void> => {
+    if (!payload) return
+    const message = await openHostPath(services, payload.managedRoot)
+    if (message !== null) show(message)
+  }
 
   const openTarget = async (): Promise<void> => {
     if (!payload || openState === 'opening') return
@@ -48,9 +57,14 @@ export function WorktreeCreateRow({ block, services }: Props) {
             <span className="dsh-wt-label">{t("base")}</span>
             <span className="dsh-wt-value dsh-wt-code">{payload.currentOid.slice(0, 12)}</span>
             <span className="dsh-wt-label">{t("workspace")}</span>
-            <button type="button" className="dsh-wt-value dsh-wt-code dsh-wt-path" onClick={() => void services.workspaces.openPath(payload.managedRoot)}>
-              {payload.managedRoot}
-            </button>
+            {desktopAvailable === true ? (
+              <button type="button" className="dsh-wt-value dsh-wt-code dsh-wt-path" onClick={() => void reveal()}>
+                {payload.managedRoot}
+              </button>
+            ) : (
+              // Without a Host desktop opener the path stays readable but is not a control.
+              <span className="dsh-wt-value dsh-wt-code">{payload.managedRoot}</span>
+            )}
           </div>
           <div className="dsh-wt-actions">
             <button type="button" className="dsh-wt-button dsh-wt-primary" disabled={openState === 'opening'} onClick={() => void openTarget()}>
@@ -63,6 +77,7 @@ export function WorktreeCreateRow({ block, services }: Props) {
       ) : model.error ? (
         <div className="dsh-wt-body"><div className="dsh-wt-error" role="alert">{model.error}</div></div>
       ) : null}
+      {toast}
     </section>
   )
 }

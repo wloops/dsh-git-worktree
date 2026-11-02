@@ -45,7 +45,7 @@ function clientServices(byId: Record<string, { cwd?: string } | undefined> = {
   const setDraft = vi.fn()
   const prompt = vi.fn(async () => ({ ok: true as const, value: { accepted: true as const } }))
   return {
-    workspaces: { create: vi.fn(), openPath: vi.fn() },
+    workspaces: { create: vi.fn() },
     sessions: {
       create: vi.fn(), open: vi.fn(),
       list: { getSnapshot: () => ({ current: 'target-session', ids: Object.keys(byId), byId }), subscribe: () => () => undefined },

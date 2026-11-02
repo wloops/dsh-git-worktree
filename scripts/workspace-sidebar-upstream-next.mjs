@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { ownWorkspaceStyles } from './workspace-sidebar-resources.mjs'
 
 export const NEXT_WORKSPACE_VERSION = '0.1.7-rc.2'
 export const NEXT_WORKSPACE_SHA256 = '854722447794b79607651e6c75d0652db1aba376324f468ab8cd6ecdfe7d177f'
@@ -95,7 +96,7 @@ export function decorateNextWorkspaceClient(source) {
 }
 
 export function materializeNextWorkspaceClientModule() {
-  return materializeWorkspaceFactory(decorateNextWorkspaceClient(readNextWorkspaceClient()))
+  return materializeWorkspaceFactory(ownWorkspaceStyles(decorateNextWorkspaceClient(readNextWorkspaceClient()), NEXT_WORKSPACE_VERSION, 4))
 }
 
 /** Load one pinned official Client factory without registering its upstream ModuleLoader row. */

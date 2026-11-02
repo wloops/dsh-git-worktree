@@ -1,29 +1,43 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { WorktreeCreateRow } from '../src/client/WorktreeCreateRow.js'
 import { WorktreeReviewRow } from '../src/client/WorktreeReviewRow.js'
 import type { WorktreeClientServices } from '../src/client/actions.js'
 
 afterEach(() => cleanup())
 
-function services(): WorktreeClientServices & { opened: string[]; commands: string[] } {
+type DesktopCollaborators = {
+  canOpenWorkspacePath: ReturnType<typeof vi.fn>
+  openWorkspacePath: ReturnType<typeof vi.fn>
+}
+
+function services(): WorktreeClientServices & {
+  opened: string[]
+  commands: string[]
+  desktop: DesktopCollaborators
+} {
   const listeners = new Set<() => void>()
   const ids: string[] = []
   const byId: Record<string, { cwd?: string } | undefined> = {}
   const opened: string[] = []
   let workspacePath = ''
   const commands: string[] = []
+  const desktop: DesktopCollaborators = {
+    canOpenWorkspacePath: vi.fn(async () => ({ ok: true as const, value: true })),
+    openWorkspacePath: vi.fn(async () => ({ ok: true as const, value: { opened: true as const } })),
+  }
   return {
     opened,
     commands,
+    desktop,
+    remote: { session: desktop },
     workspaces: {
       create: vi.fn(async ({ path }) => {
         workspacePath = path
         return { workspaceId: 'workspace-target', path }
       }),
-      openPath: vi.fn(async () => undefined),
     },
     sessions: {
       list: {
@@ -52,7 +66,66 @@ function services(): WorktreeClientServices & { opened: string[]; commands: stri
   }
 }
 
+const createPayload = {
+  kind: 'worktree_target_created',
+  checkoutId: 'checkout-1',
+  targetSessionId: 'target-session',
+  managedRoot: '/workspace/project-worktrees/task',
+  phase: 'ready',
+  currentOid: '1234567890abcdef',
+  sourceSessionId: 'source-session',
+}
+
+function renderCreate(client: WorktreeClientServices) {
+  return render(<WorktreeCreateRow
+    callId="call-path"
+    toolName="worktree_create"
+    block={{ callId: 'call-path', kind: 'result', content: [{ type: 'text', text: JSON.stringify(createPayload) }] }}
+    services={client}
+  />)
+}
+
 describe('Worktree ToolViews', () => {
+  test('Create card hands the managed root to the Host desktop when available', async () => {
+    const client = services()
+    renderCreate(client)
+
+    fireEvent.click(await screen.findByRole('button', { name: createPayload.managedRoot }))
+    await waitFor(() => expect(client.desktop.openWorkspacePath).toHaveBeenCalledWith({
+      path: createPayload.managedRoot,
+    }))
+  })
+
+  test('Create card keeps the managed root as plain text without a Host desktop opener', async () => {
+    const client = services()
+    let resolveAvailability!: (result: { ok: true; value: boolean }) => void
+    client.desktop.canOpenWorkspacePath.mockImplementation(
+      () => new Promise(resolve => { resolveAvailability = resolve }),
+    )
+    renderCreate(client)
+
+    await waitFor(() => expect(resolveAvailability).toBeDefined())
+    await act(async () => {
+      resolveAvailability({ ok: true, value: false })
+      await Promise.resolve()
+    })
+    expect(screen.getByText(createPayload.managedRoot)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: createPayload.managedRoot })).toBeNull()
+    expect(client.desktop.openWorkspacePath).not.toHaveBeenCalled()
+  })
+
+  test('Create card announces an open failure through the transient banner', async () => {
+    const client = services()
+    client.desktop.openWorkspacePath.mockResolvedValue({
+      ok: false,
+      error: { code: 'gateway/internal', message: 'path open failed' },
+    })
+    renderCreate(client)
+
+    fireEvent.click(await screen.findByRole('button', { name: createPayload.managedRoot }))
+    expect((await screen.findByRole('status')).textContent).toContain('path open failed')
+  })
+
   test('Create card registers the managed root and opens the exact reserved Session', async () => {
     const client = services()
     const payload = {

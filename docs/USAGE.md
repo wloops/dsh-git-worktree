@@ -208,7 +208,7 @@ Web 界面显示 **Failed to load plugins** 时，先检查错误详情和已安
 - 报错包含 `require("@deepseek-ai/dsh-client-runtime/client") missed the module table`：当前仍是 `0.7.2` 或更早版本，而 Harness `0.1.2-rc.1` 起已移除 `dsh-client-runtime`。
 - 报错显示 `dsh-git-worktree` 等待 `conversation`，同时官方 Conversation/Sidebar 等待 `uiWorkspace`：当前是 `0.7.3` 的 Client 启动循环依赖。
 
-上述启动环修复始于 `0.7.4`；请按插件线匹配 Host：DSH `0.2.x` 使用 `0.10.0`，DSH `0.1.x` 使用 `0.9.3`，详见[兼容矩阵](COMPATIBILITY.md#中文)。下方以 `0.10.0` 为安装示例，安装后重启 Harness：
+上述启动环修复始于 `0.7.4`；请按精确版本匹配 Host：DSH `0.2.1-rc.2` 使用插件 `0.11.0`，DSH `0.2.0-rc.2` 使用 `0.10.0`；旧版 `0.1.x` 的支持记录详见[兼容矩阵](COMPATIBILITY.md#中文)。不要绕过 peer 版本检查。下方仅以 DSH `0.2.0-rc.2` 的历史组合为安装示例，安装后完整重启 Harness：
 
 ```bash
 dsh plugin --profile web add dsh-git-worktree@0.10.0
@@ -230,7 +230,31 @@ dsh plugin --profile web add dsh-git-worktree@0.10.0
 
 ### 禁用插件后 Workspace 或会话打不开
 
-启用插件时，侧边栏使用带 Managed 会话聚合的 Workspace 实现；禁用插件时恢复官方 Workspace。修改启用状态后，请完整重启 `dsh web` 并重新加载页面，不要仅依赖浏览器内已有模块的热切换。
+启用插件时，侧边栏使用带 Managed 会话聚合的 Workspace 实现；禁用插件时恢复官方 Workspace。修改启用状态后，请完整重启 `dsh web` 并重新加载页面，不要仅依赖浏览器内已有模块的热切换。桌面端需完全退出 Harness（不是仅关闭窗口）再启动。重启是排除旧模块状态的取证步骤，不保证修复 Provider 冲突或样式缺失。
+
+#### Workspace 异常：重启前后取证
+
+1. 先不要改配置、静态禁用官方 Workspace 或手改打包 JS。记录 Host/插件精确版本、同一 profile、启用状态、安装后是否完整重启、复现时间及截图。
+2. 在开发者工具 Console 运行下面的只读探针并保存输出；Network 勾选 Preserve log，记录 `/plugins/??…` 响应内是否同时出现官方 Workspace 与 `dsh-git-worktree/client.js`，保存相关错误栈（包括 `uiWorkspace has been registered`）。共享前删除路径、会话标题、令牌及其它隐私；无需导出完整 HAR。
+3. 完整停止并重新启动使用该 profile 的 Host，页面强制刷新；桌面端完全退出再启动。保持同一项目与启用状态，重复探针、截图及模块记录。区分“只刷新页面”与“Host 完整重启 + 页面刷新”两次结果。若仍异常，请附两份脱敏结果，不要把重启当成已确认的修复。
+
+```js
+(() => ({
+  worktreeStyle: !!document.querySelector("style[data-dsh-git-worktree]"),
+  worktreeSwitch: !!document.querySelector(".dsh-wt-pre-session"),
+  workspaceStyles: [...document.querySelectorAll("style[data-plugin-css]")]
+    .filter(el => /workspace/i.test(el.getAttribute("data-plugin-css") || ""))
+    .map(el => ({ owner: el.getAttribute("data-plugin"),
+      key: el.getAttribute("data-plugin-css"), bytes: el.textContent.length })),
+  sidebarElements: [...document.querySelectorAll(
+    '[class$="_root"], [class$="_searchInput"], [class$="_projectRow"]'
+  )].filter(el => /workspaces|workspace|bhn1Oq/i.test(el.className))
+    .slice(0, 8).map(el => ({ classes: el.className,
+      display: getComputedStyle(el).display, border: getComputedStyle(el).borderStyle }))
+}))()
+```
+
+`style[data-dsh-git-worktree]` 仅证明插件自身样式存在，不证明 Workspace CSS 或 Provider 正常。旧派生保留官方 `data-plugin` / `data-plugin-css` 标识：多个版本先到先得，且官方卸载清理可能删掉派生仍使用的样式，因此热切换与冷启动可能不同。资源修复后，每代派生使用独立的 `dsh-git-worktree/workspace-<版本>/…` CSS key，并由插件自身拥有；CSS 字节与 class map 保持上游原样。仅凭截图不能断言是该缺陷，更不能解释 issue #11 的 Host 双 Provider 原因。
 
 如果旧版插件禁用后出现 `waiting for service: uiWorkspace`，可先卸载插件并重启以恢复界面：
 
@@ -245,6 +269,18 @@ dsh plugin --profile web remove dsh-git-worktree
 常见原因包括项目根不可访问、Git 命令失败、目标目录存在未知内容，或 Session/Workspace 身份不匹配。插件不会自动删除无法确认归属的目录。
 
 如果当前 Git 仓库还没有任何提交，Worktree 开关会先显示预检与确认提示。确认后插件只创建空的首次提交，不会提交工作区文件或暂存内容，也不会自动配置或改写 Git 身份；状态在确认期间变化时会保守停止，可检查后重试。
+
+Project Skills 的确定性预检失败会显示具体原因及路径，例如 `Project Skills: unsupported link or special file: .claude/skills/helper`。三个 Skill 根目录及其子路径中的符号链接/junction（包括 Git 已跟踪的链接）会阻断创建；不会跟随链接，也不会通过切换存储目录重试。重复点击创建不能解决此问题。
+
+在仓库根目录检查链接（只检查存在的目录，不展开链接）：
+
+```bash
+for dir in .dsh/skills .agents/skills .claude/skills; do
+  if [ -e "$dir" ] || [ -L "$dir" ]; then find "$dir" -type l -print; fi
+done
+```
+
+确认链接目标及所需内容后，手动移除不需要的链接，或将链接替换为普通文件/目录；不要直接删除目标内容。对于已跟踪的 Skill，将这些改动提交后再创建。若错误提示未提交的 tracked Skill 改动、读取权限或快照安全上限，也应先处理对应原因，而不是反复重试。Windows 可用 PowerShell 的 `Get-Item -Force <路径> | Select-Object FullName,LinkType,Target` 检查报错路径是否为 junction/reparse point。
 
 ### 无法预览修改
 
