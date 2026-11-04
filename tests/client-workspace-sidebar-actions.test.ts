@@ -4,6 +4,7 @@ import { transferableAbortController } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
+import { decorateRc5WorkspaceClient, readRc5WorkspaceClient } from '../scripts/workspace-sidebar-upstream-rc5.mjs'
 import { decorateOfficialWorkspaceClient, readOfficialWorkspaceClient } from '../scripts/workspace-sidebar-upstream.mjs'
 import { decorateNextWorkspaceClient, readNextWorkspaceClient } from '../scripts/workspace-sidebar-upstream-next.mjs'
 import { decorateAlphaWorkspaceClient, readAlphaWorkspaceClient } from '../scripts/workspace-sidebar-upstream-alpha.mjs'
@@ -27,6 +28,7 @@ function officialApply(source: string): (ctx: Context) => void {
 }
 
 const variants = [
+  { name: 'modern-rc5', source: () => decorateRc5WorkspaceClient(readRc5WorkspaceClient()) },
   { name: 'alpha', source: () => decorateAlphaWorkspaceClient(readAlphaWorkspaceClient()) },
   { name: 'next', source: () => decorateNextWorkspaceClient(readNextWorkspaceClient()) },
   { name: 'modern', source: () => decorateOfficialWorkspaceClient(readOfficialWorkspaceClient().source) },
@@ -130,7 +132,7 @@ describe.each(variants)('$name official Session actions', variant => {
       expect(unarchive.mock.calls).toEqual([['owner'], ['owner']])
       expect(fork).toHaveBeenCalledTimes(1)
       expect(fork).toHaveBeenCalledWith({ sessionId: 'ordinary', increaseTitle: true })
-      if (variant.name === 'modern') {
+      if (variant.name.startsWith('modern')) {
         const onCreated = vi.fn()
         await expect(navigation.forkSession('ordinary', onCreated, { allowMigration: false })).rejects.toBe(forkFailure)
         expect(fork).toHaveBeenLastCalledWith({ sessionId: 'ordinary', increaseTitle: true, onCreated, allowMigration: false })

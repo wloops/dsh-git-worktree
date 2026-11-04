@@ -15,6 +15,12 @@ import {
   RESOLVED_ALPHA_WORKSPACE_VIRTUAL_ID,
 } from './scripts/workspace-sidebar-upstream-alpha.mjs'
 
+import {
+  materializeRc5WorkspaceClientModule,
+  RC5_WORKSPACE_VIRTUAL_ID,
+  RESOLVED_RC5_WORKSPACE_VIRTUAL_ID,
+} from './scripts/workspace-sidebar-upstream-rc5.mjs'
+
 const CLIENT_PLUGIN_ID = 'dsh-git-worktree'
 
 export default defineConfig({
@@ -42,12 +48,14 @@ export default defineConfig({
     resolveId(id) {
       if (id === OFFICIAL_WORKSPACE_VIRTUAL_ID) return RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID
       if (id === NEXT_WORKSPACE_VIRTUAL_ID) return RESOLVED_NEXT_WORKSPACE_VIRTUAL_ID
+      if (id === RC5_WORKSPACE_VIRTUAL_ID) return RESOLVED_RC5_WORKSPACE_VIRTUAL_ID
       if (id === ALPHA_WORKSPACE_VIRTUAL_ID) return RESOLVED_ALPHA_WORKSPACE_VIRTUAL_ID
       return null
     },
     load(id) {
       if (id === RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID) return materializeOfficialWorkspaceClientModule()
       if (id === RESOLVED_NEXT_WORKSPACE_VIRTUAL_ID) return materializeNextWorkspaceClientModule()
+      if (id === RESOLVED_RC5_WORKSPACE_VIRTUAL_ID) return materializeRc5WorkspaceClientModule()
       if (id === RESOLVED_ALPHA_WORKSPACE_VIRTUAL_ID) return materializeAlphaWorkspaceClientModule()
       return null
     },

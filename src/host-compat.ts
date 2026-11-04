@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
-export type WorkspaceClientFlavor = 'legacy' | 'alpha' | 'next' | 'modern' | 'unsupported'
+export type WorkspaceClientFlavor = 'legacy' | 'alpha' | 'next' | 'modern' | 'modern-rc5' | 'unsupported'
 
 export function workspaceClientFlavorForAgentVersion(version: string | undefined): WorkspaceClientFlavor {
   if (version === '0.1.2-rc.1') return 'legacy'
@@ -9,6 +9,7 @@ export function workspaceClientFlavorForAgentVersion(version: string | undefined
   if (version === '0.1.7-rc.2') return 'next'
   // The modern derivative is built from this exact source, not the previous 0.2.0 line.
   if (version === '0.2.1-rc.2') return 'modern'
+  if (version === '0.2.1-rc.5') return 'modern-rc5'
   return 'unsupported'
 }
 

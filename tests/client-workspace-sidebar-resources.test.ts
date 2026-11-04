@@ -7,9 +7,12 @@ import { materializeOfficialWorkspaceClientModule } from '../scripts/workspace-s
 import { materializeNextWorkspaceClientModule } from '../scripts/workspace-sidebar-upstream-next.mjs'
 import { materializeAlphaWorkspaceClientModule } from '../scripts/workspace-sidebar-upstream-alpha.mjs'
 
+import { materializeRc5WorkspaceClientModule } from '../scripts/workspace-sidebar-upstream-rc5.mjs'
+
 const require = createRequire(import.meta.url)
 const owner = '@deepseek-ai/dsh-client-ui-workspace'
 const variants = [
+  [`${owner}-rc5`, '0.2.1-rc.5', 4, materializeRc5WorkspaceClientModule],
   [owner, '0.2.1-rc.2', 4, materializeOfficialWorkspaceClientModule],
   [`${owner}-next`, '0.1.7-rc.2', 4, materializeNextWorkspaceClientModule],
   [`${owner}-alpha`, '0.1.6-alpha.2', 3, materializeAlphaWorkspaceClientModule],
@@ -29,10 +32,10 @@ function styles() { return [...document.querySelectorAll<HTMLStyleElement>('styl
 afterEach(() => document.head.replaceChildren())
 
 describe('embedded official Workspace CSS ownership', () => {
-  test.each([false, true])('built factory keeps every generation intact (official materialized first: %s)', officialFirst => {
-    const official = readFileSync(require.resolve(`${owner}/client`), 'utf8')
+  test.each([[false, owner], [true, owner], [false, `${owner}-rc5`], [true, `${owner}-rc5`]])('built factory keeps every generation intact (official first: %s, package: %s)', (officialFirst, officialPackage) => {
+    const official = readFileSync(require.resolve(`${officialPackage}/client`), 'utf8')
     if (officialFirst) materialize(official)
-    // Execute the real built artifact: all three virtual modules run eagerly.
+    // Execute the real built artifact: all four virtual modules run eagerly.
     materialize(readFileSync('lib/client.js', 'utf8'))
     if (!officialFirst) materialize(official)
     for (const [pkg, version, count] of variants) {
@@ -45,17 +48,17 @@ describe('embedded official Workspace CSS ownership', () => {
       expect(tags.map(tag => tag.textContent)).toEqual(cssBytes)
       expect(tags.every(tag => tag.dataset.plugin === 'dsh-git-worktree')).toBe(true)
     }
-    expect(styles()).toHaveLength(15)
+    expect(styles()).toHaveLength(19)
     removeOwnedStyles(owner)
-    expect(styles()).toHaveLength(11)
+    expect(styles()).toHaveLength(15)
     // Host rematerialization cannot remove or suppress derivative rules.
     materialize(official)
-    expect(styles()).toHaveLength(15)
+    expect(styles()).toHaveLength(19)
     removeOwnedStyles('dsh-git-worktree')
     expect(styles()).toHaveLength(4)
     expect(styles().every(tag => tag.dataset.plugin === owner)).toBe(true)
     materialize(readFileSync('lib/client.js', 'utf8'))
-    expect(styles()).toHaveLength(15)
+    expect(styles()).toHaveLength(19)
   })
   test('all derived source factories have independent resource keys', () => {
     for (const [, version, count, derive] of variants) {

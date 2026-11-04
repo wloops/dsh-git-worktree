@@ -2,6 +2,14 @@
 
 本项目的显著变更记录在此文件中。版本号遵循 Semantic Versioning；在 `0.x` 阶段，minor 版本可能包含需要迁移的公开能力调整。
 
+## [0.12.1] - 2026-11-04
+
+### Fixed
+
+- 新增 DSH `0.2.1-rc.5` 官方 Workspace Client 的独立版本/包名/SHA-256 门禁与构建别名；实际 Host `dsh-agent@0.2.1-rc.5` 经 strict Remote topology 选择 `modern-rc5`，不再因精确 rc.2 判定而只显示官方未聚合侧栏。保留 rc.2、alpha、next 精确派生，未知 Host 仍官方降级。
+- rc.5 保留官方 blank 复用/并发合并、agentPreset 筛选及 `whenDraftExists` 草稿初始化语义，只共享稳定的 managed-row decoration transform，不套用 rc.2 factory。保留官方 slot 授权树、安全菜单与 owner guard、directoryPicker 惰性防环；CSS 资源按精确版本独立归属。
+- 新增 rc.2/rc.5 选择、strict codec、来源漂移、导航语义及真实 built Browser 聚合/标题/状态/CSS/Loader 启停回归。最终隔离全量测试 673 passed / 1 skipped；主工作区侧栏相关 43 项回归通过。用户确认重建 rc.5 客户端与 Web 前端后开发环境启动及版本显示正常；侧栏聚合尚无单独人工验收确认，真实 AI 与 Windows 全流程未验收。
+
 ## [0.12.0] - 2026-11-02
 
 本版新增仓库内 Project Skills symlink 安全快照，修复侧栏样式资源与打开工作目录，并将 DSH 安装要求从单个 RC 改为最低版本。构建基线仍为 `0.2.1-rc.2`；`0.2.1-rc.5` 允许安装但未完成实机验收，未知宿主保留官方侧栏。#11 原始双 Provider 异常仍未确认解决。Windows symlink 生命周期未实机验证。

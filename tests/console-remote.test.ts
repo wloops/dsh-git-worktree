@@ -120,6 +120,15 @@ describe('manual strict Worktree Console Remote contribution', () => {
     })).toThrow()
   })
 
+  it('strict topology codec accepts both exact modern derivatives and rejects guessed generations', () => {
+    const codec = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'sidebarTopology')!.result
+    for (const workspaceClientFlavor of ['modern', 'modern-rc5']) {
+      const payload = { ok: true, value: { projects: [], workspaceClientFlavor } }
+      expect(codec.schema.parse(payload)).toEqual(payload)
+    }
+    expect(() => codec.schema.parse({ ok: true, value: { projects: [], workspaceClientFlavor: 'modern-rc6' } })).toThrow()
+  })
+
   it('fails malformed wire input and business output closed at the shared Zod boundary', () => {
     const inspect = WORKTREE_CONSOLE_DESCRIPTORS.find((descriptor) => descriptor.method === 'inspect')!
     expect(() => inspect.parameters[0]!.codec.mode === 'strict'

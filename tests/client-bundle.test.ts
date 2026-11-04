@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { createElement, type ComponentType } from 'react'
+import { cleanup, render, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
@@ -13,7 +15,7 @@ beforeEach(() => {
   vi.stubGlobal('AbortController', abort.constructor)
   vi.stubGlobal('AbortSignal', abort.signal.constructor)
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 import { createWorktreeConsoleAdapterFixture } from './support/worktree-console.js'
 import { loadOfficialBrowserClient } from './support/official-client.js'
 
@@ -38,18 +40,27 @@ interface ClientHandoff {
 }
 
 function platformRequire(nodeRequire: NodeRequire, specifier: string): unknown {
-  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Modal: () => null, Menu: () => null, Toast: () => null }
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') {
+    // ESM interop copies own exports, so a get-only Proxy is insufficient.
+    const names = [...readFileSync('lib/client.js', 'utf8').matchAll(/_deepseek_ai_dsh_client_ui_primitives\.([A-Za-z0-9_]+)/g)].map(match => match[1])
+    return Object.fromEntries(names.map(name => [name,
+      name === 'relativeTime' ? () => ({ unit: 'second', value: 1 })
+        : name === 'Tooltip' || name === 'HoverCardGroup' ? ({ children }: any) => children
+        : name === 'HoverCard' ? ({ anchor }: any) => anchor
+          : name.startsWith('Icon') ? () => createElement('i', { 'data-icon': name })
+            : () => null,
+    ]))
+  }
   return nodeRequire(specifier)
 }
 
 function executeBundle(code: string): ClientHandoff {
   let handoff: ClientHandoff | undefined
-  const window = {
-    __ModuleLoader__: {
-      load(value: ClientHandoff) { handoff = value },
-    },
-  }
-  new Function('window', code)(window)
+  const browserWindow = Object.create(window)
+  browserWindow.__ModuleLoader__ = { load(value: ClientHandoff) { handoff = value } }
+  browserWindow.addEventListener = window.addEventListener.bind(window)
+  browserWindow.removeEventListener = window.removeEventListener.bind(window)
+  new Function('window', code)(browserWindow)
   if (handoff === undefined) throw new Error('bundle did not register a ModuleLoader handoff')
   return handoff
 }
@@ -183,7 +194,7 @@ describe('built Client ModuleLoader artifact', () => {
     expect(document.querySelector('style[data-dsh-git-worktree]')).toBeNull()
   })
 
-  test('boots a modern Host whose picker provider waits for uiWorkspace, then resolves picker calls lazily', async () => {
+  test.each(['modern', 'modern-rc5'])('boots %s whose picker provider waits for uiWorkspace, then resolves picker calls lazily', async flavor => {
     const nodeRequire = createRequire(import.meta.url)
     const { gateway, access } = gatewayClient()
     const worktree = executeBundle(readFileSync(resolve('lib/client.js'), 'utf8'))
@@ -193,13 +204,16 @@ describe('built Client ModuleLoader artifact', () => {
     }
     const fixture = createWorktreeConsoleAdapterFixture()
     const expected = await fixture.adapter.current({ sessionId: 'agent-1' })
-    const modernTopology = await fixture.adapter.sidebarTopology()
+    const modernTopology = { ok: true, value: { projects: [{
+      project: { id: 'project-local', name: 'demo' },
+      tasks: [{ checkoutId: 'checkout-1', ownerSessionId: 'owner', sourceSessionId: 'local', iteration: 1, revision: 1, phase: 'ready', state: 'ready_for_review' }],
+    }] } }
     // The 0.2.x directory-picker provider entry is pending on uiWorkspace, so
     // this context deliberately never provides `remote.directoryPicker` up front.
     const call = vi.fn(async (_url: string, method: string) => ({
       ok: true as const,
       value: method === 'gitWorktree/sidebarTopology'
-        ? { ...modernTopology, value: { ...modernTopology.value, workspaceClientFlavor: 'modern' } }
+        ? { ...modernTopology, value: { ...modernTopology.value, workspaceClientFlavor: flavor } }
         : expected,
     }))
     const ctx = new Context()
@@ -239,6 +253,53 @@ describe('built Client ModuleLoader artifact', () => {
     await mountAccess(ctx, access)
     const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
     await fiber
+    // Render the registered, actually bundled Browser, not a test mock or
+    // exported projection helper. Only platform primitives/hooks are fixtures.
+    const browser = register.mock.calls.find(call => call[0].name === 'sidebar.workspaces')!
+    expect(register.mock.calls.filter(call => call[0].name === 'sidebar.workspaces')).toHaveLength(1)
+    expect(Object.keys(browser[0].children)).toEqual(expect.arrayContaining([
+      'sidebar.workspaces.directoryFlow', 'sidebar.workspaces.session.menu.item',
+      'sidebar.workspaces.session.row.action', 'sidebar.session.row.leading', 'sidebar.session.row.hover',
+    ]))
+    const summary = (id: string, title: string, cwd: string) => ({ id, title, displayTitle: title, cwd, blank: false, running: false, updatedAt: 1, retainedBy: {}, origin: 'user' })
+    const sessions = { projectionsBySession: {}, ids: ['local', 'owner'], byId: {
+      local: summary('local', 'Local title', '/project'), owner: summary('owner', 'Owner title', '/worktree'),
+    }, phase: 'ready' }
+    const workspaces = { items: [
+      { workspaceId: 'project-local', title: 'demo', path: '/project', createdAt: new Date(0).toISOString(), sessionIds: ['local'] },
+      { workspaceId: 'managed', title: 'internal-worktree', path: '/worktree', createdAt: new Date(0).toISOString(), sessionIds: ['owner'] },
+    ], archivedSessionIds: [], pinnedSessionIds: [], phase: 'ready', state: 'idle' }
+    const select = (value: unknown) => (selector: (state: any) => unknown) => selector(value)
+    const view = render(createElement(browser[1] as ComponentType<any>, {
+      wide: true, useSessions: select(sessions), useWorkspaces: select(workspaces),
+      usePanelInfo: select({ activePanelId: null }), useSessionStatus: select(new Map()),
+      useStore: select({ groupBy: 'workspace', orderBy: 'updated', groupExpansion: { 'project-local': true, managed: true }, sessionOrderByAccount: {} }),
+      useDirectoryFlow: select(false), useHostInfo: select({ home: '/home' }), useShortcuts: select([]),
+      useWorkspaceShortcuts: select({ searchRequest: 0, addRequested: false }),
+      actions: { retainAccountKeys() {}, setGroupExpanded() {} }, renderSlot: () => null,
+      t: (key: string) => key,
+    }))
+    await waitFor(() => expect(view.container.querySelectorAll('[data-managed-worktree="true"]')).toHaveLength(1))
+    expect(view.container.textContent).toContain('Local title')
+    expect(view.container.textContent).toContain('Owner title')
+    expect(view.container.textContent).not.toContain('internal-worktree')
+    expect(view.container.querySelectorAll('[data-row-key^="workspace:"]')).toHaveLength(1)
+    const owner = view.container.querySelector('[data-managed-worktree="true"]')!
+    expect(owner.querySelector('.dsh-git-worktree-sidebar-badge')?.getAttribute('data-worktree-state')).toBe('ready_for_review')
+    expect(owner.closest('[class$="_groupSection"]')?.textContent).toContain('demo')
+
+    // The emitted artifact must really select the matching source factory,
+    // not simply label the rc.2 factory as rc.5. Their no-options paths differ.
+    const navigation = ctx.uiWorkspace as any
+    const openWorkspace = vi.spyOn(navigation, 'openWorkspace').mockResolvedValue(undefined)
+    const openWorkspaceSession = vi.spyOn(navigation, 'openWorkspaceSession').mockResolvedValue(undefined)
+    navigation.startSession('project-local')
+    expect(flavor === 'modern-rc5' ? openWorkspace : openWorkspaceSession).toHaveBeenCalledOnce()
+    expect(flavor === 'modern-rc5' ? openWorkspaceSession : openWorkspace).not.toHaveBeenCalled()
+    view.unmount()
+    openWorkspace.mockRestore()
+    openWorkspaceSession.mockRestore()
+
     // Without the filtered inject this fiber could never settle: the entry
     // would wait for `remote.directoryPicker`, which waits for `uiWorkspace`.
     expect(ctx.uiWorkspace).toBeDefined()

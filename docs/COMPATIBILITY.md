@@ -8,6 +8,12 @@
 
 ## 中文
 
+### 未发布：0.2.1-rc.5 侧栏适配
+
+当前未发布源码（包版本暂仍 `0.12.0`）为 `0.2.1-rc.5` 新增独立官方 Workspace 来源与包名/版本/SHA-256 门禁，Host 实际解析的 agent 版本通过 strict Remote `modern-rc5` 选择该 factory。rc.2 仍选原 `modern` factory；alpha/next 与未知 Host 官方降级保持。保留 rc.5 blank 复用、preset 筛选及草稿初始化，不用旧 factory 冒充新 Host。
+
+本轮仅在隔离依赖树运行源码、实际 `lib/client.js` jsdom Browser 聚合/标题/状态、CSS 清理及真实 Cordis Loader 生命周期回归。开发 Host singleton 仍 rc.2，rc.5 alias 仅提供构建源码；未启动 rc.5 Host、未修改用户 desktop/配置、未做真实浏览器/AI/Windows 全流程。已发布 `0.12.0` 不含此修复。
+
 **兼容性描述的是插件版本与 Harness 运行环境的组合，不是“只有最新 DSH 才能用”。** 新增一个版本的测试记录不会撤销旧组合的支持；未验证也不等于不兼容。
 
 ### 验证矩阵（2026-09-11）
@@ -76,6 +82,12 @@
 本轮没有足够证据要求已经正常使用 `0.1.5-rc.1` 的用户降级，也没有足够证据宣布所有新版本完全兼容。完整检测证据与限制见 [2026-09-11 检测报告](compatibility/2026-09-11.md)。
 
 ## English
+
+### Unreleased: 0.2.1-rc.5 sidebar adaptation
+
+Unreleased source (package version still `0.12.0`) adds a separately name/version/SHA-256-gated official rc.5 Workspace factory. Host-resolved agent version travels through strict Remote topology as `modern-rc5`; rc.2 still selects `modern`. Alpha/next sources and unknown-Host official fallback remain intact. The rc.5 factory retains blank reuse, preset filtering and draft initialization rather than relabeling an old factory.
+
+Validation uses an isolated dependency tree, source tests, actual emitted `lib/client.js` Browser aggregation/title/status and CSS jsdom tests, and real Cordis Loader lifecycle regressions. Host singleton dev dependencies remain rc.2; the rc.5 alias supplies build source only. No rc.5 Host startup, user desktop/config modification, real browser, AI or Windows end-to-end acceptance was performed. Published `0.12.0` does not include this fix.
 
 **Compatibility belongs to a plugin/Host combination, not to “the newest DSH only.”** Testing a newer Host does not withdraw older support; untested does not mean incompatible.
 

@@ -39,6 +39,7 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-client-ui-primitives@0.2.1-rc.2'
   - '@deepseek-ai/dsh-client-ui-workspace@0.1.2-rc.1 || 0.1.6-alpha.2 || 0.1.7-rc.2'
   - '@deepseek-ai/dsh-client-ui-workspace@0.2.1-rc.2'
+  - '@deepseek-ai/dsh-client-ui-workspace@0.2.1-rc.5'
   - '@deepseek-ai/dsh-code-runtime@0.1.2-rc.1'
   - '@deepseek-ai/dsh-commands@0.1.2-rc.1'
   - '@deepseek-ai/dsh-commands@0.2.1-rc.2'

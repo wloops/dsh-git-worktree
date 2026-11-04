@@ -8,6 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { Group, Loader, type EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import Include, { applyEntryPatches, entryListSchema, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { ClientModuleRegistry } from '@deepseek-ai/dsh-client-modules'
+import { workspaceClientFlavorForAgentVersion, type WorkspaceClientFlavor } from '../src/host-compat.js'
 import { mountWorkspaceProviderLifecycle, WORKSPACE_PROVIDER_CONDITION } from '../src/workspace-provider-lifecycle.js'
 
 const require = createRequire(import.meta.url)
@@ -27,7 +28,7 @@ function entries(disabled: boolean): EntryOptions[] {
   ], message => { throw new Error(message) })
 }
 
-async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?: string, childEntries?: EntryOptions[], failApply = false, unsupported = false, lifecycle: { operationTimeoutMs?: number, wedge?: 'never' | 'deferred' } = {}) {
+async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?: string, childEntries?: EntryOptions[], failApply = false, unsupported = false, lifecycle: { operationTimeoutMs?: number, wedge?: 'never' | 'deferred', flavor?: WorkspaceClientFlavor } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'workspace-provider-'))
   const paths = new Map<string, string>()
   for (const [index, name] of [OFFICIAL, WORKTREE, 'group-owner', 'fixture-include'].entries()) {
@@ -65,7 +66,7 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
               Object.assign(official, { update: wedged })
             }
           }
-          mountWorkspaceProviderLifecycle(ctx, unsupported ? 'unsupported' : 'legacy',
+          mountWorkspaceProviderLifecycle(ctx, unsupported ? 'unsupported' : lifecycle.flavor ?? 'legacy',
             lifecycle.operationTimeoutMs === undefined ? {} : { operationTimeoutMs: lifecycle.operationTimeoutMs })
           applied = true
           if (failApply) throw new Error('fixture: replacement initialization failed')
@@ -126,6 +127,19 @@ describe('Workspace provider lifecycle (real Cordis Loader and Web module regist
     const data = entries(true)
     if (replacementFirst) data.reverse()
     expect((await boot(data)).graph()).toEqual([OFFICIAL])
+  })
+
+  test.each(['0.2.1-rc.2', '0.2.1-rc.5'])('%s elects its replacement and restores official on disable', async version => {
+    const { ctx, graph } = await boot(entries(false), false, undefined, undefined, false, false, {
+      flavor: workspaceClientFlavorForAgentVersion(version),
+    })
+    expect(graph()).toEqual([WORKTREE])
+    const replacement = [...ctx.loader.entries()].find(entry => entry.options.name === WORKTREE)!
+    await replacement.update({ disabled: true }, false, true)
+    await vi.waitFor(() => expect(graph()).toEqual([OFFICIAL]))
+    expect(ctx.get('worktreeWorkspaceProvider')).toBeUndefined()
+    await replacement.update({ disabled: false }, false, true)
+    await vi.waitFor(() => expect(graph()).toEqual([WORKTREE]))
   })
 
   test('a removed replacement entry leaves the official provider enabled', async () => {

@@ -10,6 +10,7 @@ import { registerManagedWorkspaceSidebar } from '../workspace-sidebar/index.js'
 import { apply as applyOfficialWorkspace, inject as officialWorkspaceInject } from 'virtual:dsh-official-workspace-client'
 import { apply as applyNextWorkspace, inject as nextWorkspaceInject } from 'virtual:dsh-official-workspace-client-next'
 import { apply as applyAlphaWorkspace, inject as alphaWorkspaceInject } from 'virtual:dsh-official-workspace-client-alpha'
+import { apply as applyRc5Workspace, inject as rc5WorkspaceInject } from 'virtual:dsh-official-workspace-client-rc5'
 import { createWorktreeConsoleRemoteAdapter } from './adapter.js'
 
 export { createWorktreeConsoleRemoteAdapter } from './adapter.js'
@@ -56,7 +57,7 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
     })
   }
 
-  // All three official Browser generations declare the same top-level Slot.
+  // All pinned official Browser generations declare the same top-level Slot.
   // Pick exactly one based on the Host-resolved package version, not timing of
   // Client services (shortcuts is absent in alpha and late to start in rc.2).
   const topology = await adapter.sidebarTopology()
@@ -70,14 +71,17 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
       ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0], adapter,
     )
     mountTools(ctx)
-  } else if (flavor === 'modern') {
+  } else if (flavor === 'modern' || flavor === 'modern-rc5') {
+    const required = (flavor === 'modern-rc5' ? rc5WorkspaceInject : officialWorkspaceInject)
+      .filter(service => service !== 'remote.directoryPicker')
+    const applyWorkspace = flavor === 'modern-rc5' ? applyRc5Workspace : applyOfficialWorkspace
     // Same filtered subset as the entry inject: providing `uiWorkspace` must
     // never wait for the directory picker (see the inject comment above).
-    ctx.inject(inject, child => {
+    ctx.inject(required, child => {
       registerManagedWorkspaceSidebar(
         child as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0],
         adapter,
-        applyOfficialWorkspace,
+        applyWorkspace,
       )
       mountTools(child)
     })

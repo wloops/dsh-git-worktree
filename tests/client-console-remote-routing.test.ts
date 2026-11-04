@@ -13,6 +13,8 @@ vi.mock('../src/client/console-remote/adapter.js', () => ({
 
 import { apply } from '../src/client/console-remote/index.js'
 import { apply as applyAlpha } from './official-workspace-client-alpha.mock.js'
+import { apply as applyModern } from './official-workspace-client.mock.js'
+import { apply as applyRc5 } from './official-workspace-client-rc5.mock.js'
 import { apply as applyNext } from './official-workspace-client-next.mock.js'
 
 function clientContext(legacy = false) {
@@ -48,6 +50,16 @@ describe('one Host-pinned Browser provider per Client startup', () => {
       : [flavor === 'alpha'
         ? ['slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout']
         : ['slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts'], ['conversation']])
+  })
+
+  test.each([['modern', applyModern], ['modern-rc5', applyRc5]] as const)('%s selects its exact modern factory without the picker boot cycle', async (flavor, selected) => {
+    spies.topology.mockResolvedValue({ ok: true, value: { projects: [], workspaceClientFlavor: flavor } })
+    const ctx = clientContext()
+    await apply(ctx)
+    expect(spies.register).toHaveBeenCalledTimes(1)
+    expect(spies.register.mock.calls[0]?.[2]).toBe(selected)
+    expect(ctx.inject.mock.calls[0][0]).not.toContain('remote.directoryPicker')
+    expect(spies.applyTools).toHaveBeenCalledOnce()
   })
 
   test('unknown Host leaves official Browser untouched', async () => {

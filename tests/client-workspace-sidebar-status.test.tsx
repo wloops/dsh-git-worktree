@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { createElement, type ComponentType, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { decorateRc5WorkspaceClient, readRc5WorkspaceClient } from '../scripts/workspace-sidebar-upstream-rc5.mjs'
 import { decorateOfficialWorkspaceClient, readOfficialWorkspaceClient } from '../scripts/workspace-sidebar-upstream.mjs'
 import { decorateAlphaWorkspaceClient, readAlphaWorkspaceClient } from '../scripts/workspace-sidebar-upstream-alpha.mjs'
 import { decorateNextWorkspaceClient, readNextWorkspaceClient } from '../scripts/workspace-sidebar-upstream-next.mjs'
@@ -41,6 +42,7 @@ function loadRow(source: string): ComponentType<Record<string, unknown>> {
 }
 
 const variants = [
+  { name: 'modern-rc5', source: () => decorateRc5WorkspaceClient(readRc5WorkspaceClient()) },
   { name: 'alpha', source: () => decorateAlphaWorkspaceClient(readAlphaWorkspaceClient()) },
   { name: 'next', source: () => decorateNextWorkspaceClient(readNextWorkspaceClient()) },
   { name: 'modern', source: () => decorateOfficialWorkspaceClient(readOfficialWorkspaceClient().source) },
@@ -75,7 +77,7 @@ describe.each(variants)('$name sidebar Worktree state presentation', variant => 
     if (running) expect(row.querySelector('[data-official-state]')).not.toBeNull()
     // Older derivatives already expose the full task state on the branch's
     // native tooltip; modern exposes it in the official row hover card.
-    if (variant.name === 'modern') expect(container.querySelector('[data-hover-content]')?.textContent).toContain('进行中')
+    if (variant.name.startsWith('modern')) expect(container.querySelector('[data-hover-content]')?.textContent).toContain('进行中')
     else expect(row.querySelector('[title="进行中"]')).not.toBeNull()
   })
   test.each(Object.keys(labels).filter(state => state !== 'working') as TaskState[])('keeps the %s badge unchanged', state => {
