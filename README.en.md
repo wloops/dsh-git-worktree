@@ -82,20 +82,22 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 
 | DeepSeek Harness | Plugin version |
 | --- | --- |
-| `0.2.1-rc.2` | `0.11.0` |
+| `0.2.1-rc.2` (build baseline) | `0.12.0` (current version) |
 | `0.2.0-rc.2` | `0.10.0` |
 | `0.1.x` | See the historical `0.9.x` compatibility records; not every `0.1.x` version has been verified |
 
 Match the plugin version to your Harness version rather than installing the latest plugin on an older Harness.
 
-The DSH `0.2.1-rc.2` adaptation included in `0.11.0` passed pre-release source compatibility checks. Browser, real AI conversation, desktop and Windows end-to-end acceptance for this combination remain incomplete. See the [compatibility notes](docs/COMPATIBILITY.md#english) and [validation report](docs/compatibility/0.2.1-rc.2.md) for the scope. Historical validation records remain valid for their original combinations, not as acceptance evidence for newer ones.
+`0.12.0` requires DSH `>=0.2.1-rc.2`, while the build baseline remains `0.2.1-rc.2`. Installation on `0.2.1-rc.5` is permitted but has not completed real-environment acceptance; unknown Hosts retain the official Workspace sidebar. Installation permission does not establish runtime compatibility.
+
+The DSH `0.2.1-rc.2` adaptation included in `0.11.0` passed pre-release source compatibility checks. Browser, real AI conversation, desktop and Windows end-to-end acceptance for this combination remain incomplete. This historical validation is not acceptance evidence for `0.12.0` or newer Hosts. See the [compatibility notes](docs/COMPATIBILITY.md#english), [validation report](docs/compatibility/0.2.1-rc.2.md) and [0.12.0 release notes](CHANGELOG.md#0120---2026-11-02) for the scope.
 
 ### Install
 
 For DSH `0.2.1-rc.2`, install through the `dsh` Web Profile:
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.11.0
+dsh plugin --profile web add dsh-git-worktree@0.12.0
 ```
 
 For other Harness versions, choose the matching plugin version from the table above first.
