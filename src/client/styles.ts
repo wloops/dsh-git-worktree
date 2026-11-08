@@ -1,6 +1,19 @@
 import { REVIEW_CONSOLE_STYLES } from './review-console/review-console.styles.js'
 
 export const WORKTREE_STYLES = String.raw`
+.dsh-git-worktree-native-tag,
+.dsh-git-worktree-native-hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.dsh-git-worktree-native-tag {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+.dsh-git-worktree-native-hover { font-size: 12px; }
 /* Managed owner decoration inside the version/hash-gated official Workspace row. */
 .dsh-git-worktree-sidebar-icon,
 .dsh-git-worktree-sidebar-badge {

@@ -1,12 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { mkdtempSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { describe, expect, test, vi } from 'vitest'
 
 import {
   createDefaultOptions,
+  inspectHarnessSource,
   createDshLaunch,
   devCacheRoot,
   discoverHarnessRoot,
@@ -17,6 +18,7 @@ import {
   prepareIsolatedWorkspacePatch,
   removeLocalSnapshot,
   runProcess,
+  runDevelopmentWeb,
   smokeLocalSnapshot,
 } from '../scripts/dev-dsh-lib.mjs'
 
@@ -51,9 +53,129 @@ describe('local DSH development workflow', () => {
       mode: 'run',
       profile: 'web',
       port: 3081,
-      repo: join(tmpdir(), 'dsh-git-worktree-dev', 'fixture'),
+      repo: undefined,
       repoExplicit: false,
     })
+  })
+
+  test('default command installs then opens normal Web without inspecting an occupied fixture or adopting the plugin', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-default-web-'))
+    const cacheRoot = join(root, 'cache')
+    mkdirSync(join(cacheRoot, 'fixture'), { recursive: true })
+    const sentinel = join(cacheRoot, 'fixture', 'important.txt')
+    writeFileSync(sentinel, 'preserve')
+    const defaults = createDefaultOptions(join(root, 'plugin'), cacheRoot)
+    const options = { ...defaults, ...parseDevDshArgs([], defaults) }
+    const calls: string[] = []
+    const validateRepository = vi.fn()
+    const run = vi.fn((_command, args, execution) => {
+      calls.push('launch')
+      expect(args).toEqual(['--profile', 'web', '--port', '3081'])
+      expect(args).not.toContain('--no-open')
+      expect(execution.cwd).toBe(homedir())
+    })
+    runDevelopmentWeb(options, {
+      install: () => { calls.push('install'); return { archivePath: 'development.tgz' } },
+      validateRepository, run, log: () => {},
+    })
+    expect(calls).toEqual(['install', 'launch'])
+    expect(validateRepository).not.toHaveBeenCalled()
+    expect(readFileSync(sentinel, 'utf8')).toBe('preserve')
+    expect(existsSync(join(cacheRoot, 'fixture', '.dsh-git-worktree-fixture.json'))).toBe(false)
+    expect(existsSync(join(cacheRoot, 'workspace-isolation.patch.yml'))).toBe(false)
+  })
+
+  test('default source checkout launch forwards normal Web options without creating a fixture', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-source-default-'))
+    const harnessRoot = createHarnessRoot(join(root, 'harness'))
+    const defaults = createDefaultOptions(join(root, 'plugin'), join(root, 'cache'))
+    const run = vi.fn((_command, args) => {
+      expect(sourceDshArgs(args)).toEqual(['--profile', 'web', '--port', '3081'])
+      const runnerIndex = args.findIndex((value: string) => value.endsWith('dsh-source-runner.mjs'))
+      expect(args[runnerIndex + 1]).toBe(homedir())
+    })
+    runDevelopmentWeb({ ...defaults, ...parseDevDshArgs([], defaults), harnessRoot }, {
+      install: () => ({ archivePath: 'dev.tgz' }), run, log: () => {},
+    })
+    expect(run).toHaveBeenCalledOnce()
+    expect(existsSync(defaults.cacheRoot)).toBe(false)
+  })
+
+  test('explicit repository still validates and isolated home still confines Documents', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-explicit-run-'))
+    const defaults = createDefaultOptions(join(root, 'plugin'), join(root, 'cache'))
+    const validateRepository = vi.fn(() => ({ path: join(root, 'chosen') }))
+    const run = vi.fn((_command, args, execution) => {
+      expect(execution.cwd).toBe(join(root, 'chosen'))
+      expect(args).toContain('--no-open')
+      expect(args).toContain('--patch')
+    })
+    runDevelopmentWeb({ ...defaults, ...parseDevDshArgs(['--repo', '../chosen'], defaults), isolated: true }, {
+      install: () => ({ archivePath: 'dev.tgz' }), validateRepository, run, log: () => {},
+    })
+    expect(validateRepository).toHaveBeenCalledWith(join(root, 'chosen'), { explicit: true })
+    expect(readFileSync(join(defaults.cacheRoot, 'workspace-isolation.patch.yml'), 'utf8')).toContain('documentsDirectory:')
+    expect(existsSync(join(root, 'chosen', '.git'))).toBe(false)
+  })
+
+  test('installation failure prevents Web launch; invalid explicit repository prevents installation', () => {
+    const defaults = createDefaultOptions('/plugin', '/cache')
+    const options = { ...defaults, ...parseDevDshArgs([], defaults) }
+    const run = vi.fn()
+    expect(() => runDevelopmentWeb(options, { install: () => { throw new Error('install failed') }, run })).toThrow('install failed')
+    expect(run).not.toHaveBeenCalled()
+    const install = vi.fn()
+    expect(() => runDevelopmentWeb({ ...options, repoExplicit: true, repo: '/missing' }, {
+      install, run, validateRepository: () => { throw new Error('invalid repository') },
+    })).toThrow('invalid repository')
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  test('selected source with missing new client bundles is rejected before installation, even when tsx exists', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-client-preflight-'))
+    const harnessRoot = createHarnessRoot(join(root, 'harness'))
+    for (const relative of ['packages/session/message-quotes', 'packages/client/ui-file-drag']) {
+      const pkg = join(harnessRoot, relative)
+      mkdirSync(pkg, { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: relative, dsh: { client: { platform: 'web' } }, exports: { './client': { default: './lib/client.js' } } }))
+    }
+    const missing = inspectHarnessSource(harnessRoot).missing
+    expect(missing).toEqual(['packages/client/ui-file-drag/lib/client.js', 'packages/session/message-quotes/lib/client.js'])
+    const install = vi.fn()
+    const run = vi.fn()
+    expect(() => runDevelopmentWeb({ projectRoot: root, harnessRoot, profile: 'web', port: 3081, cacheRoot: join(root, 'cache') }, { install, run })).toThrow('message-quotes/lib/client.js')
+    expect(install).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    expect(existsSync(join(root, 'cache'))).toBe(false)
+    // Real subprocess proves preflight exits before either supplied side effect.
+    const moduleUrl = new URL('../scripts/dev-dsh-lib.mjs', import.meta.url).href
+    const sentinel = join(root, 'installed')
+    const script = `import { runDevelopmentWeb } from ${JSON.stringify(moduleUrl)}; import { writeFileSync } from 'node:fs'; try { runDevelopmentWeb(${JSON.stringify({ projectRoot: root, harnessRoot, profile: 'web', port: 3081, cacheRoot: join(root, 'cache') })}, { install() { writeFileSync(${JSON.stringify(sentinel)}, 'unexpected'); }, run() { throw new Error('unexpected launch'); } }); } catch (error) { console.log(error.message); process.exitCode = 23; }`
+    try {
+      execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', stdio: 'pipe' })
+      throw new Error('expected preflight failure')
+    } catch (error: any) {
+      expect(error.status).toBe(23)
+      expect(error.stdout).toContain('ui-file-drag/lib/client.js')
+    }
+    expect(existsSync(sentinel)).toBe(false)
+  })
+
+  test('all declared Web artifacts are checked, browser exports win and existing files allow a single selected runtime', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-artifact-exports-'))
+    const harnessRoot = createHarnessRoot(join(root, 'harness'))
+    const pkg = join(harnessRoot, 'packages', 'example')
+    mkdirSync(join(pkg, 'lib'), { recursive: true })
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ dsh: { client: { platform: 'web' } }, exports: { './client': { browser: './lib/browser.js', default: './lib/node.js' } } }))
+    expect(inspectHarnessSource(harnessRoot).missing).toEqual(['packages/example/lib/browser.js'])
+    writeFileSync(join(pkg, 'lib', 'browser.js'), 'window.__ModuleLoader__.load({})')
+    expect(inspectHarnessSource(harnessRoot).missing).toEqual([])
+    const install = vi.fn(() => ({ archivePath: 'dev.tgz' }))
+    const run = vi.fn()
+    runDevelopmentWeb({ projectRoot: root, harnessRoot, profile: 'web', port: 3081 }, { install, run, log: () => {} })
+    expect(install.mock.calls[0]?.[0].harnessRoot).toBe(harnessRoot)
+    expect(run.mock.calls[0]?.[0]).toBe(join(harnessRoot, 'node_modules', '.bin', executable('pnpm')))
+    expect(sourceDshArgs(run.mock.calls[0]?.[1])).toEqual(['--profile', 'web', '--port', '3081'])
   })
 
   test('Given an isolated DSH home When selecting the dev cache Then older Profile archives remain outside cleanup', () => {
@@ -69,9 +191,7 @@ describe('local DSH development workflow', () => {
     expect(readFileSync(patchPath, 'utf8')).toBe(
       `- id: workspace-controller\n  config:\n    documentsDirectory: ${JSON.stringify(join(cacheRoot, 'Documents'))}\n`,
     )
-    expect(createDefaultOptions('/plugin', cacheRoot, true).repo).toBe(
-      join(cacheRoot, 'Documents', 'deepseek-harness', 'default-workspace'),
-    )
+    expect(createDefaultOptions('/plugin', cacheRoot, true).repo).toBeUndefined()
     const launch = createDshLaunch({
       projectRoot: join(tmpdir(), 'dsh-plugin-root'),
       workspaceRoot: join(tmpdir(), 'dsh-fixture'),
@@ -186,7 +306,7 @@ describe('local DSH development workflow', () => {
 
     expect(() => installLocalSnapshot({
       projectRoot: join(root, 'plugin'), harnessRoot, profile: 'web', cacheRoot, run,
-    })).toThrow(`pnpm --dir "${harnessRoot}" install`)
+    })).toThrow(/Missing required CLI\/client files/)
     expect(run).not.toHaveBeenCalled()
     expect(existsSync(cacheRoot)).toBe(false)
   })

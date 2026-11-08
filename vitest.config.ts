@@ -13,6 +13,7 @@ export default defineConfig({
       'virtual:dsh-official-workspace-client-alpha': fileURLToPath(
         new URL('./tests/official-workspace-client-alpha.mock.ts', import.meta.url),
       ),
+      'virtual:dsh-official-workspace-client-022': fileURLToPath(new URL('./tests/official-workspace-client-022.mock.ts', import.meta.url)),
       'virtual:dsh-official-workspace-client-rc5': fileURLToPath(
         new URL('./tests/official-workspace-client-rc5.mock.ts', import.meta.url),
       ),

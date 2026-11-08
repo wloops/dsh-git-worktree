@@ -1,3 +1,5 @@
+import { registerNativeWorkspaceDecorations } from '../workspace-sidebar/native.js'
+import { apply as applyV022Workspace, inject as v022WorkspaceInject } from 'virtual:dsh-official-workspace-client-022'
 import { readClientLanguage } from '../i18n.js'
 import { createTranslator } from '../../i18n/core.js'
 import { transportMessages } from '../../i18n/transport-messages.js'
@@ -61,8 +63,10 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
   // Pick exactly one based on the Host-resolved package version, not timing of
   // Client services (shortcuts is absent in alpha and late to start in rc.2).
   const topology = await adapter.sidebarTopology()
-  if (!topology.ok) throw new Error('Could not identify the installed Host Workspace generation.')
-  const flavor = topology.value.workspaceClientFlavor
+  // A failed metadata read cannot justify taking over the official provider.
+  // Native contributions can recover on a later list/review refresh instead
+  // of preventing unrelated Worktree UI from mounting.
+  const flavor = topology.ok ? topology.value.workspaceClientFlavor : undefined
   if (flavor === 'legacy') {
     if (typeof (ctx.get('sessions') as { open?: unknown }).open !== 'function') {
       throw new Error('Legacy Workspace Browser requires sessions.open().')
@@ -71,10 +75,10 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
       ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0], adapter,
     )
     mountTools(ctx)
-  } else if (flavor === 'modern' || flavor === 'modern-rc5') {
-    const required = (flavor === 'modern-rc5' ? rc5WorkspaceInject : officialWorkspaceInject)
+  } else if (flavor === 'modern' || flavor === 'modern-rc5' || flavor === 'modern-022') {
+    const required = (flavor === 'modern-022' ? v022WorkspaceInject : flavor === 'modern-rc5' ? rc5WorkspaceInject : officialWorkspaceInject)
       .filter(service => service !== 'remote.directoryPicker')
-    const applyWorkspace = flavor === 'modern-rc5' ? applyRc5Workspace : applyOfficialWorkspace
+    const applyWorkspace = flavor === 'modern-022' ? applyV022Workspace : flavor === 'modern-rc5' ? applyRc5Workspace : applyOfficialWorkspace
     // Same filtered subset as the entry inject: providing `uiWorkspace` must
     // never wait for the directory picker (see the inject comment above).
     ctx.inject(required, child => {
@@ -98,7 +102,9 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
       mountTools(child)
     })
   } else {
-    // Host lifecycle leaves the official provider enabled in this case.
+    // Unknown Host: extend only declared public seats on its own official
+    // Browser. Decoration capability is independent of the legacy whitelist.
+    registerNativeWorkspaceDecorations(ctx as unknown as Parameters<typeof registerNativeWorkspaceDecorations>[0], adapter)
     mountTools(ctx)
   }
 }

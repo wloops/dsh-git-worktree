@@ -1,3 +1,4 @@
+import { decorateV022WorkspaceClient, readV022WorkspaceClient } from '../scripts/workspace-sidebar-upstream-022.mjs'
 // @vitest-environment jsdom
 import { createRequire } from 'node:module'
 import { transferableAbortController } from 'node:util'
@@ -28,6 +29,7 @@ function officialApply(source: string): (ctx: Context) => void {
 }
 
 const variants = [
+  { name: 'modern-022', source: () => decorateV022WorkspaceClient(readV022WorkspaceClient()) },
   { name: 'modern-rc5', source: () => decorateRc5WorkspaceClient(readRc5WorkspaceClient()) },
   { name: 'alpha', source: () => decorateAlphaWorkspaceClient(readAlphaWorkspaceClient()) },
   { name: 'next', source: () => decorateNextWorkspaceClient(readNextWorkspaceClient()) },
@@ -66,6 +68,8 @@ describe.each(variants)('$name official Session actions', variant => {
     const unarchive = vi.fn(async () => {})
     const forkFailure = new Error('ordinary fork forwarded to Host')
     const fork = vi.fn(async () => { throw forkFailure })
+    ctx.provide('contextMenus', { register: () => () => {}, active: source(null) } as never)
+    ctx.provide('remoteAccess', { source: () => source(true) } as never)
     ctx.provide('slots', {
       inject(_name: string, callback: () => unknown) {
         const result = callback()
@@ -136,7 +140,7 @@ describe.each(variants)('$name official Session actions', variant => {
         const onCreated = vi.fn()
         await expect(navigation.forkSession('ordinary', onCreated, { allowMigration: false })).rejects.toBe(forkFailure)
         expect(fork).toHaveBeenLastCalledWith({ sessionId: 'ordinary', increaseTitle: true, onCreated, allowMigration: false })
-        expect(descriptors.some(descriptor => descriptor.id === 'session-id')).toBe(true)
+        if (variant.name !== 'modern-022') expect(descriptors.some(descriptor => descriptor.id === 'session-id')).toBe(true)
       }
       if (variant.name !== 'alpha') {
         const confirm = descriptors.find(descriptor => descriptor.id === 'workspace.session-archive')!

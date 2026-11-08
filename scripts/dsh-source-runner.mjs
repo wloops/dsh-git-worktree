@@ -8,7 +8,7 @@ if (!workspaceRoot || !cliEntry) {
 }
 
 // pnpm resolves tsx and the Harness workspace before this point. Switch only
-// the application cwd so newly created DSH Sessions use the intended fixture.
+// the application cwd to the selected launch directory, independent of pnpm --dir.
 process.chdir(workspaceRoot)
 process.argv = [process.execPath, cliEntry, ...args]
 const cli = await import(pathToFileURL(cliEntry).href)

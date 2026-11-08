@@ -2,6 +2,23 @@
 
 本项目的显著变更记录在此文件中。版本号遵循 Semantic Versioning；在 `0.x` 阶段，minor 版本可能包含需要迁移的公开能力调整。
 
+## [Unreleased]
+
+### Added
+
+- 开始官方原生侧栏迁移：未知 Host 保留官方列表，按公共 Slot 的实际声明挂载 Worktree 行尾与悬浮信息，不依赖版本白名单。共享拓扑读取合并刷新、拒绝过期及卸载后结果；读取失败只撤回标记，不阻断其他 Worktree UI。
+- 新增 `docs/SIDEBAR-NATIVE-INTEGRATION.md`，记录公开 API 的可行范围和聚合、常驻 tag、统一动作保护的最小上游缺口。完整原生聚合尚未具备接入条件，已知版本继续保留兼容派生；本轮未对外提交 issue/PR。
+
+### Fixed
+
+- 显式 `--harness` 在安装开发版前检查 CLI 依赖和官方 Web 包声明的客户端产物，缺失时报告文件与构建指引并停止；不再仅凭 tsx 存在就继续安装，也不在失败后静默切换运行时。
+
+- 修复 `pnpm run dev:dsh` 安装开发版后被默认临时 fixture 标记检查阻断的问题：无参数直接安装并启动常规 Web UI，不要求测试仓库或额外参数，不改写遗留目录；保留显式 `--repo` 只读校验及 `DSH_HOME` 隔离模式。
+
+- 修复 DSH `0.2.2-rc.1` 因未知版本降级到官方未聚合侧栏的问题：新增精确来源与 SHA-256 门禁的独立 `modern-022` factory，恢复 Worktree 会话聚合、身份及状态展示，保留旧版精确适配与未知版本降级。
+- 同步新版官方列表的结构化右键菜单、资源权限检查、Session ID 搜索、手动排序、选择恢复、行首/行尾/悬浮扩展槽与原生状态展示。保留 owner 置顶、重命名、复制 ID 和归档，保护 fork/新建及 workspace 管理操作；新建草稿选项完整透传。
+- 显式允许 DSH `0.2.2-rc.1` 预发布及 Cordis 4.1 / Loader 1.1 peers，运行时 singleton 仍由宿主提供。官方自定义 API 与验证边界见 `docs/COMPATIBILITY.md` 和 Sidebar `UPSTREAM.md`；尚未完成真实新版 Host/desktop/AI/Windows 全流程验收。
+
 ## [0.12.1] - 2026-11-04
 
 ### Fixed

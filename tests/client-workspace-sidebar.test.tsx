@@ -112,6 +112,20 @@ function InspectBrowser(props: WorkspaceBrowserProps) {
 }
 
 describe('Managed Workspace sidebar', () => {
+  test('forwards official new-session draft options unchanged', async () => {
+    const port = adapter()
+    const props = browserProps()
+    const options = { whenDraftExists: 'replace', agentPreset: 'coding' }
+    function Browser(projected: WorkspaceBrowserProps) {
+      return <button onClick={() => {
+        void (projected.startSession as Function)(localWorkspace, options)
+      }}>start with options</button>
+    }
+    render(<ClientI18nProvider><ManagedOfficialWorkspaceBrowser {...props} adapter={port} OfficialBrowser={Browser} /></ClientI18nProvider>)
+    await waitFor(() => expect(port.sidebarTopology).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('start with options'))
+    expect(props.startSession).toHaveBeenCalledWith(localWorkspace, options)
+  })
   test('applies one official declaration tree while wrapping only the Browser component', () => {
     const descriptors: Record<string, unknown>[] = []
     const components: unknown[] = []

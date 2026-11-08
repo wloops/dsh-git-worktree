@@ -45,7 +45,7 @@ const STATE_LABELS = (t: ClientTranslator = defaultClientTranslator) => ({
   discarded: t("discarded"),
 })
 
-function currentTasks(topology: WorktreeSidebarTopologyResponse, t: ClientTranslator = defaultClientTranslator): ProjectedManagedTask[] {
+export function currentManagedSidebarTasks(topology: WorktreeSidebarTopologyResponse, t: ClientTranslator = defaultClientTranslator): ProjectedManagedTask[] {
   const byOwner = new Map<string, ProjectedManagedTask>()
   for (const project of topology.projects) {
     if (!project?.project?.id || !project.project.name || !Array.isArray(project.tasks)) continue
@@ -80,7 +80,7 @@ export function projectManagedWorkspaceSidebar(input: {
   archivedSessionIds?: readonly string[]
   currentSessionId?: string
 }, t: ClientTranslator = defaultClientTranslator): ManagedWorkspaceSidebarProjection {
-  const tasks = currentTasks(input.topology, t)
+  const tasks = currentManagedSidebarTasks(input.topology, t)
   const archived = new Set(input.archivedSessionIds ?? [])
   const protectedSessionIds = new Set(tasks.map(task => task.ownerSessionId))
   const projected = input.workspaces.map(workspace => ({ ...workspace, sessionIds: [...workspace.sessionIds] }))

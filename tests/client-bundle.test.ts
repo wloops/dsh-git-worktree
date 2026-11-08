@@ -45,7 +45,8 @@ function platformRequire(nodeRequire: NodeRequire, specifier: string): unknown {
     const names = [...readFileSync('lib/client.js', 'utf8').matchAll(/_deepseek_ai_dsh_client_ui_primitives\.([A-Za-z0-9_]+)/g)].map(match => match[1])
     return Object.fromEntries(names.map(name => [name,
       name === 'relativeTime' ? () => ({ unit: 'second', value: 1 })
-        : name === 'Tooltip' || name === 'HoverCardGroup' ? ({ children }: any) => children
+        : name === 'Tooltip' || name === 'HoverCardGroup' || name === 'AnimatedRows' ? ({ children }: any) => children
+        : name === 'useRowDragPreview' ? () => ({ start() {}, clear() {} })
         : name === 'HoverCard' ? ({ anchor }: any) => anchor
           : name.startsWith('Icon') ? () => createElement('i', { 'data-icon': name })
             : () => null,
@@ -69,13 +70,13 @@ describe('built Client ModuleLoader artifact', () => {
   test('inlines strict Remote codecs instead of requiring packages absent from the browser module table', () => {
     const source = readFileSync(resolve('lib/client.js'), 'utf8')
     const required = [...new Set([...source.matchAll(/require\(["']([^"']+)["']\)/gu)].map(match => match[1]))]
-    expect(required).toEqual([
+    expect(required.toSorted()).toEqual([
       'react',
       'react/jsx-runtime',
       '@deepseek-ai/dsh-client-ui-primitives',
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-client-store',
-    ])
+    ].toSorted())
   })
 
   test('Given the emitted browser script When it executes Then it registers the package id and materializable exports', () => {
@@ -149,6 +150,7 @@ describe('built Client ModuleLoader artifact', () => {
     ctx.provide('remote.session', {} as never)
     ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
     ctx.provide('shortcuts', { register: vi.fn(() => () => {}) } as never)
+    ctx.provide('contextMenus', { register: () => () => {}, active: source(null) } as never)
 
     await mountAccess(ctx, access)
     const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
@@ -194,7 +196,7 @@ describe('built Client ModuleLoader artifact', () => {
     expect(document.querySelector('style[data-dsh-git-worktree]')).toBeNull()
   })
 
-  test.each(['modern', 'modern-rc5'])('boots %s whose picker provider waits for uiWorkspace, then resolves picker calls lazily', async flavor => {
+  test.each(['modern', 'modern-rc5', 'modern-022'])('boots %s whose picker provider waits for uiWorkspace, then resolves picker calls lazily', async flavor => {
     const nodeRequire = createRequire(import.meta.url)
     const { gateway, access } = gatewayClient()
     const worktree = executeBundle(readFileSync(resolve('lib/client.js'), 'utf8'))
@@ -249,6 +251,7 @@ describe('built Client ModuleLoader artifact', () => {
     ctx.provide('remote.session', {} as never)
     ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
     ctx.provide('shortcuts', { register: vi.fn(() => () => {}) } as never)
+    ctx.provide('contextMenus', { register: () => () => {}, active: source(null) } as never)
 
     await mountAccess(ctx, access)
     const fiber = ctx.plugin({ inject: worktree.inject, apply: worktree.apply })
@@ -258,7 +261,7 @@ describe('built Client ModuleLoader artifact', () => {
     const browser = register.mock.calls.find(call => call[0].name === 'sidebar.workspaces')!
     expect(register.mock.calls.filter(call => call[0].name === 'sidebar.workspaces')).toHaveLength(1)
     expect(Object.keys(browser[0].children)).toEqual(expect.arrayContaining([
-      'sidebar.workspaces.directoryFlow', 'sidebar.workspaces.session.menu.item',
+      'sidebar.workspaces.directoryFlow',
       'sidebar.workspaces.session.row.action', 'sidebar.session.row.leading', 'sidebar.session.row.hover',
     ]))
     const summary = (id: string, title: string, cwd: string) => ({ id, title, displayTitle: title, cwd, blank: false, running: false, updatedAt: 1, retainedBy: {}, origin: 'user' })
@@ -271,6 +274,8 @@ describe('built Client ModuleLoader artifact', () => {
     ], archivedSessionIds: [], pinnedSessionIds: [], phase: 'ready', state: 'idle' }
     const select = (value: unknown) => (selector: (state: any) => unknown) => selector(value)
     const view = render(createElement(browser[1] as ComponentType<any>, {
+      useWorkspaceActionRequest: select(null),
+      useSessionAccess: () => true, useWorkspaceAccess: () => true, useRemoteAccess: () => true, useContextMenu: () => ({ getTriggerProps: () => ({}) }), useContextMenuTarget: select(null),
       wide: true, useSessions: select(sessions), useWorkspaces: select(workspaces),
       usePanelInfo: select({ activePanelId: null }), useSessionStatus: select(new Map()),
       useStore: select({ groupBy: 'workspace', orderBy: 'updated', groupExpansion: { 'project-local': true, managed: true }, sessionOrderByAccount: {} }),
@@ -294,8 +299,8 @@ describe('built Client ModuleLoader artifact', () => {
     const openWorkspace = vi.spyOn(navigation, 'openWorkspace').mockResolvedValue(undefined)
     const openWorkspaceSession = vi.spyOn(navigation, 'openWorkspaceSession').mockResolvedValue(undefined)
     navigation.startSession('project-local')
-    expect(flavor === 'modern-rc5' ? openWorkspace : openWorkspaceSession).toHaveBeenCalledOnce()
-    expect(flavor === 'modern-rc5' ? openWorkspaceSession : openWorkspace).not.toHaveBeenCalled()
+    expect(flavor !== 'modern' ? openWorkspace : openWorkspaceSession).toHaveBeenCalledOnce()
+    expect(flavor !== 'modern' ? openWorkspaceSession : openWorkspace).not.toHaveBeenCalled()
     view.unmount()
     openWorkspace.mockRestore()
     openWorkspaceSession.mockRestore()

@@ -1,14 +1,28 @@
 # Harness compatibility / Harness 兼容性
 
-> 当前开发版安装策略：DSH peer 使用最低版本 `>=0.2.1-rc.2`，不设置预防性上限；仅在确认破坏性变化后调整要求。开发依赖和内嵌侧栏来源继续精确锁定。未知宿主不复用旧侧栏，而保留官方 Workspace，其他插件功能按实际 API 运行。允许安装并不等于已验收；SemVer 默认仅自动包含同一 `0.2.1` 核心版本的后续 RC，未来其他核心版本的预发布不属于默认匹配。下方精确 peer 描述均为已发布历史版本的记录。
+> 当前开发版安装策略：DSH peer 使用最低版本 `>=0.2.1-rc.2` 并显式包含 `0.2.2-rc.1`，不设置预防性上限；仅在确认破坏性变化后调整要求。开发依赖和内嵌侧栏来源继续精确锁定。未知宿主不复用旧侧栏，而保留官方 Workspace，其他插件功能按实际 API 运行。允许安装并不等于已验收；SemVer 默认仅自动包含同一 `0.2.1` 核心版本的后续 RC，未来其他核心版本的预发布不属于默认匹配。下方精确 peer 描述均为已发布历史版本的记录。
 
-> Development installation policy: DSH peers use a minimum of `>=0.2.1-rc.2`, with no speculative upper bound; requirements change when breaking changes are confirmed. Build dependencies and embedded Browser sources remain exact. Unknown Hosts retain the official Workspace rather than reusing an unverified derivative. Installation permission is not acceptance evidence. Standard SemVer includes later RCs of the same `0.2.1` core; prereleases of other future cores are not matched by default. Exact peer constraints below describe historical published releases.
+> Development installation policy: DSH peers use a minimum of `>=0.2.1-rc.2` plus explicit `0.2.2-rc.1`, with no speculative upper bound; requirements change when breaking changes are confirmed. Build dependencies and embedded Browser sources remain exact. Unknown Hosts retain the official Workspace rather than reusing an unverified derivative. Installation permission is not acceptance evidence. Standard SemVer includes later RCs of the same `0.2.1` core; prereleases of other future cores are not matched by default. Exact peer constraints below describe historical published releases.
 
 [中文](#中文) · [English](#english)
 
 ## 中文
 
-### 未发布：0.2.1-rc.5 侧栏适配
+### 官方原生集成迁移
+
+未知 Host 不再只剩未扩展的官方列表：在官方声明行尾或悬浮 Slot 时，插件按能力挂载 Worktree 标记；没有对应槽则等待声明，不接管 Provider，不改全局数据。已知版本仍保留聚合派生，**尚未实现无白名单的完整聚合**。原因及最小官方接口提案见 [长期集成说明](SIDEBAR-NATIVE-INTEGRATION.md)。
+
+### 未发布：0.2.2-rc.1 侧栏适配
+
+原因为 Host exact-version 门禁尚不识别 `0.2.2-rc.1`，因此有意保留官方 Provider，未应用 Worktree 聚合。当前新增独立 exact version/SHA-256 来源，经 strict Remote `modern-022` 选取；不是放宽版本号后套用旧 Browser。构建基线仍 rc.2，新增 alias 仅用于来源；peer 显式包含新预发布，以及 Cordis 4.1 / Loader 1.1，不打入私有 singleton。
+
+保留新版结构化右键菜单、资源权限、Session ID 搜索、手动排序、选择恢复、路径悬浮信息、AnimatedRows、行首/行尾/悬浮扩展与原生状态语义。托管 owner 的置顶、重命名、复制 ID、归档继续可用；fork、新建及受保护工作区管理仍经过所有权 guard。
+
+**官方自定义结论：** 已支持插件级行首（idle 时）、行尾、悬浮卡片、快捷按钮、旧式菜单 Slot，以及结构化 `ctx.contextMenus.register`。未发现用户可配置的列表模板或公开的 Workspace 成员投影扩展；现有接口不足以直接完成 Worktree 跨工作区聚合，所以本轮仍使用精确派生，不移除官方扩展槽。
+
+已执行来源/源码语义、实际构建 Browser 的 jsdom 聚合与菜单、CSS、Loader 回归，并用 Chromium 假数据静态行样例确认截断、徽标尺寸及悬停隐藏。**这不是完整 0.2.2 Host 验收**：当前开发 singleton 仍 Cordis 4.0.5 / Loader 1.0.6；新运行时 4.1 / 1.1、真实菜单键盘/焦点、desktop、AI 和 Windows 全流程未验证。未发布或修改用户安装。
+
+### 历史：0.2.1-rc.5 侧栏适配
 
 当前未发布源码（包版本暂仍 `0.12.0`）为 `0.2.1-rc.5` 新增独立官方 Workspace 来源与包名/版本/SHA-256 门禁，Host 实际解析的 agent 版本通过 strict Remote `modern-rc5` 选择该 factory。rc.2 仍选原 `modern` factory；alpha/next 与未知 Host 官方降级保持。保留 rc.5 blank 复用、preset 筛选及草稿初始化，不用旧 factory 冒充新 Host。
 

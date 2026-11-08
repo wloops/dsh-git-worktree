@@ -34,10 +34,10 @@ export function createDefaultOptions(projectRoot, cacheRoot, isolated = false) {
     cacheRoot: resolve(cacheRoot),
     profile: 'web',
     port: 3081,
-    // Match the Host's own first-use Workspace path when DSH_HOME is isolated.
-    repo: isolated
-      ? resolve(cacheRoot, 'Documents', 'deepseek-harness', 'default-workspace')
-      : resolve(cacheRoot, 'fixture'),
+    // No implicit Git repository: DSH owns its default Workspace and saved
+    // selection. Start outside the plugin checkout rather than adopting it.
+    repo: undefined,
+    launchRoot: homedir(),
   }
 }
 
@@ -209,9 +209,53 @@ function isHarnessRoot(path) {
     && existsSync(join(path, 'apps', 'cli', 'src', 'bin.ts'))
 }
 
+/** Inspect declared Web artifacts without importing or modifying the source tree. */
+export function inspectHarnessSource(path) {
+  const root = resolve(path)
+  const missing = []
+  for (const file of ['package.json', 'apps/cli/src/bin.ts', 'node_modules/tsx/package.json', `node_modules/.bin/${executable('pnpm')}`]) {
+    if (!existsSync(join(root, file))) missing.push(file)
+  }
+  const visit = (directory, depth = 0) => {
+    if (!existsSync(directory) || depth > 8) return
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink() || entry.name === 'node_modules' || entry.name.startsWith('.') || entry.name === 'lib' || entry.name === 'dist') continue
+      const target = join(directory, entry.name)
+      if (entry.isDirectory()) visit(target, depth + 1)
+      else if (entry.name === 'package.json') {
+        let manifest
+        try { manifest = JSON.parse(readFileSync(target, 'utf8')) } catch {
+          throw new Error(`Invalid Harness package manifest: ${target}`)
+        }
+        if (manifest.dsh?.client?.platform !== 'web') continue
+        const exported = manifest.exports?.['./client']
+        const select = value => typeof value === 'string' ? value
+          : value && typeof value === 'object' ? select(value.browser ?? value.default ?? value.import) : undefined
+        const artifact = select(exported)
+        if (!artifact) throw new Error(`Harness Web package ${manifest.name ?? target} does not declare a usable ./client export.`)
+        if (!artifact.startsWith('./') || artifact.split(/[\\/]/u).includes('..')) throw new Error(`Invalid Harness client export in ${target}`)
+        const artifactPath = join(directory, artifact)
+        if (!existsSync(artifactPath) || !statSync(artifactPath).isFile()) missing.push(artifactPath.slice(root.length + 1))
+      }
+    }
+  }
+  for (const subtree of ['packages', 'apps', 'vendor']) visit(join(root, subtree))
+  return { root, missing }
+}
+
+export function assertHarnessSourceReady(path) {
+  const inspection = inspectHarnessSource(path)
+  if (inspection.missing.length === 0) return
+  let build = 'Run the source checkout’s documented dependency installation and client build before retrying.'
+  try {
+    const manifest = JSON.parse(readFileSync(join(inspection.root, 'package.json'), 'utf8'))
+    if (typeof manifest.scripts?.build === 'string') build += ' Its root package declares `pnpm run build`.'
+  } catch { /* Missing root manifest is already reported below. */ }
+  throw new Error(`Harness source checkout is not prepared: ${inspection.root}\nMissing required CLI/client files:\n${inspection.missing.map(file => `  - ${file}`).join('\n')}\n${build}\nNo plugin installation or Web launch was performed; the selected runtime was not changed.`)
+}
+
 function isHarnessSourceReady(path) {
-  return isHarnessRoot(path)
-    && existsSync(join(path, 'node_modules', 'tsx', 'package.json'))
+  try { return isHarnessRoot(path) && inspectHarnessSource(path).missing.length === 0 } catch { return false }
 }
 
 export function discoverHarnessRoot(projectRoot, environment = process.env) {
@@ -257,11 +301,7 @@ export function createDshInvocation(options) {
   if (!isHarnessRoot(harnessRoot)) {
     throw new Error(`Harness source checkout is invalid: ${harnessRoot}`)
   }
-  if (!isHarnessSourceReady(harnessRoot)) {
-    throw new Error(
-      `Harness source checkout is not prepared: ${harnessRoot}. Run pnpm --dir "${harnessRoot}" install before dev preview.`,
-    )
-  }
+  assertHarnessSourceReady(harnessRoot)
   const pinnedPnpm = join(harnessRoot, 'node_modules', '.bin', executable('pnpm', options.platform))
   if (!existsSync(pinnedPnpm)) {
     throw new Error(`Harness source checkout is missing its pinned pnpm: ${pinnedPnpm}. Install the checkout's development dependencies before dev preview.`)
@@ -294,6 +334,33 @@ export function createDshLaunch(options) {
       ...(options.isolationPatchPath ? ['--no-open'] : []),
     ],
   })
+}
+
+/** Install the current plugin, then launch the normal Web profile, not a fixture. */
+export function runDevelopmentWeb(options, dependencies = {}) {
+  const install = dependencies.install ?? installLocalSnapshot
+  const launchProcess = dependencies.run ?? runProcess
+  const validateRepository = dependencies.validateRepository ?? ensureDevFixture
+  const planLaunch = dependencies.planLaunch ?? createDshLaunch
+  const log = dependencies.log ?? console.log
+  // Validate only an explicitly requested repository, before changing the
+  // installation. Unrelated stale fixture directories are never inspected.
+  const workspaceRoot = options.repoExplicit
+    ? validateRepository(options.repo, { explicit: true }).path
+    : options.launchRoot ?? homedir()
+  const launch = planLaunch({
+    ...options,
+    workspaceRoot,
+    ...(options.isolated ? { isolationPatchPath: prepareIsolatedWorkspacePatch(options.cacheRoot) } : {}),
+  })
+  const installed = install(options)
+  log(`\nLocal snapshot: ${installed.archivePath}`)
+  if (options.repoExplicit) log(`Using repository: ${workspaceRoot}`)
+  log(`Starting DSH at http://127.0.0.1:${options.port}`)
+  log(launch.source ? `Using Harness source checkout: ${options.harnessRoot}` : 'Using the installed dsh executable.')
+  if (options.isolated) log('Isolated DSH home: browser auto-open is disabled.')
+  log('Press Ctrl+C to stop. No npm/GitHub publication is performed.\n')
+  return launchProcess(launch.command, launch.args, { cwd: launch.cwd })
 }
 
 /** Confine Host first-use Documents workspaces as well as its Profile to DSH_HOME. */

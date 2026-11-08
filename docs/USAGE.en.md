@@ -300,11 +300,23 @@ pnpm run build
 pnpm run check:publish
 ```
 
-Run the end-to-end environment:
+Install the current development snapshot and open the normal Web UI (no extra options required):
 
 ```bash
 pnpm run dev:dsh
 ```
+
+By default this builds and installs into the normal `web` Profile, then starts DSH with its usual browser-opening behavior and Workspace selection. It does not create or validate a disposable Git repository, touch a stale `dsh-git-worktree-dev/fixture`, or use the plugin checkout as a test target. The launch cwd is the user home; no repository-selection argument is passed. A prepared nearby Harness source checkout and its pinned pnpm are used when available, otherwise the installed `dsh` runs.
+
+For deterministic source selection, run from the Local Checkout (no `--repo` needed):
+
+```bash
+pnpm run dev:dsh -- --harness ../deepseek-harness
+```
+
+An explicit path does not build that checkout. Before plugin installation, the script checks CLI/tsx/pinned pnpm and declared Web `./client` artifacts under `packages`, `apps`, and `vendor`. Missing files are listed and stop installation and launch without runtime fallback. Follow that Harness checkout's own installation/client-build instructions before retrying; when its root manifest declares `build`, the error also points to `pnpm run build`. This command never builds or modifies the neighboring Harness source. File existence alone does not establish artifact freshness or successful real Host startup.
+
+An explicit `--repo` remains optional: it must name an existing Git root and is validated read-only before installation. Explicit `DSH_HOME` isolation still confines Profile/cache/Documents and disables automatic browser opening; it no longer creates a Git fixture.
 
 Common variants:
 

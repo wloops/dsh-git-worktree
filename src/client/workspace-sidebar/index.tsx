@@ -141,9 +141,9 @@ export function ManagedOfficialWorkspaceBrowser({
     {...props}
     useWorkspaces={useProjectedWorkspaces}
     useSessions={useProjectedSessions}
-    startSession={async (workspaceId: WorkspaceId) => {
-      if (protectedWorkspaceIds.has(workspaceId)) return
-      await props.startSession(workspaceId)
+    startSession={async (workspaceId: WorkspaceId, ...options: unknown[]) => {
+      if (guard ? guard.blockWorkspace(workspaceId) : protectedWorkspaceIds.has(workspaceId)) return
+      await (props.startSession as (...args: unknown[]) => unknown)(workspaceId, ...options)
     }}
     forkSession={(sessionId: SessionId) => {
       if (protectedIds.has(sessionId)) return
@@ -242,6 +242,28 @@ function officialContextProxy(
   return new Proxy(ctx, {
     get(target, key, receiver) {
       if (key === 'slots') return proxySlots
+      if (key === 'contextMenus' && target.contextMenus) {
+        const menus = target.contextMenus as Record<string, unknown>
+        return new Proxy(menus, {
+          get(menuTarget, menuKey) {
+            const value = menuTarget[menuKey as string]
+            if (menuKey === 'register') return (descriptor: {
+              id: string; target: string; resolve: (row: any, ...args: any[]) => unknown
+            }) => {
+              const safe = new Set(['session.pin', 'session.rename', 'session.archive', 'session.id'])
+              return (value as Function).call(menuTarget, {
+                ...descriptor,
+                resolve: (row: any, ...args: any[]) => {
+                  if (descriptor.target === 'session' && !safe.has(descriptor.id) && guard.blockSession(row.sessionId)) return []
+                  if (descriptor.target === 'workspace' && guard.blockWorkspace(row.workspaceId)) return []
+                  return descriptor.resolve(row, ...args)
+                },
+              })
+            }
+            return typeof value === 'function' ? value.bind(menuTarget) : value
+          },
+        })
+      }
       if (key === 'remote' && target.remote !== undefined && target.remote !== null) {
         // The official apply reads `ctx.remote.directoryPicker` once while
         // constructing `uiWorkspace`; hand back a deferred facade so that the

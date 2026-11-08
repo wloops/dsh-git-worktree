@@ -1,10 +1,13 @@
+import { apply as applyV022 } from './official-workspace-client-022.mock.js'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const spies = vi.hoisted(() => ({
   register: vi.fn(),
   applyTools: vi.fn(),
   topology: vi.fn(),
+  native: vi.fn(),
 }))
+vi.mock('../src/client/workspace-sidebar/native.js', () => ({ registerNativeWorkspaceDecorations: spies.native }))
 vi.mock('../src/client/index.js', () => ({ apply: spies.applyTools, inject: ['conversation'] }))
 vi.mock('../src/client/workspace-sidebar/index.js', () => ({ registerManagedWorkspaceSidebar: spies.register }))
 vi.mock('../src/client/console-remote/adapter.js', () => ({
@@ -43,6 +46,7 @@ describe('one Host-pinned Browser provider per Client startup', () => {
     const ctx = clientContext(legacy)
     await apply(ctx)
     expect(spies.register).toHaveBeenCalledTimes(1)
+    expect(spies.native).not.toHaveBeenCalled()
     expect(spies.register.mock.calls[0]?.[2]).toBe(selected)
     expect(spies.applyTools).toHaveBeenCalledTimes(1)
     expect(ctx.inject.mock.calls.map(([inject]: [string[]]) => inject)).toEqual(flavor === 'legacy'
@@ -52,11 +56,12 @@ describe('one Host-pinned Browser provider per Client startup', () => {
         : ['slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts'], ['conversation']])
   })
 
-  test.each([['modern', applyModern], ['modern-rc5', applyRc5]] as const)('%s selects its exact modern factory without the picker boot cycle', async (flavor, selected) => {
+  test.each([['modern', applyModern], ['modern-rc5', applyRc5], ['modern-022', applyV022]] as const)('%s selects its exact modern factory without the picker boot cycle', async (flavor, selected) => {
     spies.topology.mockResolvedValue({ ok: true, value: { projects: [], workspaceClientFlavor: flavor } })
     const ctx = clientContext()
     await apply(ctx)
     expect(spies.register).toHaveBeenCalledTimes(1)
+    expect(spies.native).not.toHaveBeenCalled()
     expect(spies.register.mock.calls[0]?.[2]).toBe(selected)
     expect(ctx.inject.mock.calls[0][0]).not.toContain('remote.directoryPicker')
     expect(spies.applyTools).toHaveBeenCalledOnce()
@@ -67,14 +72,21 @@ describe('one Host-pinned Browser provider per Client startup', () => {
     const ctx = clientContext()
     await apply(ctx)
     expect(spies.register).not.toHaveBeenCalled()
+    expect(spies.native).toHaveBeenCalledOnce()
     expect(spies.applyTools).toHaveBeenCalledTimes(1)
   })
 
-  test('fails before registering a mismatched or unidentifiable Browser', async () => {
+  test('fails before registering a mismatched legacy Browser', async () => {
     spies.topology.mockResolvedValueOnce({ ok: true, value: { projects: [], workspaceClientFlavor: 'legacy' } })
     await expect(apply(clientContext())).rejects.toThrow(/sessions\.open/u)
-    spies.topology.mockResolvedValueOnce({ ok: false, error: { code: 'unavailable' } })
-    await expect(apply(clientContext())).rejects.toThrow(/identify/u)
     expect(spies.register).not.toHaveBeenCalled()
+  })
+
+  test('metadata failure leaves the official Browser alive and mounts recoverable native extensions', async () => {
+    spies.topology.mockResolvedValueOnce({ ok: false, error: { code: 'unavailable' } })
+    await apply(clientContext())
+    expect(spies.register).not.toHaveBeenCalled()
+    expect(spies.native).toHaveBeenCalledOnce()
+    expect(spies.applyTools).toHaveBeenCalledOnce()
   })
 })

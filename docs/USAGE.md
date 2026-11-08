@@ -320,15 +320,31 @@ pnpm run build
 pnpm run check:publish
 ```
 
-用已安装依赖并完成构建的 Harness 源码做**隔离**联调（在插件仓库目录执行）：
+直接安装当前开发版并启动 Web UI（在插件仓库目录执行，无需额外参数）：
+
+```bash
+pnpm run dev:dsh
+```
+
+该命令构建、打包并安装当前源码到常规 `web` Profile，然后启动 DSH，由 DSH 正常打开 Web UI 并管理原有工作区和选择。默认不创建、检查或切换到临时 Git 测试仓库，也不把插件源码目录作为测试目标；遗留的 `dsh-git-worktree-dev/fixture` 不影响启动，目录内容不会被修改。启动进程以用户主目录作为中性的 cwd，不传入仓库选择参数。若附近有已安装依赖并完成构建的 Harness 源码，会自动使用它及其所需的 pnpm；否则使用已安装的 `dsh`。
+
+推荐从 Local Checkout 明确指定相邻 Harness 源码，避免自动发现目录歧义（不用 `--repo`）：
+
+```bash
+pnpm run dev:dsh -- --harness ../deepseek-harness
+```
+
+指定目录不等于源码已构建。脚本会在安装插件前检查 CLI、tsx、源码 pnpm，以及 `packages`、`apps`、`vendor` 中官方 Web 包声明的 `./client` 产物；缺失时列出具体文件并停止，不安装、不启动，也不静默切换运行时。按所选 Harness 仓库自身说明完成依赖安装及客户端构建后重试；若根包声明了 `build` 脚本，错误中会提示 `pnpm run build`。这个插件命令不会自动构建或修改邻近 Harness 源码。文件存在检查不能保证产物版本新鲜、运行时兼容或 Web 启动成功。
+
+需要隔离联调时仍可显式使用隔离 Home（不是正常启动的必需步骤）：
 
 ```bash
 DSH_HOME="$(mktemp -d -t dsh-worktree-test)" pnpm run dev:dsh -- --harness /Users/dev/Projects/open/deepseek-harness
 ```
 
-该命令自动选用 Harness 源码所需的 pnpm、初始化空 `web` Profile、打包并安装当前插件；同时将默认 Workspace 与一次性 Git 测试仓库放在隔离 `DSH_HOME` 内。打开命令打印的本地 Web 地址即可测试，`Ctrl+C` 停止。要在相同 Profile 上复查安装，保留同一个 `DSH_HOME` 值，再执行 `pnpm run dev:dsh:smoke -- --harness /Users/dev/Projects/open/deepseek-harness`。未设置 `DSH_HOME` 时会使用 DSH 的常规 Profile，隔离联调不要省略它。源码首次使用前应在 Harness 仓库完成依赖安装和构建。
+隔离模式将 Profile、归档和默认 Workspace 的 Documents 根限制在该 Home 内，不再自动初始化 Git fixture；浏览器自动打开关闭，使用打印的本地地址。保持同一 `DSH_HOME` 可复查安装：`pnpm run dev:dsh:smoke`。源码首次使用前应完成 Harness 依赖安装和构建。
 
-其他选项：`--repo <测试仓库>`、`--port <端口>`、`--profile web`；`pnpm run dev:dsh:install` 仅安装，`pnpm run dev:dsh:remove` 从指定 Profile 卸载。`dev:dsh` 不会发布 npm 包或 push Git refs。
+可选参数：`--repo <已存在的 Git 仓库根目录>` 仅用于明确要求指定仓库的场景，在安装前只读验证，不会初始化或改写该仓库；`--port <端口>`、`--profile web`、`--harness <源码路径>`。`pnpm run dev:dsh:install` 仅安装，`pnpm run dev:dsh:remove` 从指定 Profile 卸载。`Ctrl+C` 停止 Web 进程。以上命令不发布 npm 包或 push Git refs。
 
 ## 进一步阅读
 

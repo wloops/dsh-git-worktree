@@ -1,3 +1,4 @@
+import { materializeV022WorkspaceClientModule } from '../scripts/workspace-sidebar-upstream-022.mjs'
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -12,6 +13,7 @@ import { materializeRc5WorkspaceClientModule } from '../scripts/workspace-sideba
 const require = createRequire(import.meta.url)
 const owner = '@deepseek-ai/dsh-client-ui-workspace'
 const variants = [
+  [`${owner}-022`, '0.2.2-rc.1', 3, materializeV022WorkspaceClientModule],
   [`${owner}-rc5`, '0.2.1-rc.5', 4, materializeRc5WorkspaceClientModule],
   [owner, '0.2.1-rc.2', 4, materializeOfficialWorkspaceClientModule],
   [`${owner}-next`, '0.1.7-rc.2', 4, materializeNextWorkspaceClientModule],
@@ -48,17 +50,17 @@ describe('embedded official Workspace CSS ownership', () => {
       expect(tags.map(tag => tag.textContent)).toEqual(cssBytes)
       expect(tags.every(tag => tag.dataset.plugin === 'dsh-git-worktree')).toBe(true)
     }
-    expect(styles()).toHaveLength(19)
+    expect(styles()).toHaveLength(22)
     removeOwnedStyles(owner)
-    expect(styles()).toHaveLength(15)
+    expect(styles()).toHaveLength(18)
     // Host rematerialization cannot remove or suppress derivative rules.
     materialize(official)
-    expect(styles()).toHaveLength(19)
+    expect(styles()).toHaveLength(22)
     removeOwnedStyles('dsh-git-worktree')
     expect(styles()).toHaveLength(4)
     expect(styles().every(tag => tag.dataset.plugin === owner)).toBe(true)
     materialize(readFileSync('lib/client.js', 'utf8'))
-    expect(styles()).toHaveLength(19)
+    expect(styles()).toHaveLength(22)
   })
   test('all derived source factories have independent resource keys', () => {
     for (const [, version, count, derive] of variants) {

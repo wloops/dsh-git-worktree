@@ -4,15 +4,12 @@ import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   createDefaultOptions,
-  createDshLaunch,
   devCacheRoot,
   discoverHarnessRoot,
-  ensureDevFixture,
   installLocalSnapshot,
   parseDevDshArgs,
-  prepareIsolatedWorkspacePatch,
   removeLocalSnapshot,
-  runProcess,
+  runDevelopmentWeb,
   smokeLocalSnapshot,
 } from './dev-dsh-lib.mjs'
 
@@ -37,9 +34,10 @@ are scanned; use DSH_HARNESS_ROOT or --harness for a specific checkout. Install
 and build that source checkout first. The source's own pnpm version is selected
 automatically. Set DSH_HOME to a fresh temporary directory to isolate the web
 Profile, archive, and default Workspace; this also patches the Host's Documents
-root to that home. Without --repo, a marker-protected disposable Git repository
-is created at:
-  ${defaults.repo}
+root to that home. Without --repo, DSH keeps its normal Workspace selection;
+no disposable repository is created or required. Prefer --harness <path> to select
+one source checkout explicitly. Required CLI and declared Web client artifacts
+are checked before plugin installation; missing files stop without fallback.
 `)
 }
 
@@ -68,28 +66,13 @@ try {
       removeLocalSnapshot({ ...runtime, cacheRoot })
       console.log(`Removed dsh-git-worktree from profile "${options.profile}" and cleared local archives.`)
     } else {
-      const installed = installLocalSnapshot({
+      runDevelopmentWeb({
         ...runtime,
+        ...options,
         cacheRoot,
+        launchRoot: defaults.launchRoot,
+        isolated: Boolean(process.env.DSH_HOME),
       })
-      const fixture = ensureDevFixture(options.repo, { explicit: options.repoExplicit })
-      console.log(`\nLocal snapshot: ${installed.archivePath}`)
-      console.log(`${fixture.created ? 'Created' : 'Using'} test repository: ${fixture.path}`)
-      const launch = createDshLaunch({
-        projectRoot,
-        harnessRoot: options.harnessRoot,
-        workspaceRoot: fixture.path,
-        profile: options.profile,
-        port: options.port,
-        ...(process.env.DSH_HOME ? { isolationPatchPath: prepareIsolatedWorkspacePatch(cacheRoot) } : {}),
-      })
-      console.log(`Starting DSH at http://127.0.0.1:${options.port}`)
-      console.log(launch.source
-        ? `Using Harness source checkout: ${options.harnessRoot}`
-        : 'Using the installed dsh executable.')
-      if (process.env.DSH_HOME) console.log(`Isolated default Workspace patch: ${launch.args[launch.args.indexOf('--patch') + 1]}`)
-      console.log('Press Ctrl+C to stop. No npm/GitHub publication is performed.\n')
-      runProcess(launch.command, launch.args, { cwd: launch.cwd })
     }
   }
 } catch (error) {

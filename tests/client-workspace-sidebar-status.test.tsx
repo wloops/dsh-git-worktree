@@ -1,3 +1,4 @@
+import { decorateV022WorkspaceClient, readV022WorkspaceClient } from '../scripts/workspace-sidebar-upstream-022.mjs'
 // @vitest-environment jsdom
 import { createRequire } from 'node:module'
 import { createElement, type ComponentType, type ReactNode } from 'react'
@@ -24,6 +25,7 @@ function loadRow(source: string): ComponentType<Record<string, unknown>> {
         createElement('section', null, anchor, createElement('aside', { 'data-hover-content': true }, content))
       if (name === 'Menu') return ({ anchor }: { anchor: ReactNode }) => anchor
       if (name === 'StateDot') return ({ state }: { state: string }) => createElement('i', { 'data-official-state': state })
+      if (name === 'useRowDragPreview') return () => ({ start() {}, clear() {} })
       return () => createElement('i', { 'data-icon': name })
     },
   })
@@ -42,6 +44,7 @@ function loadRow(source: string): ComponentType<Record<string, unknown>> {
 }
 
 const variants = [
+  { name: 'modern-022', source: () => decorateV022WorkspaceClient(readV022WorkspaceClient()) },
   { name: 'modern-rc5', source: () => decorateRc5WorkspaceClient(readRc5WorkspaceClient()) },
   { name: 'alpha', source: () => decorateAlphaWorkspaceClient(readAlphaWorkspaceClient()) },
   { name: 'next', source: () => decorateNextWorkspaceClient(readNextWorkspaceClient()) },
@@ -56,6 +59,7 @@ function renderRow(Row: ComponentType<Record<string, unknown>>, state?: TaskStat
   }
   const container = document.createElement('div')
   container.innerHTML = renderToStaticMarkup(createElement(Row, {
+    useContextMenu: () => ({ getTriggerProps: () => ({}) }), useContextMenuTarget: (select: any) => select(null), useSessionAccess: () => true,
     node, now: 2000, onOpen: () => {}, renderSlot: () => null,
     t: (key: string) => key.startsWith('dshGitWorktree.state.')
       ? labels[key.slice('dshGitWorktree.state.'.length) as TaskState] : key,
