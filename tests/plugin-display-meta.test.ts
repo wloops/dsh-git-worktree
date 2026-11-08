@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -36,7 +36,19 @@ describe('official plugin display resources', () => {
   test('real npm tarball contains resolvable translations and the declared icon', () => {
     const directory = mkdtempSync(join(tmpdir(), 'dsh-display-pack-'))
     try {
-      const result = execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', directory], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+      // Pack the same declared files without repository lifecycle hooks. Older
+      // npm versions can run prepare during pack despite --ignore-scripts;
+      // that rebuilds shared lib concurrently and contaminates JSON stdout.
+      const staging = join(directory, 'source')
+      mkdirSync(staging)
+      writeFileSync(join(staging, 'package.json'), JSON.stringify({ ...manifest, scripts: {} }))
+      for (const file of [...manifest.files, 'README.md', 'LICENSE']) {
+        if (!existsSync(file)) continue
+        const target = join(staging, file)
+        mkdirSync(resolve(target, '..'), { recursive: true })
+        cpSync(file, target, { recursive: true })
+      }
+      const result = execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', directory], { cwd: staging, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
       const packed = JSON.parse(result)[0]
       const paths = packed.files.map((entry: { path: string }) => entry.path)
       for (const file of ['locale/en.json', 'locale/zh.json', 'assets/icon.svg']) expect(paths).toContain(file)
