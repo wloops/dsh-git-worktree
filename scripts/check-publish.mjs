@@ -97,6 +97,15 @@ for (const [subpath, value] of Object.entries(exportsMap)) {
   for (const { condition, target } of exportTargets(value, `exports[${JSON.stringify(subpath)}]`)) {
     exportCount += 1
     if (!target.startsWith('./')) fail(`export ${subpath} (${condition}) must be package-relative: ${target}`)
+    if (subpath === './locale/*.json' && target === './locale/*.json') {
+      for (const language of ['en', 'zh']) {
+        const file = `locale/${language}.json`
+        if (!existsSync(resolve(root, file)) || !includedByFiles(file)) fail(`missing or unpublished plugin locale ${file}`)
+        const meta = JSON.parse(readFileSync(resolve(root, file), 'utf8')).meta
+        if (!meta || ['title', 'description'].some(key => typeof meta[key] !== 'string' || !meta[key].trim())) fail(`invalid plugin display metadata ${file}`)
+      }
+      continue
+    }
     const absolute = resolve(root, target)
     const inside = relative(root, absolute)
     if (inside.startsWith(`..${sep}`) || inside === '..') fail(`export ${subpath} escapes the package: ${target}`)

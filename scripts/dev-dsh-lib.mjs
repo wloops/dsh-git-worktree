@@ -557,7 +557,7 @@ export function installLocalSnapshot(options) {
       scripts: {},
     }
     writeFileSync(join(stagingRoot, 'package.json'), `${JSON.stringify(stagedManifest, null, 2)}\n`)
-    for (const entry of ['lib', 'cordis.patch.yml', 'README.md', 'README.en.md', 'docs/i18n.md', 'LICENSE', 'NOTICE']) {
+    for (const entry of ['lib', 'locale', 'assets', 'cordis.patch.yml', 'README.md', 'README.en.md', 'docs/i18n.md', 'LICENSE', 'NOTICE']) {
       const source = join(options.projectRoot, entry)
       if (existsSync(source)) copyPackageEntry(source, join(stagingRoot, entry))
     }

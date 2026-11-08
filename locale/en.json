@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Git Worktree",
+    "description": "Isolated development sessions with worktree grouping, review, safe delivery, and recovery."
+  }
+}

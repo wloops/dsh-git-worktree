@@ -371,11 +371,18 @@ describe('local DSH development workflow', () => {
     mkdirSync(join(root, 'profile'))
     writeFileSync(profileManifestPath, JSON.stringify({ dependencies: {} }))
     const calls: Array<{ command: string; args: string[] }> = []
+    for (const directory of ['locale', 'assets']) mkdirSync(join(root, directory))
+    writeFileSync(join(root, 'locale', 'en.json'), '{"meta":{"title":"Git Worktree","description":"Review changes"}}')
+    writeFileSync(join(root, 'locale', 'zh.json'), '{"meta":{"title":"Git 工作树","description":"验收改动"}}')
+    writeFileSync(join(root, 'assets', 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
     let stagedManifest: { version?: string; scripts?: Record<string, string> } | undefined
     const runner = vi.fn((command: string, args: string[], options?: { cwd?: string }) => {
       calls.push({ command, args })
       if (command.includes('pnpm') && args[0] === 'pack') {
         stagedManifest = JSON.parse(readFileSync(join(options!.cwd!, 'package.json'), 'utf8'))
+        for (const file of ['locale/en.json', 'locale/zh.json', 'assets/icon.svg']) {
+          expect(readFileSync(join(options!.cwd!, file), 'utf8')).toBe(readFileSync(join(root, file), 'utf8'))
+        }
         const outIndex = args.indexOf('--out')
         writeFileSync(args[outIndex + 1]!, 'tarball')
       }

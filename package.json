@@ -2,6 +2,7 @@
   "name": "dsh-git-worktree",
   "version": "0.12.1",
   "description": "Experimental Git worktree Session Targets for DeepSeek Harness with isolated sessions, review checkpoints, human-confirmed delivery, and safe recovery.",
+  "icon": "./assets/icon.svg",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -26,11 +27,14 @@
       "types": "./lib/console-contract.d.ts",
       "default": "./lib/console-contract.js"
     },
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
     "lib",
+    "locale",
+    "assets",
     "scripts",
     "CHANGELOG.md",
     "docs/i18n.md",

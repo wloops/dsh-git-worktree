@@ -6,6 +6,8 @@
 
 ### Added
 
+- 插件列表名称统一为 Git Worktree，通过官方 locale 元数据提供中英文简介，并提供专属 Worktree SVG 图标；发布包及开发快照均携带对应资源。
+
 - 开始官方原生侧栏迁移：未知 Host 保留官方列表，按公共 Slot 的实际声明挂载 Worktree 行尾与悬浮信息，不依赖版本白名单。共享拓扑读取合并刷新、拒绝过期及卸载后结果；读取失败只撤回标记，不阻断其他 Worktree UI。
 - 新增 `docs/SIDEBAR-NATIVE-INTEGRATION.md`，记录公开 API 的可行范围和聚合、常驻 tag、统一动作保护的最小上游缺口。完整原生聚合尚未具备接入条件，已知版本继续保留兼容派生；本轮未对外提交 issue/PR。
 
