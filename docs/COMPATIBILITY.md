@@ -12,7 +12,7 @@
 
 未知 Host 不再只剩未扩展的官方列表：在官方声明行尾或悬浮 Slot 时，插件按能力挂载 Worktree 标记；没有对应槽则等待声明，不接管 Provider，不改全局数据。已知版本仍保留聚合派生，**尚未实现无白名单的完整聚合**。原因及最小官方接口提案见 [长期集成说明](SIDEBAR-NATIVE-INTEGRATION.md)。
 
-### 未发布：0.2.2-rc.1 侧栏适配
+### 0.12.2 发布候选：0.2.2-rc.1 侧栏适配
 
 原因为 Host exact-version 门禁尚不识别 `0.2.2-rc.1`，因此有意保留官方 Provider，未应用 Worktree 聚合。当前新增独立 exact version/SHA-256 来源，经 strict Remote `modern-022` 选取；不是放宽版本号后套用旧 Browser。构建基线仍 rc.2，新增 alias 仅用于来源；peer 显式包含新预发布，以及 Cordis 4.1 / Loader 1.1，不打入私有 singleton。
 
@@ -24,7 +24,7 @@
 
 ### 历史：0.2.1-rc.5 侧栏适配
 
-当前未发布源码（包版本暂仍 `0.12.0`）为 `0.2.1-rc.5` 新增独立官方 Workspace 来源与包名/版本/SHA-256 门禁，Host 实际解析的 agent 版本通过 strict Remote `modern-rc5` 选择该 factory。rc.2 仍选原 `modern` factory；alpha/next 与未知 Host 官方降级保持。保留 rc.5 blank 复用、preset 筛选及草稿初始化，不用旧 factory 冒充新 Host。
+`0.12.1` 已为 `0.2.1-rc.5` 新增独立官方 Workspace 来源与包名/版本/SHA-256 门禁，Host 实际解析的 agent 版本通过 strict Remote `modern-rc5` 选择该 factory。rc.2 仍选原 `modern` factory；alpha/next 与未知 Host 官方降级保持。保留 rc.5 blank 复用、preset 筛选及草稿初始化，不用旧 factory 冒充新 Host。
 
 本轮仅在隔离依赖树运行源码、实际 `lib/client.js` jsdom Browser 聚合/标题/状态、CSS 清理及真实 Cordis Loader 生命周期回归。开发 Host singleton 仍 rc.2，rc.5 alias 仅提供构建源码；未启动 rc.5 Host、未修改用户 desktop/配置、未做真实浏览器/AI/Windows 全流程。已发布 `0.12.0` 不含此修复。
 
@@ -97,9 +97,9 @@
 
 ## English
 
-### Unreleased: 0.2.1-rc.5 sidebar adaptation
+### Historical: 0.12.1 / 0.2.1-rc.5 sidebar adaptation
 
-Unreleased source (package version still `0.12.0`) adds a separately name/version/SHA-256-gated official rc.5 Workspace factory. Host-resolved agent version travels through strict Remote topology as `modern-rc5`; rc.2 still selects `modern`. Alpha/next sources and unknown-Host official fallback remain intact. The rc.5 factory retains blank reuse, preset filtering and draft initialization rather than relabeling an old factory.
+Version `0.12.1` added a separately name/version/SHA-256-gated official rc.5 Workspace factory. Host-resolved agent version travels through strict Remote topology as `modern-rc5`; rc.2 still selects `modern`. Alpha/next sources and unknown-Host official fallback remain intact. The rc.5 factory retains blank reuse, preset filtering and draft initialization rather than relabeling an old factory.
 
 Validation uses an isolated dependency tree, source tests, actual emitted `lib/client.js` Browser aggregation/title/status and CSS jsdom tests, and real Cordis Loader lifecycle regressions. Host singleton dev dependencies remain rc.2; the rc.5 alias supplies build source only. No rc.5 Host startup, user desktop/config modification, real browser, AI or Windows end-to-end acceptance was performed. Published `0.12.0` does not include this fix.
 

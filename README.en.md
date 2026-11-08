@@ -88,7 +88,7 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 
 Match the plugin version to your Harness version rather than installing the latest plugin on an older Harness.
 
-**Unreleased source update:** adds an exact `0.2.1-rc.5` sidebar derivative alongside the independent rc.2/alpha/next sources. Unknown Hosts still use the official sidebar. Source and embedded-Browser jsdom regressions pass, not desktop or real rc.5 Host acceptance. Published `0.12.0` does not contain this fix; see [compatibility notes](docs/COMPATIBILITY.md).
+**0.12.2 release candidate:** adds an exact DSH `0.2.2-rc.1` sidebar adaptation, preserves existing aggregation, and contributes native decorations on unknown Hosts through public slots. Includes development-startup fixes and localized plugin descriptions with a dedicated icon. Full native aggregation and complete new-Host acceptance remain unverified; not yet published to npm. See [release notes](docs/release-notes-v0.12.2.md) and [compatibility notes](docs/COMPATIBILITY.md).
 
 `0.12.0` requires DSH `>=0.2.1-rc.2`, while the build baseline remains `0.2.1-rc.2`. Installation on `0.2.1-rc.5` is permitted but has not completed real-environment acceptance; unknown Hosts retain the official Workspace sidebar. Installation permission does not establish runtime compatibility.
 
