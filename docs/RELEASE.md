@@ -31,6 +31,10 @@ pnpm run check:publish:release
 # 等价：CHECK_PUBLISH_REQUIRE_CLEAN=1 pnpm run check:publish
 ```
 
+### 本机测试资源争用
+
+Vitest 默认在所有平台按文件串行执行，避免多个真实 Git／Worktree 测试同时争抢磁盘和进程资源。`pnpm test` 与 `npm publish` 的测试门禁共用此配置；不跳过用例，也不扩大既有超时限制。若遇超时，应先排查资源负载，不用 `--ignore-scripts` 绕过发布门禁。
+
 ## 2. 功能 smoke
 
 在临时 Git 仓库和 scratch Harness profile 中验证：
