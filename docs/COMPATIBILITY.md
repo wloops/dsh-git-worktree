@@ -12,7 +12,7 @@
 
 未知 Host 不再只剩未扩展的官方列表：在官方声明行尾或悬浮 Slot 时，插件按能力挂载 Worktree 标记；没有对应槽则等待声明，不接管 Provider，不改全局数据。已知版本仍保留聚合派生，**尚未实现无白名单的完整聚合**。原因及最小官方接口提案见 [长期集成说明](SIDEBAR-NATIVE-INTEGRATION.md)。
 
-### 0.12.2 发布候选：0.2.2-rc.1 侧栏适配
+### 0.12.2：0.2.2-rc.1 侧栏适配
 
 原因为 Host exact-version 门禁尚不识别 `0.2.2-rc.1`，因此有意保留官方 Provider，未应用 Worktree 聚合。当前新增独立 exact version/SHA-256 来源，经 strict Remote `modern-022` 选取；不是放宽版本号后套用旧 Browser。构建基线仍 rc.2，新增 alias 仅用于来源；peer 显式包含新预发布，以及 Cordis 4.1 / Loader 1.1，不打入私有 singleton。
 

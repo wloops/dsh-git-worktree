@@ -1,7 +1,5 @@
 # dsh-git-worktree
 
-> Development installation policy: DSH peers use a minimum of `>=0.2.1-rc.2`, with no speculative upper bound; requirements change when breaking changes are confirmed. Build dependencies and embedded Browser sources remain exact. Unknown Hosts retain the official Workspace rather than reusing an unverified derivative. Installation permission is not acceptance evidence. Standard SemVer includes later RCs of the same `0.2.1` core; prereleases of other future cores are not matched by default. Exact peer constraints below describe historical published releases.
-
 [![npm](https://img.shields.io/npm/v/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![CI](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml/badge.svg)](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml)
@@ -9,7 +7,7 @@
 
 **Let agents complete tasks in independent Git Worktrees, then review the changes before deciding whether to save them.**
 
-`dsh-git-worktree` is a Git Worktree plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness). It creates a separate Worktree (working directory) for each isolated task, where the agent edits and tests code. The plugin writes task changes back to the current project only when you start a preview or confirm saving. When the task is complete, you can preview the result and then save it, send it back for changes, or discard it.
+`dsh-git-worktree` is a Git Worktree plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness): run agents in isolated Git worktrees with one-click review, rollback, and staged saves, plus grouped worktree sessions for clear ownership. Task changes reach your project only when you start a preview or confirm saving.
 
 This Git Worktree workflow originated in [Domi](https://github.com/restflux/domi), an open-source desktop coding workbench powered by the Pi Agent Runtime. This plugin is independently adapted for DeepSeek Harness and can be installed and used on its own.
 
@@ -26,16 +24,16 @@ When an agent edits the current project directly, its changes can mix with your 
 
 ## Highlights
 
-- **Git Worktree isolation**: every task gets its own working directory and its own agent conversation.
+- **Independent working directory**: every task is edited and tested in its own Git Worktree, so tasks never step on each other.
 - **Run multiple Worktrees**: develop several tasks in parallel; to avoid mixing changes, review one task at a time per project.
 - **Preview before committing**: inspect the real result in the current project without immediately creating a Git commit.
 - **Send it back safely**: undo the current preview and ask the agent for more changes without disturbing unrelated local work.
 - **Save only this task**: confirmation commits only the current task instead of pulling unrelated changes into it.
 - **Preserve progress on long tasks**: save the current stage and keep developing; the stages still become one final delivery.
 - **Protect the working state**: branch changes, conflicts, and interrupted operations stop safely and leave the state available for recovery.
-- **See related tasks together**: current and historical Worktrees are grouped under their Host-provided project navigation owner; ambiguous tasks conservatively remain where they are.
+- **Tasks group automatically**: current and historical Worktrees for the same project are grouped under that project in the sidebar; uncertain tasks stay where they are.
 - **Inspect review details in one place**: open a read-only view from the review bar for changed files, validation records, and version details without searching tool messages.
-- **Start safely from an empty repository**: after explicit confirmation, an unborn repository can receive an empty initial commit that excludes user files before the isolated Worktree is created.
+- **Works on empty repositories**: for a repository with no commits, an empty initial commit that excludes your files is created after confirmation, then the isolated Worktree is built.
 - **Carry project Skills**: the first Worktree and each next iteration receive one snapshot of `.dsh/skills`, `.agents/skills`, and `.claude/skills`, while auxiliary files stay separate from Git delivery.
 - **Continue in the same conversation**: after delivery, begin another task without opening a new conversation.
 
@@ -82,24 +80,19 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 
 | DeepSeek Harness | Plugin version |
 | --- | --- |
-| `0.2.1-rc.2` (build baseline) | `0.12.0` (current version) |
+| `0.2.2-rc.1` | `0.12.2` (current version) |
+| `0.2.1-rc.2` (build baseline), `0.2.1-rc.5` | `0.12.2` |
 | `0.2.0-rc.2` | `0.10.0` |
 | `0.1.x` | See the historical `0.9.x` compatibility records; not every `0.1.x` version has been verified |
 
-Match the plugin version to your Harness version rather than installing the latest plugin on an older Harness.
-
-**0.12.2 release candidate:** adds an exact DSH `0.2.2-rc.1` sidebar adaptation, preserves existing aggregation, and contributes native decorations on unknown Hosts through public slots. Includes development-startup fixes and localized plugin descriptions with a dedicated icon. Full native aggregation and complete new-Host acceptance remain unverified; not yet published to npm. See [release notes](docs/release-notes-v0.12.2.md) and [compatibility notes](docs/COMPATIBILITY.md).
-
-`0.12.0` requires DSH `>=0.2.1-rc.2`, while the build baseline remains `0.2.1-rc.2`. Installation on `0.2.1-rc.5` is permitted but has not completed real-environment acceptance; unknown Hosts retain the official Workspace sidebar. Installation permission does not establish runtime compatibility.
-
-The DSH `0.2.1-rc.2` adaptation included in `0.11.0` passed pre-release source compatibility checks. Browser, real AI conversation, desktop and Windows end-to-end acceptance for this combination remain incomplete. This historical validation is not acceptance evidence for `0.12.0` or newer Hosts. See the [compatibility notes](docs/COMPATIBILITY.md#english), [validation report](docs/compatibility/0.2.1-rc.2.md) and [0.12.0 release notes](CHANGELOG.md#0120---2026-11-02) for the scope.
+Match the plugin version to your Harness version rather than installing the latest plugin on an older Harness. Verification scope, known limitations, and installation policy per version are covered in the [compatibility notes](docs/COMPATIBILITY.md).
 
 ### Install
 
-For DSH `0.2.1-rc.2`, install through the `dsh` Web Profile:
+Install the current version through the `dsh` Web Profile:
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.12.0
+dsh plugin --profile web add dsh-git-worktree@0.12.2
 ```
 
 For other Harness versions, choose the matching plugin version from the table above first.
@@ -125,6 +118,12 @@ For Git-source installation, pnpm build approval and other troubleshooting steps
 ### Prepare the review
 
 ![Agent completes the task and prepares Preview changes](docs/screenshots/02-ready-for-review.png)
+
+### Conflict and recovery
+
+When a conflict or branch change is detected, the plugin inspects read-only and preserves the state for you to decide:
+
+![Read-only conflict check and recovery entry when conflicts are found](docs/screenshots/03-conflict-recovery.png)
 
 See the [full usage guide](docs/USAGE.en.md#complete-delivery-example) for the complete flow.
 

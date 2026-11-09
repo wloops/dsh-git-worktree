@@ -290,8 +290,6 @@ done
 
 1. 创建 Worktree Session：
 
-   ![创建 Worktree Session](screenshots/01-create-worktree.png)
-
 2. Managed owner 聚合到原项目，并持续显示当前任务状态：
 
    ![项目聚合侧边栏](screenshots/00-project-sidebar.png)

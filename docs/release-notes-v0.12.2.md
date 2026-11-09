@@ -1,6 +1,6 @@
 # v0.12.2 — DSH 0.2.2 侧栏适配与开发体验修复
 
-状态：发布准备，尚未发布 npm，尚未创建 release tag 或 GitHub Release。版本可用性以正式发布前再次查询为准。
+状态：已发布。npm `0.12.2` 为当前 latest（gitHead `f07d2087c7edd9b77c04a6c54553b27ce31958df`，与 `origin/master` 一致）；tag `v0.12.2` 与 [GitHub Release](https://github.com/wloops/dsh-git-worktree/releases/tag/v0.12.2) 已创建。
 
 ## 本版目的
 
@@ -40,13 +40,11 @@ pnpm run dev:dsh -- --harness ../deepseek-harness
 - 版本已更新为 `0.12.2`。依赖未变化，pnpm lockfile 不记录根包版本，无需人为修改。
 - 自动化门禁：typecheck、build、check:sidebar-version、check:publish 通过；完整测试 50 个文件通过，704 passed / 1 skipped。首次全量调用因工具 600 秒等待上限中断；随后通过可见终端完整重跑成功（约 632 秒），不将第一次中断计为测试通过。
 - 实际 `npm pack --ignore-scripts --json`：版本 `0.12.2`，256 个文件，压缩大小 802,903 字节；已核验 `lib/client.js`、patch、NOTICE、`locale/en.json`、`locale/zh.json`、`assets/icon.svg` 和包级 icon/locale exports。开发快照资源复制回归包含在全量测试中。打包基于先前已完成的同快照构建，未执行 publish。
-- 尚未执行 clean Local 发布门禁、release commit CI、远程 tag、GitHub Release、npm publish、发布后真实安装。
+- （截至准备阶段 2026-11-08）尚未执行 clean Local 发布门禁、release commit CI、远程 tag、GitHub Release、npm publish、发布后真实安装；这些已在后续发布步骤中完成，见下方发布结果。
 
-## 正式发布前剩余条件
+## 发布结果
 
-1. 对当前准备快照完成验收并提交到 Local，补做或明确接受上面的实机验证缺口。
-2. 在 clean Local 运行 `pnpm run check:publish:release`；按 [发布清单](RELEASE.md) 推送 release commit 并等待该精确提交 CI 通过。
-3. 再次核对 npm 身份及版本占用，按授权创建带完整说明的 tag 与 GitHub Release，然后正式发布。
-4. 发布后核对 npm latest、gitHead、tarball 哈希，并在 scratch Profile 验证安装，再升级常用 Profile。
-
-本次准备不执行上述外部写入，也不会修改真实 DSH 安装或 Profile。
+- release 提交链 `60d0579` → `c5ac08f` → `f07d208` 已推送 `origin/master`；`c5ac08f` 的 GitHub CI 通过（run 42501128631）。
+- tag `v0.12.2` 与 GitHub Release 已创建：https://github.com/wloops/dsh-git-worktree/releases/tag/v0.12.2
+- npm `0.12.2` 已发布并为 latest，gitHead `f07d2087c7edd9b77c04a6c54553b27ce31958df`（发布时 `prepublishOnly` 重跑构建与全量测试通过）。
+- 真实 scratch Profile 安装验收与实机验证缺口仍见上方「验证与未验证范围」。

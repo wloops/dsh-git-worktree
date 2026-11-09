@@ -19,7 +19,7 @@ describe('official plugin display resources', () => {
     expect(locales.zh).toEqual({ title: 'Git Worktree', description: '隔离开发会话，聚合工作树，支持改动验收、安全交付与恢复。' })
     expect(locales.en.title).toBe('Git Worktree')
     expect(locales.en.description).toContain('safe delivery')
-    expect(manifest.description).toMatch(/^Experimental Git worktree/)
+    expect(manifest.description).toMatch(/^Run agents in isolated Git worktrees/)
   })
 
   test('declares a small self-contained package-owned SVG icon', () => {

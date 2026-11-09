@@ -270,8 +270,6 @@ Read the Preflight message first. The cause may be a conflict, stale Review, bus
 
 1. Create a Worktree Session:
 
-   ![Create Worktree Session](screenshots/01-create-worktree.png)
-
 2. The Managed owner is grouped under the original project and keeps its current task status visible:
 
    ![Project-grouped sidebar](screenshots/00-project-sidebar.png)

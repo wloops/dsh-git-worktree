@@ -1,7 +1,5 @@
 # dsh-git-worktree
 
-> 当前开发版安装策略：DSH peer 使用最低版本 `>=0.2.1-rc.2`，不设置预防性上限；仅在确认破坏性变化后调整要求。开发依赖和内嵌侧栏来源继续精确锁定。未知宿主不复用旧侧栏，而保留官方 Workspace，其他插件功能按实际 API 运行。允许安装并不等于已验收；SemVer 默认仅自动包含同一 `0.2.1` 核心版本的后续 RC，未来其他核心版本的预发布不属于默认匹配。下方精确 peer 描述均为已发布历史版本的记录。
-
 [![npm](https://img.shields.io/npm/v/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-git-worktree)](https://www.npmjs.com/package/dsh-git-worktree)
 [![CI](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml/badge.svg)](https://github.com/wloops/dsh-git-worktree/actions/workflows/ci.yml)
@@ -9,7 +7,7 @@
 
 **让 Agent 在独立 Git Worktree 中完成任务，你看过修改后再决定是否保存。**
 
-`dsh-git-worktree` 是 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的 Git Worktree 插件。它为隔离任务创建独立的 Worktree（工作目录），Agent 的代码修改和测试在其中进行；只有你发起预览或确认保存时，插件才会把任务改动写回当前项目。任务完成后，你可以先预览结果，再选择保存、退回修改或放弃。
+`dsh-git-worktree` 是 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的 Git Worktree 插件：让 Agent 在独立的 Git Worktree 里工作，改动可一键验收、撤回或阶段性保存，Worktree 会话列表自动聚合，归属关系一目了然。只有你发起预览或确认保存时，插件才会把任务改动写回当前项目。
 
 这套 Git Worktree 工作方式最初来自基于 Pi Agent Runtime 的开源桌面 coding 工作台 [Domi](https://github.com/restflux/domi)，本插件是针对 DeepSeek Harness 独立适配的版本，可以单独安装和使用。
 
@@ -26,16 +24,16 @@
 
 ## 核心能力
 
-- **Git Worktree 隔离**：每个任务都有独立的工作目录和 Agent 对话。
+- **独立工作目录**：每个任务在自己的 Git Worktree 里修改和测试，互不干扰。
 - **多个 Worktree 并行**：可以同时开发多个任务；为了避免混入修改，同一项目每次只验收一个任务。
 - **提交前预览**：先在当前项目中查看真实效果，不会立即创建 Git 提交。
 - **不满意可以退回**：撤回本次预览，继续让 Agent 修改，不影响其他本地改动。
 - **只保存本轮任务**：确认后只提交这个任务的修改，不把无关内容一起带入。
 - **长任务可分阶段**：先保存当前阶段的进度，再继续开发；最终仍合并为一次交付。
 - **出错时保护现场**：检测到分支变化、内容冲突或中断时停止操作，保留现场供你处理。
-- **集中查看任务**：同一项目的当前及历史 Worktree 会按 Host 导航归属聚合到侧边栏，归属不明确时保守保留原位置。
+- **任务自动归组**：同一项目的当前及历史 Worktree 自动聚合到原项目的侧边栏，归属不明确时保留原位置。
 - **验收详情集中查看**：从验收条打开只读详情，查看文件列表、验证记录与版本信息，不必翻找聊天工具记录。
-- **空仓库安全起步**：无提交仓库可在明确确认后创建不包含用户文件的空首次提交，再建立隔离 Worktree。
+- **空仓库也能用**：没有提交记录的仓库，确认后会先创建一个不含你文件的空提交，再建立隔离 Worktree。
 - **携带项目 Skills**：首次及下一轮 Worktree 创建时一次性携带 `.dsh/skills`、`.agents/skills` 和 `.claude/skills`，辅助文件与 Git 交付隔离。
 - **原对话继续下一轮**：任务交付后，无需新开对话即可继续下一项修改。
 
@@ -82,24 +80,19 @@ flowchart LR
 
 | DeepSeek Harness | 插件版本 |
 | --- | --- |
-| `0.2.1-rc.2`（构建基线） | `0.12.0`（当前版本） |
+| `0.2.2-rc.1` | `0.12.2`（当前版本） |
+| `0.2.1-rc.2`（构建基线）、`0.2.1-rc.5` | `0.12.2` |
 | `0.2.0-rc.2` | `0.10.0` |
 | `0.1.x` | 请参考 `0.9.x` 的历史兼容记录，不代表所有 `0.1.x` 版本均已验证 |
 
-插件版本与 Harness 版本需要匹配，不建议在旧版 Harness 上直接安装最新版插件。
-
-**0.12.2 发布候选**：新增 DSH `0.2.2-rc.1` 精确侧栏适配，保留既有版本聚合；未知 Host 按官方公共槽位提供标记。修复开发版启动并补齐插件列表多语言简介与图标。完整原生聚合及真实新版 Host 全流程尚未验收，npm 尚未发布；见 [发行说明](docs/release-notes-v0.12.2.md) 与 [兼容性说明](docs/COMPATIBILITY.md)。
-
-`0.12.0` 的 DSH 安装要求为 `>=0.2.1-rc.2`，构建基线仍为 `0.2.1-rc.2`；`0.2.1-rc.5` 允许安装，但尚未完成实机验收，未知宿主保留官方侧栏。允许安装不代表已验证运行时兼容性。
-
-`0.11.0` 对应的 DSH `0.2.1-rc.2` 适配已通过发布前源码兼容检查，但尚未完成该组合的浏览器、真实 AI 对话、桌面端和 Windows 全流程验收。该历史验证不自动转为 `0.12.0` 或新宿主的验收证据；详细范围见[兼容性说明](docs/COMPATIBILITY.md#中文)、[验证报告](docs/compatibility/0.2.1-rc.2.md)与 [0.12.0 更新记录](CHANGELOG.md#0120---2026-11-02)。
+插件版本与 Harness 版本需要匹配，不建议在旧版 Harness 上直接安装最新版插件。各版本的验证范围、已知限制与安装策略见[兼容性说明](docs/COMPATIBILITY.md)。
 
 ### 安装
 
-以下命令适用于 DSH `0.2.1-rc.2`，通过 `dsh` 的 Web Profile 安装：
+通过 `dsh` 的 Web Profile 安装当前版本：
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.12.0
+dsh plugin --profile web add dsh-git-worktree@0.12.2
 ```
 
 如果使用其他 Harness 版本，请先按上表选择匹配的插件版本。
@@ -125,6 +118,12 @@ Git 源安装方式、pnpm build approval 及其他排错步骤见[安装与排�
 ### 准备验收
 
 ![Agent 完成任务并准备预览修改](docs/screenshots/02-ready-for-review.png)
+
+### 冲突与恢复
+
+检测到冲突或分支变化时，插件只读检查并保留现场，由你决定如何处理：
+
+![发现冲突文件时的只读检查与恢复入口](docs/screenshots/03-conflict-recovery.png)
 
 完整操作步骤见[完整使用指南](docs/USAGE.md#完整交付示例)。
 

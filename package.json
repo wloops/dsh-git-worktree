@@ -1,7 +1,7 @@
 {
   "name": "dsh-git-worktree",
   "version": "0.12.2",
-  "description": "Experimental Git worktree Session Targets for DeepSeek Harness with isolated sessions, review checkpoints, human-confirmed delivery, and safe recovery.",
+  "description": "Run agents in isolated Git worktrees with one-click review, rollback, and staged saves, plus grouped worktree sessions for clear ownership.",
   "icon": "./assets/icon.svg",
   "type": "module",
   "main": "lib/index.js",
