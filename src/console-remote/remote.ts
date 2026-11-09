@@ -1,3 +1,4 @@
+import type { DeferredWorktreeState } from '../console-contract.js'
 import type { Language } from '../i18n/core.js'
 import type { RemoteResult, TypertRemoteNamespace } from '@deepseek-ai/dsh-typert-protocol'
 import type {
@@ -25,6 +26,7 @@ export { WORKTREE_CONSOLE_DESCRIPTORS, WORKTREE_CONSOLE_REMOTE } from './descrip
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteMap {
+    'gitWorktree/deferredWorktree': (agentId: string, requested?: boolean, retry?: boolean, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<DeferredWorktreeState>>>
     'gitWorktree/sidebarTopology': (locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>>
     'gitWorktree/current': (agentId: string, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleCurrentResponse>>>
     'gitWorktree/list': (agentId: string, needsAttention?: boolean, includeDelivered?: boolean, locale?: Language) => Promise<RemoteResult<WorktreeConsoleOutcome<WorktreeConsoleListResponse>>>

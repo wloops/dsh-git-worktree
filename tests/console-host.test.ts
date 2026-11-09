@@ -147,6 +147,20 @@ function plane(record = readyRecord(), overrides: {
 }
 
 describe('Worktree Console Host control plane', () => {
+  it('authorizes a same-Session owner using effective cwd without changing source project identity', async () => {
+    const record = readyRecord()
+    record.sourceSessionId = record.ownerSessionId
+    const lookup: SessionCheckoutLookupPort = {
+      getSession: id => ({ id, projectId: 'project-1' }),
+      getProject: id => ({ id, name: 'Project', root: '/local' }),
+      getSessionWorkingDirectory: () => '/managed',
+    }
+    const { control } = plane(record, { lookup })
+    expect(await control.inspect('target-session', record.checkoutId)).toMatchObject({ ok: true })
+    lookup.getSessionWorkingDirectory = () => '/local'
+    expect(await control.inspect('target-session', record.checkoutId)).toMatchObject({ ok: false, error: { code: 'project_mismatch' } })
+  })
+
   it('projects an unselected live Git Session as Local without mutating its binding', async () => {
     const { module, control } = plane()
     vi.mocked(module.inspect).mockRejectedValueOnce(Object.assign(

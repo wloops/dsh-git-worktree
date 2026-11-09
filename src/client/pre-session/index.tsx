@@ -1,3 +1,4 @@
+import { DeferredWorktreeToggle } from './DeferredWorktreeToggle.js'
 import type { ComponentType } from 'react'
 import type { SessionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
@@ -40,7 +41,7 @@ export function registerPreSessionWorktree(
       ? 'active' : session.promptAttempted ? 'engaging' : 'blank')
     const hasActiveTarget = useConversation(conversation => conversation.activeTargets.size > 0)
     const input = readHarnessInput(useInput(snapshot => snapshot))
-    return <PreSessionWorktreeToggle
+    const legacy = <PreSessionWorktreeToggle
       sessionId={sessionId}
       session={{ composerPhase: hasActiveTarget ? 'active' : sessionPhase }}
       input={input}
@@ -48,6 +49,7 @@ export function registerPreSessionWorktree(
       adapter={adapter}
       controller={controller}
     />
+    return <DeferredWorktreeToggle sessionId={sessionId} blank={!hasActiveTarget && sessionPhase === 'blank'} adapter={adapter} services={services} legacy={legacy} />
   }
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register(
     {

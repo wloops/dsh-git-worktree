@@ -37,6 +37,7 @@ export interface SidebarDirectoryMembership {
 }
 
 export interface SessionCheckoutLookupPort {
+  getSessionWorkingDirectory?(sessionId: string): string | undefined
   /** Read-only navigation evidence; never used to authorize a checkout operation. */
   getSidebarMemberships?(managedRoots: readonly string[]): Promise<SidebarDirectoryMembership[]>
   getSession(sessionId: string): SessionCheckoutSessionRecord | undefined

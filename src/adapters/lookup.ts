@@ -11,6 +11,8 @@
  * @module dsh-git-worktree/adapters/lookup
  */
 
+import { workingDirectoryPort } from '../deferred-worktree.js'
+import type { Session } from '@deepseek-ai/dsh-session'
 import { resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionCheckoutLookupPort, SessionCheckoutProjectRecord, SessionCheckoutSessionRecord } from '../ports.js'
@@ -72,6 +74,10 @@ export function createDshLookupPort(ctx: Context): SessionCheckoutLookupPort {
   }
 
   return {
+    getSessionWorkingDirectory: sessionId => {
+      const session = sessions()?.get(sessionId)
+      return session ? workingDirectoryPort(ctx)?.get(session as Session) : undefined
+    },
     getSidebarMemberships: async (managedRoots) => {
       if (managedRoots.length === 0) return []
       const workspaces = registry()?.list() ?? []

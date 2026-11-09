@@ -346,3 +346,8 @@ export const reviewDiffResponseSchema: z.ZodType<WorktreeConsoleReviewDiffRespon
   files: z.array(diffFileSchema).max(200),
   truncated: z.boolean(),
 })
+
+export const deferredWorktreeStateSchema = strict({
+  supported: z.boolean(), requested: z.boolean(), locked: z.boolean(),
+  phase: z.enum(['idle', 'creating', 'failed', 'ready']), error: z.string().optional(),
+})

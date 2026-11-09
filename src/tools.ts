@@ -1,3 +1,5 @@
+import { workingDirectoryPort } from './deferred-worktree.js'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { hostMessage, withHostLanguage, languageForInvocation } from './i18n/host.js'
 import { hostRegistrationMessage } from './i18n/host-messages.js'
 /**
@@ -194,6 +196,11 @@ export function registerTools(ctx: Context, module: SessionCheckoutModule): void
         const sessionId = sessionIdOf(exec.agent)
         const current = await module.inspect(sessionId)
         const target = await module.beginNextIteration(sessionId, current.revision)
+        const directory = workingDirectoryPort(ctx)
+        if (directory) {
+          const root = await module.resolveManagedRoot(target.checkout.id)
+          await directory.set(exec.agent as Agent, root)
+        }
         if (target.delivery?.state !== 'working') {
           throw new Error(hostMessage('theNextWorktreeIterationDidNotEnterWorkingState', { p0: target.delivery?.state ?? 'unknown' }))
         }

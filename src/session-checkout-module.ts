@@ -3727,7 +3727,10 @@ export function createSessionCheckoutModule(
     }
     if (!session.projectId) throw new SessionCheckoutError('project_not_found', hostMessage('theCurrentSessionIsNotAssociatedWithAWorkspace'))
     const ownerWorkspace = dependencies.lookup.getProject(session.projectId)
-    if (!ownerWorkspace || !resolvedPathsEqual(ownerWorkspace.root, predecessor.managedRoot)) {
+    const sameSessionOrigin = predecessor.sourceSessionId === sessionId
+      && ownerWorkspace?.id === predecessor.projectId
+      && resolvedPathsEqual(ownerWorkspace.root, predecessor.localRoot)
+    if (!ownerWorkspace || (!sameSessionOrigin && !resolvedPathsEqual(ownerWorkspace.root, predecessor.managedRoot))) {
       throw new SessionCheckoutError('project_mismatch', hostMessage('theCurrentSessionSImmutableCwdDoesNotMatch'))
     }
     if (dependencies.files.exists(predecessor.managedGitRoot) || dependencies.files.exists(predecessor.managedRoot)) {
@@ -4167,6 +4170,43 @@ export function createSessionCheckoutModule(
       const requestStartedAt = Date.now()
       return withBindingLock(() => bindTarget(sessionId, choice, 0, requestStartedAt))
     },
+    createDeferredTarget: sessionId => withBindingLock(async () => {
+      const previous = getPersistedBinding(sessionId)
+      if (previous?.target.kind === 'local') {
+        const registry = dependencies.registry.read()
+        delete registry.sessionBindings[sessionId]
+        registry.revision += 1
+        dependencies.registry.write(registry)
+      }
+      try {
+        // An existing owner is reused, never implicitly advanced after delivery.
+        const existing = getPersistedBinding(sessionId)
+        const target = existing ? await inspectTarget(sessionId, true)
+          : await bindTarget(sessionId, { kind: 'isolated' })
+        const binding = getPersistedBinding(sessionId)
+        const record = binding?.target.kind === 'isolated'
+          ? dependencies.registry.read().managedCheckouts[binding.target.checkoutId] : undefined
+        if (record?.ownerSessionId === sessionId && record.phase === 'discarded' && record.delivery.state === 'delivered') {
+          // The model may discuss delivery and invoke beginNextIteration; the
+          // existing runtime context forbids edits until that transition succeeds.
+          return { targetSessionId: sessionId, target }
+        }
+        if (!record || record.ownerSessionId !== sessionId
+          || !['ready', 'retained', 'finalized'].includes(target.checkout.phase)
+          || !['ready', 'retained', 'finalized'].includes(record.phase) || !dependencies.files.exists(record.managedRoot)) {
+          throw new SessionCheckoutError('operation_not_allowed', hostMessage('deferredUnavailable'))
+        }
+        return { targetSessionId: sessionId, managedRoot: record.managedRoot, target }
+      } catch (error) {
+        if (previous && !getPersistedBinding(sessionId)) {
+          const registry = dependencies.registry.read()
+          registry.sessionBindings[sessionId] = previous
+          registry.revision += 1
+          dependencies.registry.write(registry)
+        }
+        throw error
+      }
+    }),
     createIsolatedTarget: (sourceSessionId, targetSessionId) => withBindingLock(async () => {
       if (!targetSessionId || targetSessionId === sourceSessionId) {
         throw new SessionCheckoutError('invalid_input', hostMessage('anIsolatedTargetRequiresASeparatePreallocatedSessionID'))

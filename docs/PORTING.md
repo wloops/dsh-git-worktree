@@ -118,3 +118,9 @@ Subagents inherit their parent's persisted cwd. They are isolated when spawned f
 - `tests/session-checkout-apply.test.ts`: real Git preflight/Preview/rollback/finalize/Finish/fingerprint behavior, including fresh-engine receipt recovery, same-branch fast-forward rollback, overlap conflicts, branch switches, rewritten history, Local layer preservation, and final CAS.
 - `tests/client-review-console.test.tsx` and `tests/client-target-console.test.tsx`: Preview changes / Confirm and save actions, checkpoint and recovery flows, revision refresh, modal confirmation, dock projection and Preview-aware Discard.
 - `scripts/check-publish.mjs`: every package export, Host patch, Host metadata, `dsh.client`, and executable browser ModuleLoader closure.
+
+### Deferred same-Session launch
+
+On Hosts exposing the public `workingDirectory` service and Session plugin records, the blank composer registers durable intent only. Native inbox maintenance creates the checkout and commits the effective directory before execution; pre-step is the replay-safe admission fallback. Failed attempts retain the native message while awaiting retry. No draft/attachment handoff or submit interception is involved. Older Hosts and uninitialized repositories retain the explicit creation flow.
+
+The original project remains the Local identity; never replace its project root with the managed path. Console authorization separately checks the live committed effective directory. Same-Session owners can begin the next iteration after delivery, and that tool explicitly re-enters the recreated directory. Preview/retention discussions remain allowed under the existing read-only runtime context. After successful cleanup, the Host may restore the original directory; the model receives the existing Delivered guard and must call `worktree_begin_next_iteration` before modifications, just as in the previous lifecycle. This plugin does not introduce a general filesystem/tool sandbox.

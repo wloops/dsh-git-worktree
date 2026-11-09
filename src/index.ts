@@ -1,3 +1,4 @@
+import { mountDeferredWorktree } from './deferred-worktree.js'
 import { ProjectSkillStore } from './adapters/project-skills.js'
 import { mountProjectSkillProvider } from './adapters/project-skill-provider.js'
 /**
@@ -108,6 +109,8 @@ export interface SessionCheckoutModule {
     operation: (target: SessionTargetView) => Promise<T>,
   ): Promise<T>
   bind(sessionId: string, choice: SessionTargetBindChoice): Promise<SessionTargetView>
+  /** Create/revalidate a same-Session launch; delivered discussions have no active root. */
+  createDeferredTarget(sessionId: string): Promise<Omit<IsolatedTargetLaunch, 'managedRoot'> & { managedRoot?: string }>
   /** Reserve a distinct owner session and checkout without changing the source session cwd/identity. */
   createIsolatedTarget(sourceSessionId: string, targetSessionId: string): Promise<IsolatedTargetLaunch>
   /** Recreate a cleaned delivered owner's immutable cwd as the next isolated iteration. */
@@ -237,6 +240,10 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
     createCheckoutId: randomUUID,
   })
 
+  const deferred = mountDeferredWorktree(ctx, async agent => {
+    const launch = await module.createDeferredTarget(agent.id)
+    return launch.managedRoot
+  })
   new WorktreeConsoleService(ctx, createWorktreeConsoleControlPlane({
     module,
     lookup,
@@ -244,7 +251,7 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
     registry,
     git,
     reviewDiff: createGitWorktreeReviewDiffReader(projectSkills),
-  }))
+  }), deferred)
 
   registerTools(ctx, module)
   registerWorktreeCommand(ctx, module)

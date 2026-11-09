@@ -217,16 +217,23 @@ export function createWorktreeConsoleControlPlane(options: WorktreeConsoleContro
     if (project === undefined) {
       throw domainError('project_mismatch', hostMessage('theCurrentSessionWorkspaceCannotBeProvenToBelong'))
     }
+    const effectiveCwd = options.lookup.getSessionWorkingDirectory?.(sessionId)
+    const callerRoot = effectiveCwd ?? project.root
+    const deliveredOrigin = record.ownerSessionId === sessionId && record.sourceSessionId === sessionId
+      && record.phase === 'discarded' && record.delivery.state === 'delivered'
+      && sameLocalRoot(resolve(callerRoot), resolve(record.localRoot))
+      && sameLocalRoot(resolve(project.root), resolve(record.localRoot))
+    if (deliveredOrigin) return
     const cleanedOwnerCwd = record.ownerSessionId === sessionId
       && record.phase === 'discarded'
       && record.delivery.state === 'delivered'
-      && !options.files.exists(project.root)
-      && sameLocalRoot(resolve(project.root), resolve(expectedRoot))
+      && !options.files.exists(callerRoot)
+      && sameLocalRoot(resolve(callerRoot), resolve(expectedRoot))
     if (cleanedOwnerCwd) return
-    if (!options.files.exists(project.root)) {
+    if (!options.files.exists(callerRoot)) {
       throw domainError('project_mismatch', hostMessage('theCurrentSessionWorkspaceCannotBeProvenToBelong'))
     }
-    const workspaceRoot = await options.files.canonicalize(project.root)
+    const workspaceRoot = await options.files.canonicalize(callerRoot)
     if (!sameLocalRoot(workspaceRoot, expectedRoot)) {
       throw domainError('project_mismatch', hostMessage('theCurrentSessionCwdDoesNotMatchTheWorktree'))
     }

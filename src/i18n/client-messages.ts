@@ -2,6 +2,10 @@ import type { MessageCatalog } from './core.js'
 
 /** Plugin-owned Client copy; parameters are opaque user/Host data. */
 export const clientMessages = {
+  "deferred.saving": {"zh":"正在保存 Worktree 选择", "en":"Saving Worktree selection"},
+  "deferred.hint": {"zh":"发送第一条消息时创建 Worktree，消息将在隔离目录执行", "en":"Create a Worktree on first send and run the message in isolation"},
+  "deferred.creating": {"zh":"正在创建 Worktree，消息等待中", "en":"Creating Worktree; message is waiting"},
+  "deferred.retry": {"zh":"重试创建", "en":"Retry creation"},
   "manager.task.label": {"zh":"{project} · 第 {iteration} 轮","en":"{project} · Iteration {iteration}"},
   "manager.task.id": {"zh":"任务标识","en":"Task ID"},
   "detail.title": {"zh": "验收详情", "en": "Review details"},

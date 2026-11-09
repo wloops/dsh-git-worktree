@@ -1,4 +1,7 @@
-import { withHostLanguage, languageFromSettings } from '../i18n/host.js'
+import type { DeferredWorktree } from '../deferred-worktree.js'
+import { outcome } from './errors.js'
+import type { DeferredWorktreeState } from '../console-contract.js'
+import { withHostLanguage, languageFromSettings, hostMessage } from '../i18n/host.js'
 import { hostWorkspaceClientFlavor } from '../host-compat.js'
 import type { Language } from '../i18n/core.js'
 import type { Context } from '@deepseek-ai/cordis'
@@ -24,8 +27,36 @@ import type { WorktreeConsoleControlPlane } from './control-plane.js'
 
 /** Official Typert Remote service; the Gateway resolves `agentId` before business code runs. */
 export class WorktreeConsoleService extends TypertRemoteService {
-  constructor(private readonly hostContext: Context, private readonly controlPlane: WorktreeConsoleControlPlane) {
+  private readonly deferredEligibility = new WeakMap<Agent['session'], boolean>()
+  constructor(private readonly hostContext: Context, private readonly controlPlane: WorktreeConsoleControlPlane, private readonly deferred?: DeferredWorktree) {
     super(hostContext, 'gitWorktree')
+  }
+
+  @Remote
+  deferredWorktree(agent: Agent, requested?: boolean, retry?: boolean, locale?: Language): Promise<WorktreeConsoleOutcome<DeferredWorktreeState>> {
+    return withHostLanguage(locale ?? languageFromSettings(agent.ctx ?? this.hostContext), () => outcome(async () => {
+      if (!this.deferred) return { supported: false, requested: false, locked: false, phase: 'idle' }
+      if (requested !== undefined) {
+        if (requested) {
+          const check = await this.controlPlane.preflightCreate(agent.id)
+          if (!check.ok) throw new Error(check.error.message)
+          if (check.value.kind !== 'ready') throw new Error(hostMessage('initialConfirmationRequired'))
+        }
+        return this.deferred.update(agent, requested)
+      }
+      if (retry) this.deferred.retry(agent)
+      const state = this.deferred.state(agent)
+      if (state.supported && !state.requested && !state.locked) {
+        let eligible = this.deferredEligibility.get(agent.session)
+        if (eligible === undefined) {
+          const check = await this.controlPlane.preflightCreate(agent.id)
+          eligible = check.ok && check.value.kind === 'ready'
+          this.deferredEligibility.set(agent.session, eligible)
+        }
+        if (!eligible) return { ...state, supported: false }
+      }
+      return state
+    }))
   }
 
   @Remote

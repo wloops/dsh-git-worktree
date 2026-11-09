@@ -32,6 +32,7 @@ async function loadRemoteClientModule(): Promise<{ apply: (ctx: Context) => void
 
 const METHODS = [
   'sidebarTopology',
+  'deferredWorktree',
   'current',
   'list',
   'preflightCreate',

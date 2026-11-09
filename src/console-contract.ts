@@ -523,7 +523,16 @@ export function worktreeConsoleErrorMeta(code: WorktreeConsoleErrorCode): Worktr
 }
 
 /** Normalized Client seam; Remote transport details stay behind one adapter. */
+export interface DeferredWorktreeState {
+  supported: boolean
+  requested: boolean
+  locked: boolean
+  phase: 'idle' | 'creating' | 'failed' | 'ready'
+  error?: string
+}
+
 export interface WorktreeConsoleAdapter {
+  deferredWorktree?(request: { sessionId: string; requested?: boolean; retry?: boolean }): Promise<WorktreeConsoleOutcome<DeferredWorktreeState>>
   preflightCreate?(request: { sourceSessionId: string }): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreatePreflightResponse>>
   createWithInitialCommit?(request: { sourceSessionId: string; confirmationToken: string }): Promise<WorktreeConsoleOutcome<WorktreeConsoleCreateResponse>>
   sidebarTopology(): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>>

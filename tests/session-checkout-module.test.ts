@@ -317,6 +317,36 @@ function createContext(options: {
 }
 
 describe('SessionCheckoutModule', () => {
+  test('deferred launch converts a Local binding in the same Session and reuses the checkout', async () => {
+    const context = createContext()
+    await context.module.bind('session-1', { kind: 'local' })
+    const first = await context.module.createDeferredTarget('session-1')
+    const second = await context.module.createDeferredTarget('session-1')
+    expect(first.targetSessionId).toBe('session-1')
+    expect(second.managedRoot).toBe(first.managedRoot)
+    expect(context.getCreateWorktreeCallCount()).toBe(1)
+    expect((await context.module.inspect('session-1')).checkout.kind).toBe('isolated')
+    expect(git(context.projectRoot, 'status', '--porcelain')).toBe('')
+  })
+
+  test('deferred same-Session delivery remains discussable and can begin a new isolated iteration', async () => {
+    const context = createContext()
+    const launch = await context.module.createDeferredTarget('session-1')
+    if (!launch.managedRoot) throw new Error('expected managed root')
+    writeFileSync(join(launch.managedRoot, 'tracked.txt'), 'deferred delivery\n')
+    const ready = await context.module.markReadyForReview('session-1', {
+      summary: 'deferred', validationStatus: 'passed', tests: [], suggestedCommitMessage: 'test: deferred',
+    })
+    if (ready.delivery?.state !== 'ready_for_review') throw new Error('expected review')
+    const finished = await context.module.operate({ action: 'finish', sessionId: 'session-1', expectedRevision: ready.revision,
+      expectedReviewId: ready.delivery.review.reviewId, commitMessage: 'test: deferred', retention: 'cleanup' })
+    if (finished.status !== 'finished') throw new Error('expected finish')
+    expect((await context.module.createDeferredTarget('session-1')).managedRoot).toBeUndefined()
+    const next = await context.module.beginNextIteration('session-1', finished.target.revision)
+    expect(next.delivery).toMatchObject({ state: 'working', iteration: 2 })
+    expect((await context.module.createDeferredTarget('session-1')).managedRoot).toBe(launch.managedRoot)
+  })
+
   test('Given a host rewind owns the exclusive session mutation lock When bind starts Then checkout mutation waits until rewind releases', async () => {
     const context = createContext()
     await context.module.bind('session-1', { kind: 'local' })

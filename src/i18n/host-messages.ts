@@ -2,6 +2,10 @@ import type { MessageCatalog, Translator } from './core.js'
 
 /** Host-owned prose. Keys are stable; user data is passed only as interpolation values. */
 export const hostMessages = {
+  "deferredUnsupported": {"zh":"当前 Host 不支持延迟创建 Worktree", "en":"This Host does not support deferred Worktree creation"},
+  "deferredLocked": {"zh":"首条消息已发送，不能再更改 Worktree 选择", "en":"The first message has been sent; Worktree selection is locked"},
+  "deferredUnavailable": {"zh":"Worktree 当前不可执行，请先恢复工作目录或开始下一轮", "en":"Worktree is unavailable; restore its directory or start the next iteration first"},
+
   "initialStateChanged": {"zh": "仓库状态已变化，请重新选择独立 Worktree 并确认。没有沿用旧确认创建提交。", "en": "The repository changed. Select Independent Worktree again and confirm the new state. The old confirmation was not used."},
   "initialCommitFailed": {"zh": "无法创建初始版本。请检查 Git 仓库权限和配置后重试。", "en": "Cannot create the initial version. Check Git repository permissions and configuration, then retry."},
   "initialIdentityMissing": {"zh": "Git 提交身份未配置。请在该仓库中设置 git config user.name \"你的名字\" 和 git config user.email \"你的邮箱\" 后重试。插件不会修改身份。", "en": "Git commit identity is not configured. In this repository, set git config user.name \"Your Name\" and git config user.email \"you@example.com\", then retry. The plugin will not change your identity."},

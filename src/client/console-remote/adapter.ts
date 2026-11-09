@@ -1,3 +1,4 @@
+import type { DeferredWorktreeState } from '../../console-contract.js'
 import { createTranslator, normalizeLanguage, type Language } from '../../i18n/core.js'
 import { transportMessages } from '../../i18n/transport-messages.js'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -61,6 +62,7 @@ export function createWorktreeConsoleRemoteAdapter(remote: GitWorktreeRemote, ge
   }
 
   return {
+    deferredWorktree: request => invoke<DeferredWorktreeState>('deferredWorktree', locale => remote.deferredWorktree(request.sessionId, request.requested, request.retry, locale)),
     sidebarTopology: () => invoke<WorktreeSidebarTopologyResponse>('sidebarTopology', locale => remote.sidebarTopology(locale)),
     current: request => invoke<WorktreeConsoleCurrentResponse>('current', locale => remote.current(request.sessionId, locale)),
     list: request => invoke<WorktreeConsoleListResponse>('list', locale => remote.list(request.sessionId, request.needsAttention, request.includeDelivered, locale)),

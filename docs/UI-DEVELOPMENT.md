@@ -9,7 +9,7 @@
 | `src/client/console-remote/index.ts` | 实际 Client bundle 入口：mount 包内 Remote contribution、提供 adapter、注册 Workspace Sidebar 和会话 UI |
 | `src/client/console-remote/adapter.ts` | 将 Gateway transport 结果与业务结果归一化为 `WorktreeConsoleOutcome<T>` |
 | `src/client/index.tsx` | 注册 ToolView、Header、composer dock 和 pre-session UI，管理插件样式与本地化包装 |
-| `src/client/pre-session/` | 新会话 Worktree 确认、创建和草稿交接 |
+| `src/client/pre-session/` | 新会话 Worktree 延迟创建；旧 Host 的确认和草稿交接兼容 |
 | `src/client/target-console/` | Session Target 状态、关联 Worktree Manager 与 Review dock |
 | `src/client/review-console/` | 验收详情、Preflight、Delivery Proof 与恢复操作 |
 | `src/client/workspace-sidebar/` | 官方 Workspace Browser 的 Managed Worktree 展示集成 |
@@ -49,7 +49,9 @@ Remote mount 的 disposer 由 Client effect 管理。Workspace Sidebar 先注册
 当前不注册 `conversation.view` Worktree 页签。Manager 通过 Header 打开，不另建重复的常驻工作台。
 
 - UI 使用 Host facts 与 capability，不维护第二套持久生命周期。
-- 新会话创建与草稿交接复用 `pre-session` controller 和标准 composer，不拦截私有 submit sink。
+- 支持公开 `workingDirectory` 与 Session plugin record 的 Host 中，开关仅持久化当前 Session 的 Worktree 意图。首条原生消息进入 inbox 时挂起执行，创建并绑定同一 Session，提交有效目录后放行；不创建新 Session，不搬草稿或附件，不拦截私有 submit sink。
+- 创建失败保留消息和意图，展示重试；pre-step 仍是最终执行门禁。恢复会话和清理后的目录必须重新核验，不允许自动在 Local 运行。
+- 不支持该能力的旧 Host，以及需要初始化提交确认的空仓库，保留原有确认创建与草稿交接流程。
 - 文案沿用 `src/client/i18n.tsx` 与 `src/i18n/` 的中英文目录，规则见 [i18n.md](i18n.md)。
 - 样式沿用现有组件样式模块；`src/client/index.tsx` 通过 effect 插入带插件标识的 style，并在卸载时移除。
 - Workspace Sidebar 是带版本及 SHA-256 门禁的官方组件派生集成。修改前阅读 [UPSTREAM.md](../src/client/workspace-sidebar/UPSTREAM.md)，保留上游结构、授权边界与许可证说明。
