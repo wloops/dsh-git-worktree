@@ -80,8 +80,8 @@ See the [full usage guide](docs/USAGE.en.md) for detailed actions, recovery scen
 
 | DeepSeek Harness | Plugin version |
 | --- | --- |
-| `0.2.2-rc.1` | `0.12.2` (current version) |
-| `0.2.1-rc.2` (build baseline), `0.2.1-rc.5` | `0.12.2` |
+| `0.2.2-rc.1` | `0.12.3` (current version) |
+| `0.2.1-rc.2` (build baseline), `0.2.1-rc.5` | `0.12.3` |
 | `0.2.0-rc.2` | `0.10.0` |
 | `0.1.x` | See the historical `0.9.x` compatibility records; not every `0.1.x` version has been verified |
 
@@ -92,7 +92,7 @@ Match the plugin version to your Harness version rather than installing the late
 Install the current version through the `dsh` Web Profile:
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.12.2
+dsh plugin --profile web add dsh-git-worktree@0.12.3
 ```
 
 For other Harness versions, choose the matching plugin version from the table above first.

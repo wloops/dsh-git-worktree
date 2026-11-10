@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-worktree",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "Run agents in isolated Git worktrees with one-click review, rollback, and staged saves, plus grouped worktree sessions for clear ownership.",
   "icon": "./assets/icon.svg",
   "type": "module",

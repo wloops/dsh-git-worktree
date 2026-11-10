@@ -1,6 +1,6 @@
 # v0.12.2 — DSH 0.2.2 侧栏适配与开发体验修复
 
-状态：已发布。npm `0.12.2` 为当前 latest（gitHead `f07d2087c7edd9b77c04a6c54553b27ce31958df`，与 `origin/master` 一致）；tag `v0.12.2` 与 [GitHub Release](https://github.com/wloops/dsh-git-worktree/releases/tag/v0.12.2) 已创建。
+状态：已发布。npm `0.12.2`（gitHead `f07d2087c7edd9b77c04a6c54553b27ce31958df`，与当时的 `origin/master` 一致）；tag `v0.12.2` 与 [GitHub Release](https://github.com/wloops/dsh-git-worktree/releases/tag/v0.12.2) 已创建。
 
 ## 本版目的
 
@@ -46,5 +46,5 @@ pnpm run dev:dsh -- --harness ../deepseek-harness
 
 - release 提交链 `60d0579` → `c5ac08f` → `f07d208` 已推送 `origin/master`；`c5ac08f` 的 GitHub CI 通过（run 42501128631）。
 - tag `v0.12.2` 与 GitHub Release 已创建：https://github.com/wloops/dsh-git-worktree/releases/tag/v0.12.2
-- npm `0.12.2` 已发布并为 latest，gitHead `f07d2087c7edd9b77c04a6c54553b27ce31958df`（发布时 `prepublishOnly` 重跑构建与全量测试通过）。
+- npm `0.12.2` 已发布，gitHead `f07d2087c7edd9b77c04a6c54553b27ce31958df`（发布时 `prepublishOnly` 重跑构建与全量测试通过）。
 - 真实 scratch Profile 安装验收与实机验证缺口仍见上方「验证与未验证范围」。

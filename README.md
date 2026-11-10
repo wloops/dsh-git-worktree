@@ -80,8 +80,8 @@ flowchart LR
 
 | DeepSeek Harness | 插件版本 |
 | --- | --- |
-| `0.2.2-rc.1` | `0.12.2`（当前版本） |
-| `0.2.1-rc.2`（构建基线）、`0.2.1-rc.5` | `0.12.2` |
+| `0.2.2-rc.1` | `0.12.3`（当前版本） |
+| `0.2.1-rc.2`（构建基线）、`0.2.1-rc.5` | `0.12.3` |
 | `0.2.0-rc.2` | `0.10.0` |
 | `0.1.x` | 请参考 `0.9.x` 的历史兼容记录，不代表所有 `0.1.x` 版本均已验证 |
 
@@ -92,7 +92,7 @@ flowchart LR
 通过 `dsh` 的 Web Profile 安装当前版本：
 
 ```bash
-dsh plugin --profile web add dsh-git-worktree@0.12.2
+dsh plugin --profile web add dsh-git-worktree@0.12.3
 ```
 
 如果使用其他 Harness 版本，请先按上表选择匹配的插件版本。
