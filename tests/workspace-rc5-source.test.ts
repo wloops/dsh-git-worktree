@@ -35,9 +35,12 @@ describe('exact rc.5 provenance and navigation semantics', () => {
       for (const method of ['connectBlank', 'createInWorkspace']) {
         expect(String(after[method])).toBe(String(before[method]))
       }
-      // startSession changes only by the mandatory managed-owner guard.
-      expect(String(after.startSession).replace(/\s*if \(target !== void 0 && this.managedWorktreeGuard.blockWorkspace\(target\)\) return;/, ''))
-        .toBe(String(before.startSession))
+      // startSession changes only by the mandatory managed-owner seam
+      // (explicit targets guard, implicit targets resolve/redirect).
+      expect(String(after.startSession).replace(
+        /\s*const rawTarget = workspaceId \?\? currentWorkspaceId \?\? recent;[\s\S]*?const target = workspaceId === void 0 \? this\.managedWorktreeGuard\.resolveStartTarget\(rawTarget\) : rawTarget;/,
+        '\n\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;',
+      )).toBe(String(before.startSession))
     }
     expect(String(navigation(rc2).connectBlank)).not.toBe(String(prototype.connectBlank))
     const seam = '\t\t\tasync forkSession(sessionId, onCreated, options) {\n\t\t\t\treturn this.sessions.fork({'

@@ -1,6 +1,6 @@
 # v0.12.3 — 延迟创建隔离目录与介绍改版
 
-状态：待发布。版本可用性以正式发布前的 npm 查询为准。
+状态：已发布。npm `0.12.3` 为 latest（gitHead `5fbda7c014e606ee663cf4c70da32ad51c02abac`）；tag `v0.12.3` 与 [GitHub Release](https://github.com/wloops/dsh-git-worktree/releases/tag/v0.12.3) 已于 2026-11-10 创建。
 
 ## 本版目的
 
@@ -32,4 +32,4 @@
 - 全量 `pnpm test`（串行）：**52 个测试文件通过，717 passed / 1 skipped**，约 710 秒；较 0.12.2 的 50 文件 / 704 passed 新增延迟创建功能的测试。
 - 实际 `npm pack --ignore-scripts --json`：版本 `0.12.3`，262 个文件，压缩大小 812,066 字节，shasum `73859387829207ef3a40e0a0dab26571a8f2f259`；已核验 `lib/client.js`、`cordis.patch.yml`、`NOTICE`、`locale/en.json`、`locale/zh.json`、`assets/icon.svg`、含 0.12.3 条目的 `CHANGELOG.md`。发行说明只进 Git 仓库，不入 npm 包（`files` 仅含 `docs/i18n.md`）。
 - `git diff --check` 通过。
-- 尚未执行：clean Local 发布门禁、推送、release commit CI、远程 tag、GitHub Release、npm publish、发布后真实安装。
+- 发布结果（2026-11-10）：clean Local 发布门禁通过后推送，`master` 与 npm gitHead 均为 `5fbda7c`；tag `v0.12.3`、GitHub Release、npm publish 已完成，npm latest 即本版。发布后真实安装未做。

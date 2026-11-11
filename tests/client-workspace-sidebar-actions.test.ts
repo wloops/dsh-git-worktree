@@ -152,3 +152,125 @@ describe.each(variants)('$name official Session actions', variant => {
     }
   })
 })
+
+describe.each(variants)('$name implicit New Session target resolution', variant => {
+  test('redirects Managed targets to their project and never silently no-ops', async () => {
+    // jsdom 24 lacks AbortSignal.any; use Node's real abort implementation.
+    const abort = transferableAbortController()
+    vi.stubGlobal('AbortController', abort.constructor)
+    vi.stubGlobal('AbortSignal', abort.signal.constructor)
+    const ctx = new Context()
+    const descriptors: { name: string; id?: string; inject?: () => unknown }[] = []
+    const source = <T,>(snapshot: T) => ({ getSnapshot: () => snapshot, subscribe: () => () => {} })
+    ctx.provide('slots', {
+      inject(_name: string, callback: () => unknown) {
+        const result = callback()
+        if (result && typeof (result as Iterable<unknown>)[Symbol.iterator] === 'function') {
+          for (const _ of result as Iterable<unknown>) { /* exhaust official registration generators */ }
+        }
+      },
+      register(descriptor: typeof descriptors[number]) { descriptors.push(descriptor); return () => {} },
+      provideRoot() {}, registerFactory: () => () => {}, entries: () => [], subscribe: () => () => {},
+    } as never)
+    ctx.provide('sessions', {
+      list: source({
+        ids: ['owner', 'local'],
+        byId: {
+          owner: { id: 'owner', updatedAt: 1, blank: false },
+          local: { id: 'local', updatedAt: 2, blank: false },
+        },
+        phase: 'ready',
+      }),
+      fork: vi.fn(), using: vi.fn(), binding: () => ({}), create: vi.fn(), refreshProjections: vi.fn(async () => {}),
+    } as never)
+    ctx.provide('workspaces', {
+      list: source({
+        items: [
+          { workspaceId: 'managed-workspace', sessionIds: ['owner'] },
+          { workspaceId: 'project-workspace', sessionIds: ['local'] },
+        ],
+        archivedSessionIds: [], pinnedSessionIds: [], phase: 'ready',
+      }),
+      archiveSession: vi.fn(), unarchiveSession: vi.fn(),
+    } as never)
+    ctx.provide('locale', { register: () => () => {}, bind: () => () => '' } as never)
+    ctx.provide('remote', {} as never)
+    ctx.provide('remote.session', {} as never)
+    ctx.provide('remote.directoryPicker', {} as never)
+    ctx.provide('layout', { beginNavigation: () => new AbortController().signal } as never)
+    ctx.provide('shortcuts', { register: () => () => {}, catalog: {} } as never)
+    ctx.provide('contextMenus', { register: () => () => {}, active: source(null) } as never)
+    ctx.provide('remoteAccess', { source: () => source(true) } as never)
+
+    let guard!: {
+      ready: boolean
+      sessionIds: Set<string>
+      workspaceIds: Set<string>
+      managedWorkspaceToProject: Map<string, string>
+      blockWorkspace(id: string): boolean
+    }
+    const apply = officialApply(variant.source())
+    const fiber = ctx.plugin({ apply(child: Context) {
+      registerManagedWorkspaceSidebar(child as never, createWorktreeConsoleAdapterFixture().adapter, proxy => {
+        guard = proxy.get('__dshGitWorktreeManagedGuard') as unknown as typeof guard
+        apply(proxy)
+      })
+    } })
+    try {
+      await fiber
+      const navigation = ctx.get('uiWorkspace') as unknown as WorkspaceNavigation & {
+        mainReference?: { sessionId: string }
+        clearMain(): void
+      }
+      guard.ready = true
+      guard.sessionIds = new Set(['owner'])
+      guard.workspaceIds = new Set(['managed-workspace'])
+      guard.managedWorkspaceToProject = new Map([['managed-workspace', 'project-workspace']])
+      // Each generation enters session creation through its own method and
+      // arity; assert the resolved Workspace identity, not the call signature.
+      const openMethod = variant.name === 'modern' ? 'openWorkspaceSession' : 'openWorkspace'
+      const open = vi.spyOn(navigation, openMethod as 'openWorkspace').mockResolvedValue(undefined as never)
+      const clearMain = vi.spyOn(navigation, 'clearMain').mockImplementation(() => {})
+
+      // Global New Session inside a Managed owner resolves to the original project.
+      navigation.mainReference = { sessionId: 'owner' }
+      navigation.startSession(undefined)
+      expect(open.mock.calls[0]?.[0]).toBe('project-workspace')
+      expect(open).toHaveBeenCalledTimes(1)
+      expect(clearMain).not.toHaveBeenCalled()
+
+      // A normal current Workspace keeps official behavior.
+      open.mockClear()
+      navigation.mainReference = { sessionId: 'local' }
+      navigation.startSession(undefined)
+      expect(open.mock.calls[0]?.[0]).toBe('project-workspace')
+      expect(clearMain).not.toHaveBeenCalled()
+
+      // An unverified topology opens the New Session view instead of no-op.
+      open.mockClear(); clearMain.mockClear()
+      guard.ready = false
+      navigation.mainReference = { sessionId: 'owner' }
+      navigation.startSession(undefined)
+      expect(clearMain).toHaveBeenCalledOnce()
+      expect(open).not.toHaveBeenCalled()
+
+      // A Managed target without a project mapping also opens the New Session view.
+      open.mockClear(); clearMain.mockClear()
+      guard.ready = true
+      guard.managedWorkspaceToProject = new Map()
+      navigation.startSession(undefined)
+      expect(clearMain).toHaveBeenCalledOnce()
+      expect(open).not.toHaveBeenCalled()
+
+      // Explicit second-session creation in a Managed Workspace stays blocked.
+      open.mockClear(); clearMain.mockClear()
+      navigation.startSession('managed-workspace')
+      expect(open).not.toHaveBeenCalled()
+      expect(clearMain).not.toHaveBeenCalled()
+    } finally {
+      await fiber.dispose()
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    }
+  })
+})

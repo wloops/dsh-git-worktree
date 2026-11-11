@@ -162,6 +162,36 @@ describe('Managed Workspace sidebar', () => {
     expect(context.locale.register).toHaveBeenCalledWith('workspace', {})
   })
 
+  test('publishes the Managed Workspace to project redirect map to the guard', async () => {
+    let deliver!: (value: Awaited<ReturnType<WorktreeConsoleAdapter['sidebarTopology']>>) => void
+    const port = adapter()
+    const originalTopology = await port.sidebarTopology()
+    port.sidebarTopology = vi.fn(() => new Promise(resolve => { deliver = resolve }))
+    let guard!: { ready: boolean; managedWorkspaceToProject: Map<string, string> }
+    let Browser!: typeof InspectBrowser
+    const context = {
+      get: (name: string) => name === '__dshGitWorktreeManagedGuard' ? guard : undefined,
+      slots: {
+        inject: (_name: string, callback: () => unknown) => { callback() },
+        register: (descriptor: Record<string, unknown>, component: typeof InspectBrowser) => {
+          if (descriptor.name === 'sidebar.workspaces') Browser = component
+          return () => {}
+        },
+      },
+    }
+    registerManagedWorkspaceSidebar(context as never, port, (proxy: any) => {
+      guard = proxy.get('__dshGitWorktreeManagedGuard') as unknown as typeof guard
+      proxy.slots.inject('sidebar.workspaces', () => proxy.slots.register({ name: 'sidebar.workspaces' }, InspectBrowser))
+    })
+    render(<Browser {...browserProps()} />)
+    deliver(originalTopology)
+    await waitFor(() => expect(guard.ready).toBe(true))
+    // The Managed owner Workspace redirects implicit New Session to its project;
+    // ordinary projects never enter the map.
+    expect(guard.managedWorkspaceToProject.get(managedWorkspace)).toBe(localWorkspace)
+    expect(guard.managedWorkspaceToProject.has(localWorkspace)).toBe(false)
+  })
+
   test('blocks official shortcut mutations until topology is verified, then only protects owners', async () => {
     let deliver!: (value: Awaited<ReturnType<WorktreeConsoleAdapter['sidebarTopology']>>) => void
     const port = adapter()

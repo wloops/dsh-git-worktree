@@ -28,8 +28,12 @@ interface ManagedWorkspaceGuard {
   ready: boolean
   sessionIds: ReadonlySet<string>
   workspaceIds: ReadonlySet<string>
+  /** Managed Workspace id -> its original project Workspace id. */
+  managedWorkspaceToProject: ReadonlyMap<string, string>
   blockSession(id: string): boolean
   blockWorkspace(id: string): boolean
+  /** Resolve an implicit New Session target; Managed targets redirect to their project. */
+  resolveStartTarget(fallback: string | undefined): string | undefined
 }
 
 interface OfficialWorkspaceBrowserProps extends WorkspaceBrowserProps {
@@ -95,9 +99,21 @@ export function ManagedOfficialWorkspaceBrowser({
     if (!guard) return
     guard.sessionIds = projection.protectedSessionIds
     guard.workspaceIds = projection.protectedWorkspaceIds
+    const managedWorkspaceToProject = new Map<string, string>()
+    for (const workspace of workspaceState.items) {
+      if (!projection.protectedWorkspaceIds.has(workspace.workspaceId)) continue
+      for (const sessionId of workspace.sessionIds) {
+        const task = projection.managedBySessionId[sessionId]
+        if (task?.projectId) {
+          managedWorkspaceToProject.set(workspace.workspaceId, task.projectId)
+          break
+        }
+      }
+    }
+    guard.managedWorkspaceToProject = managedWorkspaceToProject
     guard.ready = topologyVerified
     return () => { guard.ready = false }
-  }, [guard, projection, topologyVerified])
+  }, [guard, projection, topologyVerified, workspaceState.items])
 
   const projectedWorkspaceState = useMemo<WorkspaceListState>(() => ({
     ...workspaceState,
@@ -203,8 +219,16 @@ function officialContextProxy(
     ready: false,
     sessionIds: new Set(),
     workspaceIds: new Set(),
+    managedWorkspaceToProject: new Map(),
     blockSession(id) { return !this.ready || this.sessionIds.has(id) },
     blockWorkspace(id) { return !this.ready || this.workspaceIds.has(id) },
+    resolveStartTarget(fallback) {
+      // Implicit New Session never no-ops: a Managed target redirects to its
+      // original project; an unverified topology opens the New Session view.
+      if (fallback === undefined || !this.ready) return undefined
+      if (!this.workspaceIds.has(fallback)) return fallback
+      return this.managedWorkspaceToProject.get(fallback)
+    },
   }
   const proxySlots = new Proxy(ctx.slots, {
     get(target, key, receiver) {

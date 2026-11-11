@@ -58,7 +58,7 @@ export function decorateAlphaWorkspaceClient(source) {
   )
   replace(
     '\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target === void 0) {',
-    '\t\t\t\tconst target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target !== void 0 && this.managedWorktreeGuard.blockWorkspace(target)) return;\n\t\t\t\tif (target === void 0) {',
+    '\t\t\t\tconst rawTarget = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (workspaceId !== void 0 && this.managedWorktreeGuard.blockWorkspace(workspaceId)) return;\n\t\t\t\tconst target = workspaceId === void 0 ? this.managedWorktreeGuard.resolveStartTarget(rawTarget) : rawTarget;\n\t\t\t\tif (target === void 0) {',
     'managed Workspace new Session shortcut',
   )
   replace(

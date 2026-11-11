@@ -37,7 +37,7 @@ export function decorateV022WorkspaceClient(source) {
   }
   replace('super(ctx, "uiWorkspace");', 'super(ctx, "uiWorkspace");\n\t\t\t\tthis.managedWorktreeGuard = ctx.get("__dshGitWorktreeManagedGuard");')
   replace('async forkSession(sessionId, onCreated, options) {', 'async forkSession(sessionId, onCreated, options) {\n\t\t\t\tif (this.managedWorktreeGuard.blockSession(sessionId)) throw new Error("managed Session must be changed through its Worktree owner");')
-  replace('const target = workspaceId ?? currentWorkspaceId ?? recent;', 'const target = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (target !== void 0 && this.managedWorktreeGuard.blockWorkspace(target)) return;')
+  replace('const target = workspaceId ?? currentWorkspaceId ?? recent;', 'const rawTarget = workspaceId ?? currentWorkspaceId ?? recent;\n\t\t\t\tif (workspaceId !== void 0 && this.managedWorktreeGuard.blockWorkspace(workspaceId)) return;\n\t\t\t\tconst target = workspaceId === void 0 ? this.managedWorktreeGuard.resolveStartTarget(rawTarget) : rawTarget;')
   replace('updatedAt: s.updatedAt,', 'updatedAt: s.updatedAt,\n\t\t\t\t__dshGitWorktree: s.__dshGitWorktree,')
   replace('workspace: labelOf(summary),', 'workspace: labelOf(summary),\n\t\t\t\t\t\t__dshGitWorktree: summary.__dshGitWorktree,')
   replace('const draggable = drag !== void 0 && reorderable && !row.blank && !row.archived;', 'const draggable = drag !== void 0 && reorderable && !row.blank && !row.archived && node.__dshGitWorktree === void 0;')
