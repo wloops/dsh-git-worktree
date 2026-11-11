@@ -224,6 +224,11 @@ export function TargetStatusAction({ sessionId, adapter, services }: TargetStatu
       ? [{ id: 'discard', icon: <ReviewIcon name="discard" />, label: pendingAction === 'discard' ? t("processing") : t("discard.task.and.clean.up.worktree"), danger: true, disabled: pendingAction !== null }]
       : []
 
+  // The header entry exists only while the Session has a real target. A
+  // loading state, a failed lookup, or a plain Local project that is not an
+  // available Git Worktree renders nothing instead of an unusable capsule.
+  if (!target) return null
+
   return (
     <>
       <Menu

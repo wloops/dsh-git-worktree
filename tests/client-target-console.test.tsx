@@ -176,7 +176,8 @@ describe('Harness-native Session Target slots', () => {
 
     const Header = entry!.component
     render(<Header sessionId="session-from-slot-props" />)
-    expect(screen.getByText('加载中…')).toBeTruthy()
+    // No target yet: the header entry stays hidden instead of a loading capsule.
+    expect(screen.queryByText('加载中…')).toBeNull()
     await waitFor(() => expect(screen.getByText('Local')).toBeTruthy())
     const status = screen.getByRole('button', { name: 'Session Target：Local' })
     expect(status.tagName).toBe('BUTTON')
@@ -185,6 +186,26 @@ describe('Harness-native Session Target slots', () => {
 
     slots.dispose()
     expect(slots.entries.some(candidate => candidate.descriptor.id === 'worktree-target')).toBe(false)
+  })
+
+  test('Header 入口在项目不是可用 Git Worktree 时不渲染任何胶囊或提示', async () => {
+    const fixture = createWorktreeConsoleAdapterFixture()
+    fixture.adapter.current = vi.fn(async () => ({
+      ok: false,
+      error: {
+        code: 'not_git_repository',
+        message: '当前 Session 项目不是可用的 Git Worktree',
+      },
+    }))
+    const { container } = render(<TargetStatusAction sessionId="plain-session" adapter={fixture.adapter} services={clientServices()} />)
+    await waitFor(() => expect(fixture.adapter.current).toHaveBeenCalledWith({ sessionId: 'plain-session' }))
+    // Give the lookup result one commit to reach state before asserting emptiness.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(container.textContent).toBe('')
+    expect(screen.queryByRole('button', { name: /Session Target/ })).toBeNull()
+    expect(screen.queryByText('不可用')).toBeNull()
+    expect(screen.queryByText('当前 Session 项目不是可用的 Git Worktree')).toBeNull()
+    expect(screen.queryByText('加载中…')).toBeNull()
   })
 
   test('Header 切换 Session 时丢弃旧请求，避免跨 Session 注入路径与来源身份', async () => {
