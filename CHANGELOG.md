@@ -2,11 +2,14 @@
 
 本项目的显著变更记录在此文件中。版本号遵循 Semantic Versioning；在 `0.x` 阶段，minor 版本可能包含需要迁移的公开能力调整。
 
-## [Unreleased]
+## [0.12.4] - 2026-11-11
+
+`0.12.4` 是修复版：恢复托管 Worktree 会话中侧栏「新会话」入口的响应，并停止为无 Worktree 目标的会话渲染状态胶囊。
 
 ### Fixed
 
-- 修复托管 Worktree 会话中点击侧栏「新会话」无反应：全局新会话隐式解析到托管工作区时重定向到原项目工作区；拓扑未就绪或映射缺失时打开新会话视图而非静默失败，显式在托管工作区创建第二会话仍受保护。
+- 修复托管 Worktree 会话中点击侧栏「新会话」无反应：全局新会话隐式解析到托管工作区时重定向到原项目工作区；拓扑未就绪或映射缺失时打开新会话视图而非静默失败，显式在托管工作区创建第二会话仍受保护。新增 5 代派生隐式解析回归与 guard 映射写入验证。
+- 隐藏无 Worktree 目标会话的状态入口：加载中、查询失败或项目不是可用 Worktree 时不再渲染状态胶囊或提示；有目标时的状态展示与操作错误反馈保持不变。新增零渲染回归并反转加载态断言。
 
 ## [0.12.3] - 2026-11-09
 
@@ -499,6 +502,11 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.12.4]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.3...v0.12.4
+[0.12.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.2...v0.12.3
+[0.12.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.1...v0.12.2
+[0.12.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/wloops/dsh-git-worktree/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/wloops/dsh-git-worktree/compare/v0.9.3...v0.10.0
