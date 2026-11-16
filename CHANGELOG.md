@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-11-16
+
 ### Fixed
 
 - 恢复 DSH `0.2.2-rc.3` 侧栏中的托管 Worktree 会话聚合和状态标记。使用对应的官方列表构建产物，不改变实际工作区归属；未识别版本继续保留官方列表和可用的标记扩展。
@@ -508,6 +510,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.12.5]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.4...v0.12.5
 [0.12.4]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.1...v0.12.2
