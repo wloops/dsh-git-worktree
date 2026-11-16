@@ -1,4 +1,5 @@
 import { apply as applyV022 } from './official-workspace-client-022.mock.js'
+import { apply as applyV022Rc3 } from './official-workspace-client-022-rc3.mock.js'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const spies = vi.hoisted(() => ({
@@ -56,7 +57,9 @@ describe('one Host-pinned Browser provider per Client startup', () => {
         : ['slots', 'sessions', 'workspaces', 'locale', 'remote', 'remote.directoryPicker', 'layout', 'shortcuts'], ['conversation']])
   })
 
-  test.each([['modern', applyModern], ['modern-rc5', applyRc5], ['modern-022', applyV022]] as const)('%s selects its exact modern factory without the picker boot cycle', async (flavor, selected) => {
+  test.each([
+    ['modern', applyModern], ['modern-rc5', applyRc5], ['modern-022', applyV022], ['modern-022-rc3', applyV022Rc3],
+  ] as const)('%s selects its exact modern factory without the picker boot cycle', async (flavor, selected) => {
     spies.topology.mockResolvedValue({ ok: true, value: { projects: [], workspaceClientFlavor: flavor } })
     const ctx = clientContext()
     await apply(ctx)

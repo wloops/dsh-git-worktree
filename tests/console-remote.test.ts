@@ -121,9 +121,9 @@ describe('manual strict Worktree Console Remote contribution', () => {
     })).toThrow()
   })
 
-  it('strict topology codec accepts both exact modern derivatives and rejects guessed generations', () => {
+  it('strict topology codec accepts the exact modern derivatives and rejects guessed generations', () => {
     const codec = WORKTREE_CONSOLE_DESCRIPTORS.find(item => item.method === 'sidebarTopology')!.result
-    for (const workspaceClientFlavor of ['modern', 'modern-rc5', 'modern-022']) {
+    for (const workspaceClientFlavor of ['modern', 'modern-rc5', 'modern-022', 'modern-022-rc3']) {
       const payload = { ok: true, value: { projects: [], workspaceClientFlavor } }
       expect(codec.schema.parse(payload)).toEqual(payload)
     }

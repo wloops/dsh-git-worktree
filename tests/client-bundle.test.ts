@@ -196,7 +196,7 @@ describe('built Client ModuleLoader artifact', () => {
     expect(document.querySelector('style[data-dsh-git-worktree]')).toBeNull()
   })
 
-  test.each(['modern', 'modern-rc5', 'modern-022'])('boots %s whose picker provider waits for uiWorkspace, then resolves picker calls lazily', async flavor => {
+  test.each(['modern', 'modern-rc5', 'modern-022', 'modern-022-rc3'])('boots %s whose picker provider waits for uiWorkspace, then resolves picker calls lazily', async flavor => {
     const nodeRequire = createRequire(import.meta.url)
     const { gateway, access } = gatewayClient()
     const worktree = executeBundle(readFileSync(resolve('lib/client.js'), 'utf8'))
@@ -282,6 +282,7 @@ describe('built Client ModuleLoader artifact', () => {
       useDirectoryFlow: select(false), useHostInfo: select({ home: '/home' }), useShortcuts: select([]),
       useWorkspaceShortcuts: select({ searchRequest: 0, addRequested: false }),
       actions: { retainAccountKeys() {}, setGroupExpanded() {} }, renderSlot: () => null,
+      useSectionScroller: () => ({ bindScrollerRef() {} }), renderFactorySlot: () => null,
       t: (key: string) => key,
     }))
     await waitFor(() => expect(view.container.querySelectorAll('[data-managed-worktree="true"]')).toHaveLength(1))

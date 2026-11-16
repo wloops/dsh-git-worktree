@@ -1,4 +1,5 @@
 import { readV022WorkspaceClient, V022_WORKSPACE_VERSION } from './workspace-sidebar-upstream-022.mjs'
+import { readV022Rc3WorkspaceClient, V022_RC3_WORKSPACE_VERSION } from './workspace-sidebar-upstream-022-rc3.mjs'
 import { createRequire } from 'node:module'
 import {
   readOfficialWorkspaceClient,
@@ -18,6 +19,7 @@ if (locale !== WORKSPACE_LOCALE_VERSION) {
 readOfficialWorkspaceClient()
 readRc5WorkspaceClient()
 readV022WorkspaceClient()
+readV022Rc3WorkspaceClient()
 readAlphaWorkspaceClient()
 readNextWorkspaceClient()
-console.log(`✓ Workspace Sidebar compatibility gate: ui-workspace ${WORKSPACE_UI_VERSION} + ${ALPHA_WORKSPACE_VERSION} + ${NEXT_WORKSPACE_VERSION} + ${RC5_WORKSPACE_VERSION} + ${V022_WORKSPACE_VERSION} SHA-256, locale ${locale}`)
+console.log(`✓ Workspace Sidebar compatibility gate: ui-workspace ${WORKSPACE_UI_VERSION} + ${ALPHA_WORKSPACE_VERSION} + ${NEXT_WORKSPACE_VERSION} + ${RC5_WORKSPACE_VERSION} + ${V022_WORKSPACE_VERSION} + ${V022_RC3_WORKSPACE_VERSION} SHA-256, locale ${locale}`)

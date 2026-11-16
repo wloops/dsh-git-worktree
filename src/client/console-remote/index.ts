@@ -1,5 +1,6 @@
 import { registerNativeWorkspaceDecorations } from '../workspace-sidebar/native.js'
 import { apply as applyV022Workspace, inject as v022WorkspaceInject } from 'virtual:dsh-official-workspace-client-022'
+import { apply as applyV022Rc3Workspace, inject as v022Rc3WorkspaceInject } from 'virtual:dsh-official-workspace-client-022-rc3'
 import { readClientLanguage } from '../i18n.js'
 import { createTranslator } from '../../i18n/core.js'
 import { transportMessages } from '../../i18n/transport-messages.js'
@@ -75,10 +76,15 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
       ctx as unknown as Parameters<typeof registerManagedWorkspaceSidebar>[0], adapter,
     )
     mountTools(ctx)
-  } else if (flavor === 'modern' || flavor === 'modern-rc5' || flavor === 'modern-022') {
-    const required = (flavor === 'modern-022' ? v022WorkspaceInject : flavor === 'modern-rc5' ? rc5WorkspaceInject : officialWorkspaceInject)
-      .filter(service => service !== 'remote.directoryPicker')
-    const applyWorkspace = flavor === 'modern-022' ? applyV022Workspace : flavor === 'modern-rc5' ? applyRc5Workspace : applyOfficialWorkspace
+  } else if (flavor === 'modern' || flavor === 'modern-rc5' || flavor === 'modern-022' || flavor === 'modern-022-rc3') {
+    const modernFactories = {
+      modern: [officialWorkspaceInject, applyOfficialWorkspace],
+      'modern-rc5': [rc5WorkspaceInject, applyRc5Workspace],
+      'modern-022': [v022WorkspaceInject, applyV022Workspace],
+      'modern-022-rc3': [v022Rc3WorkspaceInject, applyV022Rc3Workspace],
+    } as const
+    const [services, applyWorkspace] = modernFactories[flavor]
+    const required = services.filter(service => service !== 'remote.directoryPicker')
     // Same filtered subset as the entry inject: providing `uiWorkspace` must
     // never wait for the directory picker (see the inject comment above).
     ctx.inject(required, child => {

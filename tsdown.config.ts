@@ -1,4 +1,5 @@
 import { materializeV022WorkspaceClientModule, V022_WORKSPACE_VIRTUAL_ID, RESOLVED_V022_WORKSPACE_VIRTUAL_ID } from './scripts/workspace-sidebar-upstream-022.mjs'
+import { materializeV022Rc3WorkspaceClientModule, V022_RC3_WORKSPACE_VIRTUAL_ID, RESOLVED_V022_RC3_WORKSPACE_VIRTUAL_ID } from './scripts/workspace-sidebar-upstream-022-rc3.mjs'
 import { defineConfig } from 'tsdown'
 import {
   materializeOfficialWorkspaceClientModule,
@@ -47,6 +48,7 @@ export default defineConfig({
   plugins: [{
     name: 'official-workspace-client-source',
     resolveId(id) {
+      if (id === V022_RC3_WORKSPACE_VIRTUAL_ID) return RESOLVED_V022_RC3_WORKSPACE_VIRTUAL_ID
       if (id === V022_WORKSPACE_VIRTUAL_ID) return RESOLVED_V022_WORKSPACE_VIRTUAL_ID
       if (id === OFFICIAL_WORKSPACE_VIRTUAL_ID) return RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID
       if (id === NEXT_WORKSPACE_VIRTUAL_ID) return RESOLVED_NEXT_WORKSPACE_VIRTUAL_ID
@@ -55,6 +57,7 @@ export default defineConfig({
       return null
     },
     load(id) {
+      if (id === RESOLVED_V022_RC3_WORKSPACE_VIRTUAL_ID) return materializeV022Rc3WorkspaceClientModule()
       if (id === RESOLVED_V022_WORKSPACE_VIRTUAL_ID) return materializeV022WorkspaceClientModule()
       if (id === RESOLVED_OFFICIAL_WORKSPACE_VIRTUAL_ID) return materializeOfficialWorkspaceClientModule()
       if (id === RESOLVED_NEXT_WORKSPACE_VIRTUAL_ID) return materializeNextWorkspaceClientModule()

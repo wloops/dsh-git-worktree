@@ -25,6 +25,10 @@ declare module 'virtual:dsh-official-workspace-client-022' {
   export function apply(ctx: Context): void
 }
 
+declare module 'virtual:dsh-official-workspace-client-022-rc3' {
+  export { apply, inject } from 'virtual:dsh-official-workspace-client-022'
+}
+
 declare module 'virtual:dsh-official-workspace-client-rc5' {
   import type { Context } from '@deepseek-ai/cordis'
 

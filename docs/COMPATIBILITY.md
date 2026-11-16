@@ -1,8 +1,8 @@
 # Harness compatibility / Harness 兼容性
 
-> 当前开发版安装策略：DSH peer 使用最低版本 `>=0.2.1-rc.2` 并显式包含 `0.2.2-rc.1`，不设置预防性上限；仅在确认破坏性变化后调整要求。开发依赖和内嵌侧栏来源继续精确锁定。未知宿主不复用旧侧栏，而保留官方 Workspace，其他插件功能按实际 API 运行。允许安装并不等于已验收；SemVer 默认仅自动包含同一 `0.2.1` 核心版本的后续 RC，未来其他核心版本的预发布不属于默认匹配。下方精确 peer 描述均为已发布历史版本的记录。
+> 当前开发版安装策略：DSH peer 使用最低版本 `>=0.2.1-rc.2` 并显式包含 `0.2.2-rc.1`、`0.2.2-rc.3`，不设置预防性上限；仅在确认破坏性变化后调整要求。开发依赖和内嵌侧栏来源继续精确锁定。未知宿主不复用旧侧栏，而保留官方 Workspace，其他插件功能按实际 API 运行。允许安装并不等于已验收；SemVer 默认仅自动包含同一 `0.2.1` 核心版本的后续 RC，未来其他核心版本的预发布不属于默认匹配。下方精确 peer 描述均为已发布历史版本的记录。
 
-> Development installation policy: DSH peers use a minimum of `>=0.2.1-rc.2` plus explicit `0.2.2-rc.1`, with no speculative upper bound; requirements change when breaking changes are confirmed. Build dependencies and embedded Browser sources remain exact. Unknown Hosts retain the official Workspace rather than reusing an unverified derivative. Installation permission is not acceptance evidence. Standard SemVer includes later RCs of the same `0.2.1` core; prereleases of other future cores are not matched by default. Exact peer constraints below describe historical published releases.
+> Development installation policy: DSH peers use a minimum of `>=0.2.1-rc.2` plus explicit `0.2.2-rc.1` and `0.2.2-rc.3`, with no speculative upper bound; requirements change when breaking changes are confirmed. Build dependencies and embedded Browser sources remain exact. Unknown Hosts retain the official Workspace rather than reusing an unverified derivative. Installation permission is not acceptance evidence. Standard SemVer includes later RCs of the same `0.2.1` core; prereleases of other future cores are not matched by default. Exact peer constraints below describe historical published releases.
 
 [中文](#中文) · [English](#english)
 
@@ -11,6 +11,10 @@
 ### 官方原生集成迁移
 
 未知 Host 不再只剩未扩展的官方列表：在官方声明行尾或悬浮 Slot 时，插件按能力挂载 Worktree 标记；没有对应槽则等待声明，不接管 Provider，不改全局数据。已知版本仍保留聚合派生，**尚未实现无白名单的完整聚合**。原因及最小官方接口提案见 [长期集成说明](SIDEBAR-NATIVE-INTEGRATION.md)。
+
+### 开发版：0.2.2-rc.3 侧栏适配
+
+已核对该版本运行中的 `sidebar.workspaces`、Client Service 和官方 Workspace 实现：公开扩展仍是行装饰与菜单，未开放会话聚合所需的列表投影。新增独立的 `modern-022-rc3` 精确派生，保留新版列表、搜索和菜单，在展示层将托管会话归入原项目，不更改 Session ID 或持久工作区归属。未识别的版本继续走原生装饰回退，不猜测兼容。
 
 ### 0.12.2：0.2.2-rc.1 侧栏适配
 

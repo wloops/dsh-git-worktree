@@ -12,7 +12,7 @@ describe('Host-pinned Workspace generation', () => {
       .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
     expect(peers).toHaveLength(12)
     for (const [name, range] of peers) {
-      expect(range).toBe('>=0.2.1-rc.2 || 0.2.2-rc.1')
+      expect(range).toBe('>=0.2.1-rc.2 || 0.2.2-rc.1 || 0.2.2-rc.3')
       expect(manifest.devDependencies[name]).toBe('0.2.1-rc.2')
     }
   })
@@ -27,6 +27,8 @@ describe('Host-pinned Workspace generation', () => {
     expect(workspaceClientFlavorForAgentVersion('0.2.1-rc.5')).toBe('modern-rc5')
     expect(workspaceClientFlavorForAgentVersion('0.2.2-rc.1')).toBe('modern-022')
     expect(workspaceClientFlavorForAgentVersion('0.2.2-rc.2')).toBe('unsupported')
+    expect(workspaceClientFlavorForAgentVersion('0.2.2-rc.3')).toBe('modern-022-rc3')
+    expect(workspaceClientFlavorForAgentVersion('0.2.2-rc.4')).toBe('unsupported')
     expect(workspaceClientFlavorForAgentVersion('0.2.1')).toBe('unsupported')
     expect(workspaceClientFlavorForAgentVersion('0.1.7-rc.3')).toBe('unsupported')
     expect(workspaceClientFlavorForAgentVersion(undefined)).toBe('unsupported')
