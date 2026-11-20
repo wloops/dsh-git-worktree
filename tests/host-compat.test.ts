@@ -28,12 +28,15 @@ describe('Workspace client selection', () => {
     expect(workspaceClientFlavorForSource(workspaceSource(suffix))).toBe(flavor)
   })
 
-  test('handles the Desktop rc.5 CSS names but not changed Browser logic', () => {
-    const desktop = workspaceSource('-022-rc3').replaceAll('bhn1Oq_', 'Kjh-qa_')
-      .replaceAll('YDXeBa_', 'JoiKIa_').replaceAll('_G5b-a_', 'wp6hAG_')
-    expect(workspaceClientFlavorForSource(desktop)).toBe('modern-022-rc3')
-    const modified = desktop.replace('exports.apply=apply', 'exports.apply=() => {}')
-    expect(modified).not.toBe(desktop)
+  test.each([
+    ['Desktop rc.5', 'Kjh-qa', 'JoiKIa', 'wp6hAG'],
+    ['local rc.5 source build', 'ie6hUG', '_6euBGW', 'n96sPG'],
+  ])('handles %s CSS names but not changed Browser logic', (_build, root, row, modal) => {
+    const rebuilt = workspaceSource('-022-rc3').replaceAll('bhn1Oq_', `${root}_`)
+      .replaceAll('YDXeBa_', `${row}_`).replaceAll('_G5b-a_', `${modal}_`)
+    expect(workspaceClientFlavorForSource(rebuilt)).toBe('modern-022-rc3')
+    const modified = rebuilt.replace('exports.apply=apply', 'exports.apply=() => {}')
+    expect(modified).not.toBe(rebuilt)
     expect(workspaceClientFlavorForSource(modified)).toBe('unsupported')
     expect(workspaceClientFlavorForSource('')).toBe('unsupported')
   })

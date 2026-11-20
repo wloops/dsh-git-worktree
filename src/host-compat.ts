@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -23,7 +24,8 @@ export function workspaceClientFlavorForSource(source: string): WorkspaceClientF
   if (exact !== undefined) return exact
   // Desktop, npm and source builds generate different scoped CSS names.
   // Normalize only the three known CSS modules; all other bytes must match.
-  const prefixes = [...source.matchAll(/const css(?:\$\d+)?=`\.([\w-]{6})_(?:root|projectRow|modalAction)[{,]/g)]
+  // A generated prefix may include a leading underscore and vary in length.
+  const prefixes = [...source.matchAll(/const css(?:\$\d+)?=`\.([\w-]+?)_(?:root|projectRow|modalAction)[{,]/g)]
   if (prefixes.length === 3 && new Set(prefixes.map(match => match[1])).size === 3) {
     const npmPrefixes = ['bhn1Oq', 'YDXeBa', '_G5b-a']
     const replacements = new Map(prefixes.map((match, index) => [`${match[1]}_`, `${npmPrefixes[index]}_`]))
@@ -43,33 +45,46 @@ export function resolveWorkspaceClientFlavor(ctx: Context): WorkspaceClientFlavo
     const internal = ctx.loader.internal
     if (internal && typeof internal.resolveSync === 'function') {
       try {
-        const specifier = `${WORKSPACE}/client`
         const result = internal.version === 'v2'
-          ? internal.resolveSync(baseUrl, { specifier, attributes: {} })
-          : internal.resolveSync(specifier, baseUrl, {})
-        return workspaceClientFlavorForSource(readFileSync(fileURLToPath(result.url), 'utf8'))
-      } catch { /* Older runtimes may only resolve the Host half through Loader hooks. */ }
+          ? internal.resolveSync(baseUrl, { specifier: WORKSPACE, attributes: {} })
+          : internal.resolveSync(WORKSPACE, baseUrl, {})
+        return workspaceClientFlavorForModule(fileURLToPath(result.url))
+      } catch { return 'unsupported' }
     }
   }
   return hostWorkspaceClientFlavor(installAnchor, baseUrl)
 }
 
+/** Web uses the owning Host package's default client export, not Node's active export conditions. */
+function workspaceClientFlavorForModule(modulePath: string): WorkspaceClientFlavor {
+  for (let dir = dirname(modulePath); ; dir = dirname(dir)) {
+    let manifest: { name?: unknown; exports?: { './client'?: unknown } } | undefined
+    try { manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) }
+    catch { /* A module can be nested below its owning package. */ }
+    if (manifest?.name === WORKSPACE) {
+      const client = manifest.exports?.['./client']
+      const path = typeof client === 'object' && client !== null ? Reflect.get(client, 'default') : client
+      if (typeof path !== 'string' || !path.startsWith('./')) return 'unsupported'
+      return workspaceClientFlavorForSource(readFileSync(join(dir, path), 'utf8'))
+    }
+    if (dirname(dir) === dir) return 'unsupported'
+  }
+}
+
 export function hostWorkspaceClientFlavor(installAnchor?: string, workspaceBaseUrl?: string): WorkspaceClientFlavor {
   try {
     if (workspaceBaseUrl !== undefined) {
-      const client = createRequire(workspaceBaseUrl).resolve(`${WORKSPACE}/client`)
-      return workspaceClientFlavorForSource(readFileSync(client, 'utf8'))
+      return workspaceClientFlavorForModule(createRequire(workspaceBaseUrl).resolve(WORKSPACE))
     }
     if (installAnchor === undefined) return 'unsupported'
     const host = createRequire(installAnchor)
-    let client: string
+    let modulePath: string
     try {
       const web = createRequire(host.resolve('@deepseek-ai/dsh-web-app/package.json'))
-      client = web.resolve(`${WORKSPACE}/client`)
+      modulePath = web.resolve(WORKSPACE)
     } catch {
-      client = host.resolve(`${WORKSPACE}/client`)
+      modulePath = host.resolve(WORKSPACE)
     }
-    return workspaceClientFlavorForSource(readFileSync(client, 'utf8'))
-  } catch { /* No recognized artifact: keep the official provider. */ }
-  return 'unsupported'
+    return workspaceClientFlavorForModule(modulePath)
+  } catch { return 'unsupported' }
 }

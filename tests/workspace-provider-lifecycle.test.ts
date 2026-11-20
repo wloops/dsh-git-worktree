@@ -35,9 +35,15 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
     const root = join(dir, String(index))
     mkdirSync(root)
     const manifest = join(root, 'package.json')
-    writeFileSync(manifest, JSON.stringify({ name, exports: { './client': './client.js' }, ...([OFFICIAL, WORKTREE].includes(name) ? { dsh: { client: { platform: 'web' } } } : {}) }))
+    const sourceWorkspace = name === OFFICIAL && lifecycle.workspaceArtifact !== undefined
+    const clientExport = sourceWorkspace ? { development: './source-client.ts', default: './client.js' } : './client.js'
+    writeFileSync(manifest, JSON.stringify({ name, exports: { './client': clientExport }, ...([OFFICIAL, WORKTREE].includes(name) ? { dsh: { client: { platform: 'web' } } } : {}) }))
+    if (sourceWorkspace) {
+      writeFileSync(join(root, 'host.js'), 'export function apply() {}')
+      writeFileSync(join(root, 'source-client.ts'), 'export function apply(): void {}')
+    }
     writeFileSync(join(root, 'client.js'), name === OFFICIAL && lifecycle.workspaceArtifact === 'known'
-      ? readFileSync(require.resolve(`${OFFICIAL}-022-rc3/client`), 'utf8')
+      ? readFileSync(require.resolve(`${OFFICIAL}-022-rc3/client`), 'utf8').replaceAll('YDXeBa_', '_6euBGW_')
       : `window.__ModuleLoader__.load({id: ${JSON.stringify(name)}, factory: () => ({})});`)
     paths.set(name, manifest)
   }
@@ -87,7 +93,9 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
       const isClient = request.specifier.endsWith('/client')
       const path = paths.get(request.specifier.replace(/\/(?:package\.json|client)$/, ''))
       if (!path) throw new Error(`unexpected package ${request.specifier}`)
-      return { url: pathToFileURL(isClient ? path.replace(/package\.json$/, 'client.js') : path).href }
+      const sourceWorkspace = lifecycle.workspaceArtifact !== undefined && path === paths.get(OFFICIAL)
+      const target = isClient ? (sourceWorkspace ? 'source-client.ts' : 'client.js') : (sourceWorkspace ? 'host.js' : 'package.json')
+      return { url: pathToFileURL(path.replace(/package\.json$/, target)).href }
     },
   } as never
   if (replayDisabled) {
