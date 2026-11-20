@@ -324,7 +324,7 @@ describe('manual strict Worktree Console Remote contribution', () => {
       seenLanguages.push(currentHostLanguage())
       return topology
     }) } as unknown as WorktreeConsoleControlPlane
-    new WorktreeConsoleService(ctx, control)
+    new WorktreeConsoleService(ctx, control, undefined, 'modern')
     new TypertGatewayService(ctx)
     ctx.typert.register(TYPERT)
 

@@ -8,7 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { Group, Loader, type EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import Include, { applyEntryPatches, entryListSchema, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { ClientModuleRegistry } from '@deepseek-ai/dsh-client-modules'
-import { workspaceClientFlavorForAgentVersion, type WorkspaceClientFlavor } from '../src/host-compat.js'
+import type { WorkspaceClientFlavor } from '../src/host-compat.js'
 import { mountWorkspaceProviderLifecycle, WORKSPACE_PROVIDER_CONDITION } from '../src/workspace-provider-lifecycle.js'
 
 const require = createRequire(import.meta.url)
@@ -28,7 +28,7 @@ function entries(disabled: boolean): EntryOptions[] {
   ], message => { throw new Error(message) })
 }
 
-async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?: string, childEntries?: EntryOptions[], failApply = false, unsupported = false, lifecycle: { operationTimeoutMs?: number, wedge?: 'never' | 'deferred', flavor?: WorkspaceClientFlavor } = {}) {
+async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?: string, childEntries?: EntryOptions[], failApply = false, unsupported = false, lifecycle: { operationTimeoutMs?: number, wedge?: 'never' | 'deferred', flavor?: WorkspaceClientFlavor, workspaceArtifact?: 'known' | 'unknown' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'workspace-provider-'))
   const paths = new Map<string, string>()
   for (const [index, name] of [OFFICIAL, WORKTREE, 'group-owner', 'fixture-include'].entries()) {
@@ -36,7 +36,9 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
     mkdirSync(root)
     const manifest = join(root, 'package.json')
     writeFileSync(manifest, JSON.stringify({ name, exports: { './client': './client.js' }, ...([OFFICIAL, WORKTREE].includes(name) ? { dsh: { client: { platform: 'web' } } } : {}) }))
-    writeFileSync(join(root, 'client.js'), `window.__ModuleLoader__.load({id: ${JSON.stringify(name)}, factory: () => ({})});`)
+    writeFileSync(join(root, 'client.js'), name === OFFICIAL && lifecycle.workspaceArtifact === 'known'
+      ? readFileSync(require.resolve(`${OFFICIAL}-022-rc3/client`), 'utf8')
+      : `window.__ModuleLoader__.load({id: ${JSON.stringify(name)}, factory: () => ({})});`)
     paths.set(name, manifest)
   }
   if (childEntries) {
@@ -46,6 +48,14 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
   }
   let applied = false
   const ctx = new Context()
+  if (lifecycle.workspaceArtifact) {
+    const modules = join(dir, 'node_modules', '@deepseek-ai', 'dsh-client-ui-workspace')
+    mkdirSync(modules, { recursive: true })
+    const manifest = paths.get(OFFICIAL)!
+    writeFileSync(join(modules, 'package.json'), readFileSync(manifest))
+    writeFileSync(join(modules, 'client.js'), readFileSync(manifest.replace(/package\.json$/, 'client.js')))
+    ctx.provide('profileContext' as never, { installAnchor: join(dir, 'package.json') } as never)
+  }
   disposals.push(async () => { await ctx.fiber.dispose(); rmSync(dir, { recursive: true, force: true }) })
   await ctx.plugin(Loader, { baseUrl: pathToFileURL(join(dir, 'entry.js')).href })
   ctx.loader.internal = {
@@ -66,7 +76,7 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
               Object.assign(official, { update: wedged })
             }
           }
-          mountWorkspaceProviderLifecycle(ctx, unsupported ? 'unsupported' : lifecycle.flavor ?? 'legacy',
+          mountWorkspaceProviderLifecycle(ctx, lifecycle.workspaceArtifact ? undefined : unsupported ? 'unsupported' : lifecycle.flavor ?? 'legacy',
             lifecycle.operationTimeoutMs === undefined ? {} : { operationTimeoutMs: lifecycle.operationTimeoutMs })
           applied = true
           if (failApply) throw new Error('fixture: replacement initialization failed')
@@ -74,9 +84,10 @@ async function boot(data: EntryOptions[], replayDisabled = false, delayedImport?
         : { apply() {} }
     },
     resolveSync: (_base: string, request: { specifier: string }) => {
-      const path = paths.get(request.specifier.replace(/\/package\.json$/, ''))
+      const isClient = request.specifier.endsWith('/client')
+      const path = paths.get(request.specifier.replace(/\/(?:package\.json|client)$/, ''))
       if (!path) throw new Error(`unexpected package ${request.specifier}`)
-      return { url: pathToFileURL(path).href }
+      return { url: pathToFileURL(isClient ? path.replace(/package\.json$/, 'client.js') : path).href }
     },
   } as never
   if (replayDisabled) {
@@ -111,10 +122,15 @@ describe('Workspace provider lifecycle (real Cordis Loader and Web module regist
     expect(graph()).toEqual([OFFICIAL])
   })
 
-  test('an unknown Host generation leaves the official Workspace active', async () => {
-    const { ctx, graph } = await boot(entries(false), false, undefined, undefined, false, true)
+  test('an unknown Workspace artifact leaves the official Workspace active', async () => {
+    const { ctx, graph } = await boot(entries(false), false, undefined, undefined, false, false, { workspaceArtifact: 'unknown' })
     expect(graph()).toContain(OFFICIAL)
     expect(ctx.get('worktreeWorkspaceProvider')).toBeUndefined()
+  })
+
+  test('elects the matching replacement through Loader without consulting a DSH version', async () => {
+    const { graph } = await boot(entries(false), false, undefined, undefined, false, false, { workspaceArtifact: 'known' })
+    expect(graph()).toEqual([WORKTREE])
   })
 
   test.each([false, true])('enabled plugin keeps exactly the Managed provider (replacement first: %s)', async (replacementFirst) => {
@@ -129,9 +145,9 @@ describe('Workspace provider lifecycle (real Cordis Loader and Web module regist
     expect((await boot(data)).graph()).toEqual([OFFICIAL])
   })
 
-  test.each(['0.2.1-rc.2', '0.2.1-rc.5'])('%s elects its replacement and restores official on disable', async version => {
+  test.each(['modern', 'modern-rc5', 'modern-022-rc3'] as const)('%s elects its replacement and restores official on disable', async flavor => {
     const { ctx, graph } = await boot(entries(false), false, undefined, undefined, false, false, {
-      flavor: workspaceClientFlavorForAgentVersion(version),
+      flavor,
     })
     expect(graph()).toEqual([WORKTREE])
     const replacement = [...ctx.loader.entries()].find(entry => entry.options.name === WORKTREE)!

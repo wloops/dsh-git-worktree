@@ -2,7 +2,7 @@ import type { DeferredWorktree } from '../deferred-worktree.js'
 import { outcome } from './errors.js'
 import type { DeferredWorktreeState } from '../console-contract.js'
 import { withHostLanguage, languageFromSettings, hostMessage } from '../i18n/host.js'
-import { hostWorkspaceClientFlavor } from '../host-compat.js'
+import type { WorkspaceClientFlavor } from '../host-compat.js'
 import type { Language } from '../i18n/core.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -28,7 +28,7 @@ import type { WorktreeConsoleControlPlane } from './control-plane.js'
 /** Official Typert Remote service; the Gateway resolves `agentId` before business code runs. */
 export class WorktreeConsoleService extends TypertRemoteService {
   private readonly deferredEligibility = new WeakMap<Agent['session'], boolean>()
-  constructor(private readonly hostContext: Context, private readonly controlPlane: WorktreeConsoleControlPlane, private readonly deferred?: DeferredWorktree) {
+  constructor(private readonly hostContext: Context, private readonly controlPlane: WorktreeConsoleControlPlane, private readonly deferred?: DeferredWorktree, private readonly workspaceClientFlavor: WorkspaceClientFlavor = 'unsupported') {
     super(hostContext, 'gitWorktree')
   }
 
@@ -62,7 +62,7 @@ export class WorktreeConsoleService extends TypertRemoteService {
   @Remote
   async sidebarTopology(locale?: Language): Promise<WorktreeConsoleOutcome<WorktreeSidebarTopologyResponse>> {
     const outcome = await withHostLanguage(locale ?? languageFromSettings(this.hostContext), () => this.controlPlane.sidebarTopology())
-    return outcome.ok ? { ok: true, value: { ...outcome.value, workspaceClientFlavor: hostWorkspaceClientFlavor() } } : outcome
+    return outcome.ok ? { ok: true, value: { ...outcome.value, workspaceClientFlavor: this.workspaceClientFlavor } } : outcome
   }
 
   @Remote

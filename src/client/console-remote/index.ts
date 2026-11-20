@@ -61,7 +61,7 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
   }
 
   // All pinned official Browser generations declare the same top-level Slot.
-  // Pick exactly one based on the Host-resolved package version, not timing of
+  // Pick exactly one based on the Host-resolved Workspace artifact, not timing of
   // Client services (shortcuts is absent in alpha and late to start in rc.2).
   const topology = await adapter.sidebarTopology()
   // A failed metadata read cannot justify taking over the official provider.
@@ -109,7 +109,7 @@ export async function apply(ctx: ConsoleClientContext): Promise<void> {
     })
   } else {
     // Unknown Host: extend only declared public seats on its own official
-    // Browser. Decoration capability is independent of the legacy whitelist.
+    // Browser. Decorations do not depend on which artifact was loaded.
     registerNativeWorkspaceDecorations(ctx as unknown as Parameters<typeof registerNativeWorkspaceDecorations>[0], adapter)
     mountTools(ctx)
   }

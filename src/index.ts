@@ -171,6 +171,7 @@ import { DEFAULT_GIT_TIMEOUT_MS, MAX_GIT_TIMEOUT_MS, validateGitTimeouts, type G
 import { createNodeFilesPort } from './adapters/files.js'
 import { AtomicJsonCheckoutRegistry } from './adapters/registry.js'
 import { mountWorkspaceProviderLifecycle } from './workspace-provider-lifecycle.js'
+import { resolveWorkspaceClientFlavor } from './host-compat.js'
 import { createDshLookupPort } from './adapters/lookup.js'
 import { createSessionCheckoutApplyEngine } from './session-checkout-apply.js'
 import { createSessionCheckoutModule } from './session-checkout-module.js'
@@ -244,6 +245,7 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
     const launch = await module.createDeferredTarget(agent.id)
     return launch.managedRoot
   })
+  const workspaceClientFlavor = resolveWorkspaceClientFlavor(ctx)
   new WorktreeConsoleService(ctx, createWorktreeConsoleControlPlane({
     module,
     lookup,
@@ -251,7 +253,7 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
     registry,
     git,
     reviewDiff: createGitWorktreeReviewDiffReader(projectSkills),
-  }), deferred)
+  }), deferred, workspaceClientFlavor)
 
   registerTools(ctx, module)
   registerWorktreeCommand(ctx, module)
@@ -261,7 +263,7 @@ export async function apply(ctx: Context, config: { stateDir?: string } & GitTim
   // conditional patch so any not-yet-started official Workspace entry stays
   // out of the Web module graph, while the fire-and-forget reconciliation
   // stops one that raced ahead without holding activation hostage.
-  mountWorkspaceProviderLifecycle(ctx)
+  mountWorkspaceProviderLifecycle(ctx, workspaceClientFlavor)
 
   // Startup recovery plus periodic expiry of retained worktrees. cordis's
   // typed Events map omits the runtime 'ready' event; the events service's

@@ -1,6 +1,6 @@
 import type { Context, FiberState } from '@deepseek-ai/cordis'
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
-import { hostWorkspaceClientFlavor, type WorkspaceClientFlavor } from './host-compat.js'
+import { resolveWorkspaceClientFlavor, type WorkspaceClientFlavor } from './host-compat.js'
 
 export const WORKSPACE_PROVIDER_CONDITION = "!!get('worktreeWorkspaceProvider') && [...loader.entries()].some(entry => entry.options?.name === 'dsh-git-worktree' && !entry.disabled)"
 
@@ -42,11 +42,11 @@ export interface WorkspaceProviderLifecycleOptions {
  */
 export function mountWorkspaceProviderLifecycle(
   ctx: Context,
-  flavor: WorkspaceClientFlavor = hostWorkspaceClientFlavor(),
+  flavor: WorkspaceClientFlavor = resolveWorkspaceClientFlavor(ctx),
   options: WorkspaceProviderLifecycleOptions = {},
 ): void {
   if (flavor === 'unsupported') {
-    ctx.logger.warn('No pinned Workspace Browser for this Host generation; leaving the official Workspace provider active.')
+    ctx.logger.warn('No matching Workspace Browser artifact; leaving the official Workspace provider active.')
     return
   }
   const operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS

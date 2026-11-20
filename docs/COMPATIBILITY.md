@@ -1,8 +1,8 @@
 # Harness compatibility / Harness 兼容性
 
-> 当前开发版安装策略：DSH peer 使用最低版本 `>=0.2.1-rc.2` 并显式包含 `0.2.2-rc.1`、`0.2.2-rc.3`，不设置预防性上限；仅在确认破坏性变化后调整要求。开发依赖和内嵌侧栏来源继续精确锁定。未知宿主不复用旧侧栏，而保留官方 Workspace，其他插件功能按实际 API 运行。允许安装并不等于已验收；SemVer 默认仅自动包含同一 `0.2.1` 核心版本的后续 RC，未来其他核心版本的预发布不属于默认匹配。下方精确 peer 描述均为已发布历史版本的记录。
+> 当前开发版仅声明 DSH peer 最低版本 `>=0.2.1-rc.2`，由 DSH 判断是否可加载。开发依赖和内嵌侧栏来源继续精确锁定。安装许可不等于已验收；不启用 `includePrerelease` 的通用 SemVer 工具可能排除其他核心版本的预发布。下方精确 peer 描述为历史记录。
 
-> Development installation policy: DSH peers use a minimum of `>=0.2.1-rc.2` plus explicit `0.2.2-rc.1` and `0.2.2-rc.3`, with no speculative upper bound; requirements change when breaking changes are confirmed. Build dependencies and embedded Browser sources remain exact. Unknown Hosts retain the official Workspace rather than reusing an unverified derivative. Installation permission is not acceptance evidence. Standard SemVer includes later RCs of the same `0.2.1` core; prereleases of other future cores are not matched by default. Exact peer constraints below describe historical published releases.
+> Development builds declare only the DSH peer floor `>=0.2.1-rc.2` and leave loading compatibility to DSH. Build dependencies and embedded Browser sources remain exact. Installation permission is not acceptance evidence; general SemVer tools without `includePrerelease` may exclude prereleases on other cores. Exact peer constraints below are historical.
 
 [中文](#中文) · [English](#english)
 
@@ -10,7 +10,7 @@
 
 ### 官方原生集成迁移
 
-未知 Host 不再只剩未扩展的官方列表：在官方声明行尾或悬浮 Slot 时，插件按能力挂载 Worktree 标记；没有对应槽则等待声明，不接管 Provider，不改全局数据。已知版本仍保留聚合派生，**尚未实现无白名单的完整聚合**。原因及最小官方接口提案见 [长期集成说明](SIDEBAR-NATIVE-INTEGRATION.md)。
+聚合按宿主 Workspace 客户端产物选择派生，不再按 DSH 版本号筛选。产物与已验证来源不匹配时保留官方列表，按实际声明的公共 Slot 挂载 Worktree 标记，不接管 Provider，也不改全局数据。完整聚合仍非官方原生能力，接口提案见 [长期集成说明](SIDEBAR-NATIVE-INTEGRATION.md)。
 
 ### 开发版：0.2.2-rc.3 侧栏适配
 
