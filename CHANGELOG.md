@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-11-20
+
+### Fixed
+
+- 恢复 DSH `0.2.2-rc.5` 源码 Web 的托管 Worktree 会话聚合：按 Web 模块清单定位实际加载的 Workspace 构建产物，不再把 Node 解析到的 TypeScript 源码拿来做兼容判断；接受构建生成的已知 CSS 前缀差异。
+- 不再按 DSH 版本号选择侧栏适配。升级宿主但 Workspace 实现未变时继续聚合；遇到未识别的实现时保留官方侧栏及可用的 Worktree 标记。不需要迁移工作区或会话数据。
+
 ## [0.12.5] - 2026-11-16
 
 ### Fixed
@@ -510,6 +517,7 @@
 
 - 发布初版生产级 Worktree 管理、基础 apply/finish/discard 生命周期和安全清理。
 
+[0.12.6]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.5...v0.12.6
 [0.12.5]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.4...v0.12.5
 [0.12.4]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/wloops/dsh-git-worktree/compare/v0.12.2...v0.12.3
